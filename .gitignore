@@ -1,0 +1,18 @@
+# --- PHI: never commit report captures or anything derived from them ---
+reports/*
+!reports/.gitkeep
+core pdf dump/*
+!core pdf dump/.gitkeep
+CORES report *.html
+CORES report *.json
+CORES report *.pdf
+iPASS Detailed Report*
+*.har
+*.pdf
+
+# --- machine-local ---
+cores.config.json
+python/
+__pycache__/
+*.pyc
+.venv/
