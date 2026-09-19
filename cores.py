@@ -9,7 +9,7 @@ Daily use (three steps):
 
 All commands (FILE defaults to the newest matching file; `cores <command> -h` shows the options):
   run [FILE | --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]   process a capture (or a .json / Daily Report)
-  capture [--id 281|8] [--no-download] [--folder]   capture script + its call -> clipboard, and the steps
+  capture [--direct --id 281|8] [--no-download] [--folder]   capture script + its call -> clipboard, and the steps
   watch [--clipboard] [--print]                     auto-run every new capture (from the clipboard and/or Downloads)
   parse FILE [-o X.json]      capture -> JSON                         render FILE [-o X]   capture/JSON -> Daily Report
   open [FILE]                 open a Daily Report                     print [FILE] [--to PRINTER | --kiosk | --dialog]
@@ -314,6 +314,14 @@ def parse_capture(capture):
     data['source'] = capture.name
     if not data['records']:
         raise CoresError(f'no patient rows found in {capture.name}; is it a CORES report capture? File: {capture}')
+    try:
+        holes = capture.read_bytes().count(b'{{')  # Mustache placeholders: a rendered report has a few dozen, the bare template thousands
+    except OSError:
+        holes = 0
+    if holes > 200 and not (data.get('header') or {}).get('report_date'):
+        raise CoresError(f'{capture.name} is the unrendered CORES report template ({holes:,} unfilled {{{{placeholders}}}}, no report date): '
+                         'CORES did not render the report before it was captured. Look at the report popup in CORES for an error message, '
+                         f'then capture again; this file is left where it is: {capture}')
     return data
 
 
@@ -721,17 +729,22 @@ def clipboard_text():
     return ''
 
 
+def clipboard_is_script(text):
+    """True when the clipboard holds the capture script itself (put there by `cores capture`), not a report."""
+    return 'captureCores' in text and 'CORES report capture' in text[:300]
+
+
 def clipboard_capture(cfg, skip_sha=None):
     """A CORES report on the clipboard (captureCores puts it there) -> saved into the reports folder.
-    Returns (path or None, sha of the clipboard text or None); skip_sha = a text already handled."""
+    Returns (path or None, sha of the clipboard text or None, saved_now); skip_sha = a text already handled."""
     import hashlib
     text = clipboard_text()
-    if not text or 'row_template' not in text or 'column_name=' not in text:
-        return None, None
+    if not text or 'row_template' not in text or 'column_name=' not in text or clipboard_is_script(text):
+        return None, None, False
     text = text.replace('\r\n', '\n')
     sha = hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()
     if sha == skip_sha:
-        return None, sha
+        return None, sha, False
     m = CAPTURE_NAME_RE.search(text[:400])
     name = m.group(1).strip() if m else f'CORES report clip {dt.datetime.now():%Y-%m-%d %H%M}.html'
     dst = reports_dir(cfg) / name
@@ -739,13 +752,13 @@ def clipboard_capture(cfg, skip_sha=None):
         try:
             with open(dst, encoding='utf-8', errors='replace', newline='') as fh:
                 if fh.read() == text:
-                    return dst, sha  # this capture was saved already
+                    return dst, sha, False  # this capture was saved already
         except OSError:
             pass
         dst = unique_path(dst)
     with open(dst, 'w', encoding='utf-8', newline='') as fh:
         fh.write(text)
-    return dst, sha
+    return dst, sha, True
 
 
 def add_to_user_path(folder):
@@ -771,7 +784,10 @@ def add_to_user_path(folder):
 
 # ---------------------------------------------------------------- pipeline
 
-def run_pipeline(src, cfg, do_open=True, want_print=False, want_pdf=False, copy=False, clean=False, printer=None, kiosk=False, dialog=False):
+def run_pipeline(src, cfg, do_open=True, want_print=False, want_pdf=False, copy=False, clean=False, printer=None, kiosk=False, dialog=False,
+                 skip_done=False):
+    """skip_done: leave a capture alone when an identical copy was already processed (used by `watch`, where the same
+    report can arrive twice, on the clipboard and as a download)."""
     src = Path(src)
     kind = kind_of(src)
     if kind == 'report':
@@ -781,6 +797,17 @@ def run_pipeline(src, cfg, do_open=True, want_print=False, want_pdf=False, copy=
         data, report = do_render(src)
         say(f'Rendered: {rel(report)}  ({describe(data)})')
     elif kind == 'capture':
+        if skip_done:
+            rd = reports_dir(cfg)
+            twin = rd / src.name
+            if src.resolve().parent != rd.resolve() and twin.exists() and same_bytes(twin, src) \
+                    and twin.with_name(DERIVED['report'].format(stem=stem_of(twin))).exists():
+                if cfg['import_mode'] == 'move' and not copy and src.resolve().parent in [d.resolve() for d in inbox_dirs(cfg) if d.is_dir()]:
+                    src.unlink()
+                    say(f'Capture:  {src.name} was already processed from the clipboard; removed the duplicate in {src.parent}')
+                else:
+                    say(f'Capture:  {src.name} was already processed; left alone')
+                return twin.with_name(DERIVED['report'].format(stem=stem_of(twin)))
         cap, data = take_capture(src, cfg, copy=copy)   # parsed where it is, moved in only when it parses
         data, js = do_parse(cap, data=data)
         say(f'Parsed:   {rel(js)}  ({describe(data)})')
@@ -879,11 +906,16 @@ def print_wanted(a):
 
 def cmd_run(a, cfg):
     if a.clipboard:
-        src, _ = clipboard_capture(cfg)
+        src, _, saved_now = clipboard_capture(cfg)
         if src is None:
+            if clipboard_is_script(clipboard_text()):
+                raise CoresError('the clipboard holds the capture script (from `cores capture`), not a report. If a report was '
+                                 'on the clipboard when `cores capture` ran, it was saved into the reports folder first: '
+                                 'run `cores run` (no --clipboard) to build it. Otherwise capture again in CORES, then run this '
+                                 'before the next `cores capture`.')
             raise CoresError('no CORES report on the clipboard. In the CORES window run captureCores(...) (`cores capture` '
                              'shows the steps); it puts the report there. Or use `cores run` for a downloaded capture.')
-        say(f'Clipboard: {rel(src)}')
+        say(f'Clipboard: {rel(src)}' + ('' if saved_now else '  (this report was saved before)'))
     else:
         src = resolve_file(a.file, 'capture', cfg, include_inbox=True)
     run_pipeline(src, cfg, do_open=not a.no_open and cfg['open_after_run'], want_print=print_wanted(a), want_pdf=a.pdf,
@@ -896,31 +928,41 @@ def cmd_capture(a, cfg):
         raise CoresError(f'{js_path.name} is missing from {HERE}')
     rid = str(a.id)
     opts = [o for o, on in (('download: false', a.no_download), ('folder: true', a.folder)) if on]
-    call = f'captureCores({rid}{", {" + ", ".join(opts) + "}" if opts else ""});'
+    optstr = '{' + ', '.join(opts) + '}' if opts else ''
+    call = f'captureCores({rid}{", " + optstr if optstr else ""});' if a.direct else f'captureCores({optstr});'
     text = js_path.read_text(encoding='utf-8')
     if not a.no_run:
         text = text.rstrip('\n') + '\n\n' + call + '\n'
+    rescued, _, saved_now = clipboard_capture(cfg)  # a report still on the clipboard from the last capture must not be lost
+    if rescued:
+        say(f'The clipboard held a report from CORES: {"saved as" if saved_now else "already saved as"} {rel(rescued)}. '
+            'Run `cores run` to build its Daily Report.')
     copied = to_clipboard(text)
     inbox = ', '.join(str(d) for d in inbox_dirs(cfg))
     say('CORES capture')
     say('  1. In the CORES patient-list window (the Cerner-hosted one, inside Citrix) press F12 and open the Console tab.')
     if copied:
-        say(f'  2. Paste and press Enter. The clipboard holds the capture script with   {call}   at the end, so one paste does it all.')
+        say(f'  2. Paste and press Enter. The clipboard holds the capture script with   {call}   at the end.')
     else:
         say(f'  2. Paste the contents of {js_path.name} (clipboard unavailable here), press Enter, then run   {call}')
     say('     First time only: Chrome refuses the paste until you type   allow pasting   and press Enter; then paste again.')
     say('     (DevTools > Sources > Snippets never asks: paste into a new snippet once and run it with Ctrl+Enter.)')
-    say('  3. The report opens in a popup, renders, and its HTML goes on the clipboard'
+    if a.direct:
+        say(f'  3. The script opens report {rid} itself in a popup ({REPORT_IDS.get(rid, "report id " + rid)}).')
+    else:
+        say('  3. Open the report from CORES as you normally do (its own report / print button). The script captures the window')
+        say('     CORES opens, so it works whenever CORES\'s own button works. (--direct makes the script open the report itself.)')
+    say('     When the report has rendered, its HTML goes on the clipboard'
         + ('' if a.no_download else ' and downloads as "CORES report <id> <date> <time>.html"')
-        + ('; the patient list shows a button to save it into your folder' if a.folder else '') + '. The popup closes.')
+        + ('; the patient list shows a button to save it into your folder' if a.folder else '') + '. The report window closes.')
     say('  4. Back on this PC:')
     say('       cores run --clipboard --print       saves it into reports\\, makes the Daily Report, prints')
     say('       cores watch --clipboard --print     ... automatically for every capture, until Ctrl+C')
     if not a.no_download:
         say(f'       cores run                           uses the downloaded file (newest capture in {inbox})')
-    say(f'  Report ids: {", ".join(f"{k} = {v}" for k, v in REPORT_IDS.items())}.')
-    say('  Options: --id 8, --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once).')
-    say('  If popups are blocked, allow them for the CORES site and run the last line again.')
+    say(f'  Report ids (for --direct): {", ".join(f"{k} = {v}" for k, v in REPORT_IDS.items())}.')
+    say('  Options: --direct [--id 8], --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once).')
+    say('  If the CORES console says it could not copy, click "Copy to clipboard" in the banner at the top of the patient list.')
 
 
 def cmd_parse(a, cfg):
@@ -983,14 +1025,19 @@ def cmd_watch(a, cfg):
         return out
 
     seen = snapshot()  # what is already there is left alone; a file that reappears with new content counts as new
-    pending, busy, clip_sha = {}, {}, None
+    pending, busy, clip_sha, clip_sha_seen = {}, {}, None, None
     say(f'Watching {", ".join(str(d) for d in dirs)}{" and the clipboard" if a.clipboard else ""} for new captures every '
         f'{a.interval:g}s (Ctrl+C to stop)')
     while True:
         if a.clipboard:
-            path, sha = clipboard_capture(cfg, skip_sha=clip_sha)
+            try:
+                path, sha, saved_now = clipboard_capture(cfg, skip_sha=clip_sha)
+            except (OSError, CoresError) as ex:
+                path, sha, saved_now = None, None, False
+                say(f'error reading the clipboard capture: {ex}')
             clip_sha = sha or clip_sha
-            if path:
+            # a report that was saved and rendered before (e.g. by `cores run --clipboard` just before this watch started) is left alone
+            if path and (saved_now or not path.with_name(DERIVED['report'].format(stem=stem_of(path))).exists()):
                 say(f'\n{dt.datetime.now():%H:%M:%S}  capture from the clipboard: {path.name}')
                 try:
                     run_pipeline(path, cfg, do_open=not a.no_open and cfg['open_after_run'], want_print=print_wanted(a), want_pdf=a.pdf,
@@ -999,6 +1046,9 @@ def cmd_watch(a, cfg):
                     say(f'error: {ex}')
                 except Exception as ex:
                     say(f'error: {type(ex).__name__}: {ex}')
+            elif path and sha != clip_sha_seen:
+                say(f'{dt.datetime.now():%H:%M:%S}  the clipboard holds {path.name}, which is already processed')
+            clip_sha_seen = sha or clip_sha_seen
         for path, sig in snapshot().items():
             if seen.get(path) == sig:
                 continue
@@ -1008,7 +1058,7 @@ def cmd_watch(a, cfg):
             say(f'\n{dt.datetime.now():%H:%M:%S}  new capture: {path.name}')
             try:
                 run_pipeline(path, cfg, do_open=not a.no_open and cfg['open_after_run'], want_print=print_wanted(a), want_pdf=a.pdf,
-                             copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog)
+                             copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog, skip_done=True)
             except PermissionError as ex:
                 busy[path] = busy.get(path, 0) + 1
                 if busy[path] <= 5:
@@ -1327,7 +1377,8 @@ def build_parser():
     sp.add_argument('--clean', action='store_true', help='afterwards delete older capture sets, keeping "keep" (config) newest')
 
     sp = add('capture', cmd_capture, 'put capture_report.js (plus its captureCores(...) call) on the clipboard and show how to run it in the CORES window')
-    sp.add_argument('--id', default='281', help='CORES report id (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed)')
+    sp.add_argument('--direct', action='store_true', help='the script opens the report itself (captureCores(ID)) instead of capturing the window CORES opens')
+    sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed)')
     sp.add_argument('--no-download', action='store_true', help='clipboard hand-off only: the browser does not download a file')
     sp.add_argument('--folder', action='store_true', help='also save into a folder chosen once with the browser\'s folder picker')
     sp.add_argument('--no-run', action='store_true', help='copy the script without the captureCores(...) call at the end')

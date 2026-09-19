@@ -130,9 +130,10 @@ header to see which.
 
 ## Rendered Daily Report (names shown by the Inspect toggle)
 Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, Print, Reset columns, **Sections**
-(a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; a column
-also disappears by itself when every one of its sections is unchecked; choices and dragged column widths are
-remembered by the browser), Inspect.
+(a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; indented
+entries are parts of the entry above them — Admission, Allergy / Diet block, Ventilation, I&O, Trends, Labs —
+and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
+column widths are remembered by the browser), Inspect.
 
 Each patient is a **Patient block** of two rows. Row 1: Patient column (patient info with the Location block
 as a square unit / room-bed chip to its right, then Severity chip and Isolation tag, the Admission block, and

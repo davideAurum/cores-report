@@ -8,12 +8,15 @@ command: `cores run`.
 
 ## Every day
 
-1. **`cores capture`** puts the capture script on the clipboard, with `captureCores(281)` already at its end, and
-   prints the steps below. (`281` = Anesthesia ICU w/ Meds; `cores capture --id 8` for I-PASS Detailed.)
+1. **`cores capture`** puts the capture script on the clipboard, with its `captureCores()` call already at the end,
+   and prints the steps below.
 2. **In the CORES patient-list window** (the Cerner-hosted one, inside Citrix): press F12, open *Console*, paste,
-   press Enter. The report opens in a popup, renders, and its HTML is put on the clipboard, which Citrix relays to
-   your PC. Unless you used `cores capture --no-download` it is also downloaded as
-   `CORES report 281 <date> <time>.html`. The popup closes itself.
+   press Enter, then open the report from CORES as you normally do (its own report / print button). The script
+   captures the window CORES opens as soon as the report has rendered, so it works whenever CORES's own button
+   works. The report's HTML is put on the clipboard, which Citrix relays to your PC, and unless you used
+   `cores capture --no-download` it is also downloaded as `CORES report 281 <date> <time>.html`. The report window
+   closes itself. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
+   Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
 3. **`cores run --clipboard --print`** saves the report from the clipboard into `reports\`, checks that it parses,
    writes `reports\CORES report 281 <date> <time> - Daily Report.html`, opens it and brings the print dialog up (or
    prints without a dialog once a printer is configured, see *Printing*). Leave off `--print` to just open it.
@@ -22,6 +25,12 @@ command: `cores run`.
 
 Hands-free: keep `cores watch --clipboard --print` running in a terminal; every capture is saved, rendered and
 printed as it arrives, from the clipboard or from Downloads.
+
+Order matters with the clipboard: run `cores run --clipboard` *before* the next `cores capture`, because the latter
+puts the script on the clipboard. If you do it the other way round nothing is lost: `cores capture` first saves any
+report it finds on the clipboard into `reports\` and tells you so; `cores run` then builds it. Inside Citrix the
+browser's download may land in a Citrix folder rather than your Downloads, which is why the clipboard is the
+dependable route.
 
 No terminal handy? Drop the downloaded file onto **Make Daily Report.cmd** or **Print Daily Report.cmd**, or
 double-click either to use the newest capture in Downloads. (A file dropped from anywhere other than Downloads or
@@ -73,7 +82,7 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | Command | What it does |
 |---|---|
 | `cores run [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | capture -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` takes the report captureCores put on the clipboard. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
-| `cores capture [--id 281] [--no-download] [--folder] [--no-run]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps |
+| `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself |
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores print [FILE] [--to PRINTER \| --kiosk \| --dialog]` | print a Daily Report (see *Printing*) |
@@ -152,7 +161,18 @@ into `reports\` by hand.
 
 - **Nothing downloads after `captureCores(281)`**: allow popups for the CORES site and run it again. The console must
   belong to the Cerner-hosted patient-list window; a report opened in a plain browser tab has no CORES session.
-- **The report window shows an error dialog**: close it and run `captureCores(281, {timeout: 180})` for a slower day.
+- **The report window says "Can't Load Patient List / Unable to load the patient list from CORES"**: CORES itself
+  failed to fetch the list for the report. The script presses OK and the window's Reload button for you (twice by
+  default; `captureCores(281, {retries: 4})` for more) and reports the dialog text if it keeps failing. If it does,
+  press F5 in the CORES patient-list window, open your list again, and run the capture again. A capture made while
+  this dialog was up is the empty report template; it is named `... UNRENDERED.html` and `cores run` refuses it.
+- **The report window shows another error dialog or is slow**: the console prints what the window shows when the wait
+  runs out; `captureCores(281, {timeout: 180})` waits longer.
+- **The console says it could not copy to the clipboard**: the page cannot write the clipboard while the report window
+  or DevTools has the focus, so the script tries from the report window first and retries for a few seconds after
+  that window closes. If it still fails, click *Copy to clipboard* in the banner at the top of the patient list; one
+  click always works. (DevTools' own `copy()` helper is not available in the CORES console, because the CORES page
+  defines a function of that name.) The download still happens either way.
 - **Fallback capture**: with DevTools *Network* open and *Preserve log* ticked, open the report as usual, right-click
   the request list, *Save all as HAR with content*, then `cores har file.har`.
 - **`cores run --clipboard` says there is no report on the clipboard**: Citrix may block or cap clipboard transfer

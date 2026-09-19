@@ -62,28 +62,36 @@ SEV_RANK = {'unstable': 0, 'watcher': 1, 'stable': 2}
 # Toggleable parts of the page, grouped for the Sections menu. Names are the data-name attributes in the markup;
 # entries ending in ' column' hide a whole column (header, cells and width).
 SECTIONS = [
-    ('Location / Patient', ['Location block', 'Patient name', 'MRN', 'Date of birth', 'Code status', 'Admission',
+    ('Location / Patient', ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
+                            'Admission', 'Admit diagnosis', 'Admit date', 'Length of stay',
                             'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
     ('Summary', ['Patient summary', 'Status lines']),
-    ('Vitals', ['Vitals', 'Ventilation', 'Tubes / Lines / Drains']),
-    ('I&O · Labs', ['I&O', 'Labs', 'CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone',
-                    'Other labs', 'Trends']),
+    ('Vitals', ['Vitals', 'Ventilation', 'O2 delivery', 'Vent settings', 'Vent measurements', 'Blood gas',
+                'I&O', 'I&O chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
+    ('Labs', ['Labs', 'CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs',
+              'Trends', 'Glucose trend', 'Lactic acid trend']),
     ('Meds', ['Infusions', 'Antibiotics', 'Scheduled', 'PRN row']),
     ('Tasks', ['Tasks', 'Situational Awareness']),
     ('Columns', ['Patient column', 'Summary column', 'Vitals column', 'Labs column', 'Meds column', 'Sit Awareness column',
                  'Notes column']),
 ]
-# Top-level parts of each column: when every part is hidden the column itself disappears.
+# Parts of each container: when every part is hidden the container disappears too (applied bottom-up).
 COLPARTS = {
-    'Patient column': ['Location block', 'Patient name', 'MRN', 'Date of birth', 'Code status', 'Admission', 'Allergy / Diet block'],
+    'Admission': ['Admit diagnosis', 'Admit date', 'Length of stay'],
+    'Allergy / Diet block': ['Allergies', 'Diet', 'TF', 'Restraints'],
+    'Ventilation': ['O2 delivery', 'Vent settings', 'Vent measurements', 'Blood gas'],
+    'I&O': ['I&O chart', 'Net I&O since admission'],
+    'Trends': ['Glucose trend', 'Lactic acid trend'],
+    'Labs': ['CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs', 'Trends'],
+    'Patient column': ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
+                       'Admission', 'Allergy / Diet block'],
     'Summary column': ['Patient summary', 'Status lines'],
     'Vitals column': ['Vitals', 'Ventilation', 'I&O', 'Tubes / Lines / Drains'],
     'Labs column': ['Labs'],
     'Meds column': ['Infusions', 'Antibiotics', 'Scheduled'],
     'Sit Awareness column': ['Tasks', 'Situational Awareness'],
-    'Allergy / Diet block': ['Allergies', 'Diet', 'TF', 'Restraints'],
-    'Labs': ['CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs', 'Trends'],
 }
+CHILDREN = {c for k, v in COLPARTS.items() if not k.endswith(' column') for c in v}
 
 CSS = """
 :root{--ink:#1c1c1c;--mute:#6b6b6b;--line:#cfcfcf;--band:#f2f2f2;--accent:#1f4e79;--watch:#b8860b;--unstable:#b00020;--stable:#2e7d32}
@@ -101,10 +109,10 @@ h1{font-size:16px;margin:0}
 .toolbar .count{margin-left:auto;color:var(--mute)}
 .secmenu{position:relative} .secmenu summary{list-style:none;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;cursor:pointer;user-select:none}
 .secmenu summary::-webkit-details-marker{display:none}
-.secmenu .menu{position:absolute;top:100%;left:0;z-index:20;margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 4px 14px rgba(0,0,0,.18);padding:8px 10px;display:flex;gap:0 14px;flex-wrap:wrap;width:max-content;max-width:90vw}
-.secmenu .grp{min-width:120px;margin-bottom:6px} .secmenu .grp-t{font-weight:700;color:var(--accent);margin-bottom:2px;border-bottom:1px solid var(--line)}
-.secmenu label{display:block;color:var(--ink);white-space:nowrap;padding:1px 0} .secmenu label input{margin:0 4px 0 0;vertical-align:-1px}
-.secmenu .menu-foot{flex-basis:100%;border-top:1px solid var(--line);padding-top:6px} .secmenu .menu-foot button{padding:2px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit;cursor:pointer}
+.secmenu .menu{position:fixed;left:8px;right:8px;top:60px;z-index:20;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 4px 14px rgba(0,0,0,.18);padding:8px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 14px;max-height:calc(100vh - 80px);overflow:auto;max-width:1100px;margin:0 auto}
+.secmenu .grp{margin-bottom:6px} .secmenu .grp-t{font-weight:700;color:var(--accent);margin-bottom:2px;border-bottom:1px solid var(--line)}
+.secmenu label{display:block;color:var(--ink);white-space:nowrap;padding:1px 0} .secmenu label.sub{padding-left:14px;color:var(--mute)} .secmenu label input{margin:0 4px 0 0;vertical-align:-1px}
+.secmenu .menu-foot{grid-column:1/-1;border-top:1px solid var(--line);padding-top:6px} .secmenu .menu-foot button{padding:2px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit;cursor:pointer}
 table.rpt{width:100%;border-collapse:collapse;table-layout:fixed}
 .rpt > thead > tr > th,.rpt > tbody > tr > td{border:1px solid var(--line);padding:4px 6px;vertical-align:top;text-align:left;overflow:hidden}
 .rpt thead th{background:var(--band);font-weight:600;position:sticky;top:0;z-index:1;user-select:none;white-space:nowrap}
@@ -257,7 +265,7 @@ JS = """
     const rules=[];
     // a container whose parts are all hidden is hidden too (Allergy / Diet block -> Labs -> columns)
     const eff=new Set(hidden);
-    for(const k of ['Allergy / Diet block','Labs'].concat(COLNAME)){const parts=COLPARTS[k]; if(parts&&parts.length&&parts.every(p=>eff.has(p)))eff.add(k);}
+    for(let changed=true;changed;){changed=false; for(const k in COLPARTS){const parts=COLPARTS[k]; if(!eff.has(k)&&parts.length&&parts.every(p=>eff.has(p))){eff.add(k);changed=true;}}}
     cols.forEach((c,i)=>{const off=eff.has(COLNAME[i]); c.style.width=off?'0':base[i];
       // keep the cell in the row (display:none would shift the other cells' column slots); collapse it instead
       if(off)rules.push('.rpt thead th:nth-child('+(i+1)+'),.rpt tr.main>td:nth-child('+(i+1)+'){width:0!important;padding:0!important;border-left:0!important;border-right:0!important;font-size:0!important;overflow:hidden}'
@@ -286,11 +294,12 @@ JS = """
   document.querySelectorAll('[data-sec]').forEach(cb=>cb.addEventListener('change',()=>{if(cb.checked)hidden.delete(cb.dataset.sec);else hidden.add(cb.dataset.sec);render();saveS();}));
   document.getElementById('sec-all').addEventListener('click',()=>{hidden.clear();render();saveS();});
   document.addEventListener('click',e=>{const m=document.getElementById('secmenu'); if(m.open&&!m.contains(e.target))m.open=false;});
+  document.getElementById('secmenu').addEventListener('toggle',e=>{const m=e.target; if(m.open){const b=m.querySelector('summary').getBoundingClientRect(); m.querySelector('.menu').style.top=Math.round(b.bottom+4)+'px';}});
   render();
   // `cores print`: a URL ending in #print opens the print dialog as soon as the page is ready; #print-close also
   // closes the window after printing (Edge/Chrome --kiosk-printing then sends it straight to the default printer)
-  const h=(location.hash||'').replace(/^#/,''), q=new URLSearchParams(location.search).get('print');
-  const auto=(h==='print'||h==='print-close')?h:(q==='1'?'print':'');
+  const h=(location.hash||'').replace(/^#/,''), qp=new URLSearchParams(location.search).get('print');  // not `q`: that is the search box above
+  const auto=(h==='print'||h==='print-close')?h:(qp==='1'?'print':'');
   window.__coresAutoPrint=auto;
   if(auto){
     try{history.replaceState(null,'',location.pathname);}catch(e){}  // so a reload or a restored tab does not print again
@@ -737,7 +746,7 @@ def render_row(r, report_date=''):
     age = re.sub(r'\D', '', r['age'])
     sev = r.get('severity', '') or ''
     data = {
-        'location': r['location'], 'unit': r['unit'], 'name': r['patient_name'], 'sev': sev.lower(),
+        'location': r['location'], 'unit': r['unit'], 'pname': r['patient_name'], 'sev': sev.lower(),
         'sevrank': SEV_RANK.get(sev.lower(), 9), 'los': r['los_days'] or 0, 'age': age or 0, 'o2': r.get('o2_delivery', ''),
         'tasks': len(r['tasks']), 'drips': len((r.get('meds') or {}).get('infusions', [])), 'text': row_text(r),
     }
@@ -771,7 +780,8 @@ def render_row(r, report_date=''):
 def sections_menu():
     out = ''
     for group, names in SECTIONS:
-        items = ''.join(f'<label><input type="checkbox" data-sec="{e(n)}" checked> {e(n.replace(" column", "").replace(" row", ""))}</label>' for n in names)
+        items = ''.join(f'<label class="{"sub" if n in CHILDREN else ""}"><input type="checkbox" data-sec="{e(n)}" checked> '
+                        f'{e(n.replace(" column", "").replace(" row", ""))}</label>' for n in names)
         out += f'<div class="grp"><div class="grp-t">{e(group)}</div>{items}</div>'
     return out
 
@@ -801,7 +811,7 @@ def render(data):
  <label>Severity <select id="f-sev"><option value="">All</option>{''.join(f'<option value="{e(s.lower())}">{e(s)}</option>' for s in sevs)}</select></label>
  <label>O2 <select id="f-o2"><option value="">All</option>{options(o2s)}</select></label>
  <label><input type="checkbox" id="f-tasks"> Open tasks only</label>
- <label>Sort <select id="sort"><option value="location">Location</option><option value="name">Name</option><option value="sevrank">Severity</option><option value="los">LOS</option><option value="age">Age</option><option value="tasks">Open tasks</option><option value="drips">Drips</option></select></label>
+ <label>Sort <select id="sort"><option value="location">Location</option><option value="pname">Name</option><option value="sevrank">Severity</option><option value="los">LOS</option><option value="age">Age</option><option value="tasks">Open tasks</option><option value="drips">Drips</option></select></label>
  <button id="reset" type="button">Reset</button>
  <button id="print" type="button">Print</button>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
