@@ -12,6 +12,8 @@ iPASS Detailed Report*
 
 # --- machine-local ---
 cores.config.json
+# Claude Code's local dev-server config; its server would serve this folder, which holds PHI
+.claude/
 python/
 __pycache__/
 *.pyc
