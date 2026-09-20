@@ -17,7 +17,8 @@ All commands (FILE defaults to the newest matching file; `cores <command> -h` sh
   clean [--keep N] [--dry-run] [--inbox]                               annotate FILE        annotatable copy of a capture
   har FILE                    HAR / copied cURL -> capture HTML       doctor | setup [--add-path] | config [--init] [--set K V]
   help [COMMAND]              this text, or one command's options (also: cores -h, cores <command> -h, -help, /?)
-  bundle [--dry-run]          put a private copy of Python (+ packages) in python\\ so the folder runs without Python installed
+  bundle [--dry-run]          put a private copy of Python (+ packages) in python\\ so the folder runs without Python
+                              installed (on a PC that has no Python at all, run  .\\bundle  instead: same thing, no Python needed)
 
 Captures found in Downloads or next to the scripts are moved into reports\\ before anything is written (--copy copies).
 Everything runs locally. The captures, JSON, Daily Reports and PDFs contain PHI.
@@ -535,7 +536,7 @@ def wait_for_file(path, timeout):
 
 def remove_dir(d):
     """rmtree with retries (a closing browser releases files late, and a helper process of Edge can re-create the
-    profile folder moments after it is gone); True when the folder is gone."""
+    profile folder moments after it is gone); True when the folder is gone. Also used to replace python\\."""
     for _ in range(10):
         shutil.rmtree(d, ignore_errors=True)
         if not Path(d).exists():
@@ -544,7 +545,7 @@ def remove_dir(d):
             if not Path(d).exists():
                 return True
         time.sleep(1)
-    say(f'note: could not remove the temporary browser profile {d}; delete it by hand')
+    say(f'note: could not remove {d}; delete it by hand')
     return False
 
 
@@ -1165,8 +1166,9 @@ def cmd_doctor(a, cfg):
     rd = reports_dir(cfg, create=False)
     line(True, f'Reports folder {rd}', f'{len(capture_sets(cfg))} capture set(s)' if rd.is_dir() else 'will be created on first run')
     line(True, 'Config', f'{CONFIG_FILE}' if CONFIG_FILE.exists() else 'defaults (create with `cores config --init`)')
-    bundled = HERE / 'python' / 'python.exe'
-    line(True, 'Bundled Python', str(bundled) if bundled.exists() else 'none; the folder needs an installed Python (`cores bundle` adds one)')
+    ok, detail = bundle_check()
+    broken = not ok and (HERE / 'python').exists()  # a missing python\ is fine; one that is there but unusable is not
+    line(ok, 'Bundled Python', detail + ('; rebuild it with `.\\bundle`' if broken else ''), required=broken)
     say('  ' + ('All required checks passed.' if not problems else f'{problems} problem(s) marked !! above.'))
     return 1 if problems else 0
 
@@ -1179,8 +1181,7 @@ def cmd_setup(a, cfg):
             import bs4, lxml  # noqa: F401
             say(f'Bundled Python at {sys.executable}: packages already included, nothing to install.')
         except ImportError:
-            raise CoresError('this Python has no pip and lacks the packages; run `cores bundle --force` on a computer '
-                             'that has Python, then copy the folder again')
+            raise CoresError('this Python has no pip and lacks the packages; rebuild it by running `.\\bundle` in this folder')
     else:
         say(f'Installing Python packages from {req.name} with {sys.executable} ...')
         r = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', str(req)])
@@ -1194,6 +1195,47 @@ def cmd_setup(a, cfg):
         add_to_user_path(HERE)
     say('')
     return cmd_doctor(a, cfg)
+
+
+BUNDLE_PROBE = (
+    'import json, os, sys, bs4, lxml.etree; '
+    'print(json.dumps({"version": sys.version.split()[0], "prefix": sys.prefix, "bs4_version": bs4.__version__, '
+    '"lxml_version": lxml.etree.__version__, '
+    '"files": {"stdlib": os.__file__, "bs4": bs4.__file__, "lxml": lxml.etree.__file__}}))'
+)
+
+
+def bundle_check(dest=None):
+    """Is <folder>\\python a Python that carries its own stdlib and packages? Returns (ok, detail).
+
+    Checked the hard way, by running it, because the failure that matters is silent: an embeddable Python whose
+    python*._pth is missing drops out of isolated mode and borrows an installed Python's stdlib. It then works
+    perfectly on the machine that built it and dies on the PC the folder was copied to -- which is the only machine
+    the bundle exists for. `-I` plus the "every file it loaded lives under python\\" test below is what catches that.
+    """
+    dest = Path(dest or HERE / 'python')
+    exe = dest / 'python.exe'
+    if not exe.exists():
+        return False, 'none; this folder needs an installed Python (`.\\bundle` adds a private one)'
+    if next(dest.glob('python*._pth'), None) is None:
+        return False, f'{rel(exe)} is not self-contained (no python*._pth, so it falls back to an installed Python)'
+    try:
+        r = subprocess.run([str(exe), '-I', '-c', BUNDLE_PROBE], capture_output=True, text=True,
+                           errors='replace', timeout=120)
+    except (OSError, subprocess.SubprocessError) as ex:
+        return False, f'{rel(exe)} does not run ({ex})'
+    if r.returncode:
+        why = ((r.stderr or '').strip().splitlines() or ['no output'])[-1]
+        return False, f'{rel(exe)} is missing its stdlib or packages ({why})'
+    try:
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return False, f'{rel(exe)} did not report its version'
+    outside = sorted(k for k, f in got['files'].items() if not Path(f).is_relative_to(dest))
+    if outside:
+        return False, (f'{rel(exe)} borrows {", ".join(outside)} from elsewhere on this PC ({got["files"][outside[0]]}), '
+                       'so the folder would not run once copied')
+    return True, f'{rel(exe)}: Python {got["version"]}, beautifulsoup4 {got["bs4_version"]}, lxml {got["lxml_version"]}'
 
 
 def http_get(url, timeout=120):
@@ -1253,7 +1295,10 @@ def cmd_bundle(a, cfg):
     zip_url = f'https://www.python.org/ftp/python/{ver}/python-{ver}-embed-{arch}.zip'
     say(f'Bundle Python {ver} ({arch}) into {dest}')
     plan = [('python.org', zip_url, http_size(zip_url), None)]
-    for pkg, tag in (('beautifulsoup4', 'py3-none-any.whl'), ('soupsieve', 'py3-none-any.whl'), ('lxml', f'{cp}-{cp}-win_{arch}.whl')):
+    # Every wheel has to be named here: the embeddable Python has no pip, so nothing resolves dependencies for us.
+    # soupsieve and typing_extensions are beautifulsoup4's; bundle_check() below is what notices when one is missing.
+    for pkg, tag in (('beautifulsoup4', 'py3-none-any.whl'), ('soupsieve', 'py3-none-any.whl'),
+                     ('typing_extensions', 'py3-none-any.whl'), ('lxml', f'{cp}-{cp}-win_{arch}.whl')):
         fn, url, size, sha = pypi_wheel(pkg, tag)
         plan.append((pkg, url, size, sha))
     total = 0
@@ -1265,9 +1310,13 @@ def cmd_bundle(a, cfg):
         say('Dry run: nothing downloaded.')
         return 0
     if dest.exists():
+        ok, detail = bundle_check(dest)
         if not a.force:
-            raise CoresError(f'{dest} already exists; use --force to replace it')
-        remove_dir(dest)
+            raise CoresError(f'{rel(dest)}\\ already exists and ' + ('works', 'is broken')[not ok] + f': {detail}.\n'
+                             '       Replace it with `cores bundle --force` (or `.\\bundle`, which works with no Python installed).')
+        say(f'Replacing the existing {rel(dest)} ({("works", "broken")[not ok]}) ...')
+        if not remove_dir(dest):
+            raise CoresError(f'could not remove {rel(dest)}; close anything running from it and try again')
     dest.mkdir(parents=True)
     say('Downloading Python ...')
     zipfile.ZipFile(io.BytesIO(http_get(zip_url))).extractall(dest)
@@ -1285,12 +1334,13 @@ def cmd_bundle(a, cfg):
         if hashlib.sha256(data).hexdigest() != sha:
             raise CoresError(f'{name}: the download did not match the checksum PyPI publishes; try again')
         zipfile.ZipFile(io.BytesIO(data)).extractall(site)  # a wheel is a zip laid out like site-packages
-    r = subprocess.run([str(dest / 'python.exe'), '-c', 'import sys, bs4, lxml; print(sys.version.split()[0], bs4.__version__, lxml.__version__)'],
-                       capture_output=True, text=True, errors='replace', timeout=60)
-    if r.returncode:
-        raise CoresError(f'the bundled Python does not start or lacks the packages: {(r.stderr or "").strip()[-300:]}')
+    ok, detail = bundle_check(dest)
+    if not ok:
+        remove_dir(dest)  # never leave a half-good python\ behind: cores.cmd would prefer it to a working Python
+        raise CoresError(f'the download finished but the result is not usable, so {rel(dest)} was removed again:\n'
+                         f'       {detail}')
     used = sum(p.stat().st_size for p in dest.rglob('*') if p.is_file())
-    say(f'Bundled Python works: {r.stdout.strip()} ({used / 1e6:.0f} MB in {rel(dest)}).')
+    say(f'Bundled Python works, carrying its own stdlib and packages: {detail} ({used / 1e6:.0f} MB).')
     say('cores.cmd now uses it first. Copy this folder (without reports\\) to any Windows PC and run .\\cores; no installation needed.')
     return 0
 

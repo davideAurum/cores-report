@@ -52,6 +52,8 @@ Cerner-hosted browser allows the folder picker (the File System Access API); the
 
 1. Install Python 3.10 or newer from python.org (keep the *py launcher* option ticked; `cores.cmd` uses `py -3`, or
    `python` on PATH if there is no launcher, or `.venv\Scripts\python.exe` if you make a venv in the folder).
+   Cannot install anything on this PC? Skip this step and run `.\bundle` instead -- see
+   [No Python on the computer?](#no-python-on-the-computer) -- then carry on at step 2.
    Microsoft Edge or Google Chrome is needed for PDF output and no-dialog printing; Adobe Acrobat (or Reader) for
    printing to a named printer.
 2. Copy this folder anywhere. It is self-contained. Open a terminal in it and run
@@ -66,13 +68,36 @@ Cerner-hosted browser allows the folder picker (the File System Access API); the
 
 `cores doctor` at any time lists what is installed, the printers Windows knows, the inbox folder and the reports folder.
 
-### No Python on the other computer?
+### No Python on the computer?
 
-Run `cores bundle` once on a computer that has Python and internet. It downloads python.org's embeddable Python
-(the version you are running, or `--version 3.13.7` for another) and the two packages into `python\` inside this
-folder, about 20 MB to download and 40 MB on disk. From then on `cores.cmd` uses that private Python first, so the
-folder runs on any Windows PC with nothing installed: copy it (without `reports\`) and use `.\cores` as usual.
-`cores bundle --dry-run` only shows what would be downloaded; `--force` replaces an existing `python\`.
+Run `.\bundle`. It needs internet once and nothing else -- in particular it does **not** need Python, so you can run
+it on the locked-down PC that has none, which is the whole point:
+
+```
+.\bundle
+```
+
+It downloads python.org's embeddable Python and the packages into `python\` inside this folder (about 17 MB to
+download, 35 MB on disk). From then on `cores.cmd` uses that private Python in preference to any other, so the folder
+runs on any Windows PC with nothing installed. Copy it (without `reports\`) and use `.\cores` as usual.
+
+| | |
+|---|---|
+| `.\bundle` | build `python\`, replacing whatever is there |
+| `.\bundle -DryRun` | only list what would be downloaded |
+| `.\bundle -Version 3.13.7` | a particular Python, if PyPI has no lxml wheel for the default yet |
+| `.\bundle -Arch arm64` | the Windows build (default: this machine) |
+
+How it manages without Python: if the PC has one, `.\bundle` uses it to run `cores bundle`. If it has none, it
+unpacks python.org's embeddable build into `%TEMP%`, runs `cores bundle` with *that*, and deletes it again -- so the
+downloading, checksums and verification only ever exist in one place, `cores.py`. Nothing is installed, no admin
+rights are needed and nothing outside this folder changes.
+
+`cores doctor` reports the bundle by running it, not by looking for the file: a `python\` that quietly borrows an
+installed Python's standard library (an embeddable build missing its `python*._pth`) works on the PC that made it and
+fails on the PC you copied it to, so doctor marks it `!!` and `cores.cmd` ignores it in favour of a real Python until
+you rebuild it.
+
 Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints without a dialog.
 
 ## Commands
@@ -98,6 +123,7 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | `cores config [--init] [--set KEY VALUE]` | show settings; write `cores.config.json`; change one setting |
 | `cores help [COMMAND]` | this list, or one command's options (`cores help run`) |
 | `cores bundle [--dry-run] [--force] [--version X.Y.Z]` | put a private Python plus packages in `python\` so the folder needs no installed Python |
+| `.\bundle` (not a `cores` command) | the same thing on a PC with no Python at all -- see [No Python on the computer?](#no-python-on-the-computer) |
 
 `cores -h`, `cores -help`, `cores /?` and `cores <command> -h` all work as well, and `cores` on its own shows the help
 followed by what `cores run` would use next. The pipeline pieces still work on their own too:
@@ -141,6 +167,7 @@ or use `cores config --set KEY VALUE`.
 | File | Role |
 |---|---|
 | `cores.py`, `cores.cmd` | the command and its Windows launcher |
+| `bundle.cmd`, `bundle.ps1` | build `python\` on a PC with no Python installed |
 | `Make Daily Report.cmd`, `Print Daily Report.cmd` | drag-and-drop targets |
 | `capture_report.js` | pasted into the CORES window's console to capture a report |
 | `cores_parse.py`, `cores_parse_anes.py` | capture HTML -> JSON (I-PASS six-column and Anesthesia nine-column layouts) |
@@ -149,7 +176,7 @@ or use `cores config --set KEY VALUE`.
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
 | `requirements.txt` | Python packages |
 | `cores.config.json` | optional settings |
-| `python\` | optional, made by `cores bundle`: a private Python so nothing needs installing |
+| `python\` | optional, made by `.\bundle`: a private Python so nothing needs installing |
 | `reports\` | created on first run: captures, JSON, Daily Reports, PDFs (PHI) |
 
 Captures left next to the scripts from before the `reports\` folder existed are still found; the first command that
@@ -190,4 +217,5 @@ into `reports\` by hand.
 
 Copy the folder without `reports\` and without any leftover captures, JSON files, Daily Reports or PDFs next to the
 scripts (all PHI; `cores clean` lists them), then `.\cores setup --add-path`. Nothing else is needed. If the other
-computer has no Python, run `cores bundle` here first and copy the `python\` folder along with the rest.
+computer has no Python, either run `.\bundle` here first and copy the `python\` folder along with the rest, or copy
+the folder as it is and run `.\bundle` there -- it works on a PC with no Python.
