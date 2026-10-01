@@ -1508,6 +1508,43 @@ def build_parser():
 
 
 HELP_ALIASES = {'-help', '-?', '/?', '/help'}  # what Windows users tend to type; all mean --help
+NEEDS_PACKAGES = {'run', 'capture', 'parse', 'watch'}  # the commands that import cores_parse (bs4 + lxml)
+
+
+def missing_packages():
+    missing = []
+    for mod, pkg in (('bs4', 'beautifulsoup4'), ('lxml', 'lxml')):
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(pkg)
+    return missing
+
+
+def check_dependencies(cfg):
+    """Has `cores setup` been done for this Python? The import test is the answer (a marker file would go stale whenever
+    the launcher picks a different interpreter). If not, offer to run setup now, then carry on with the command."""
+    if sys.version_info < (3, 10):
+        raise CoresError(f'Python 3.10+ is required; this is {platform.python_version()} ({sys.executable}). '
+                         'Install a newer Python, or run `.\\bundle` to get a private one.')
+    missing = missing_packages()
+    if not missing:
+        return
+    say(f'First-time setup needed: {", ".join(missing)} not installed for {sys.executable}.')
+    if not (sys.stdin and sys.stdin.isatty()):
+        raise CoresError('run `.\\cores setup` (or `.\\bundle` for a private Python), then try again.')
+    try:
+        answer = input('Run `cores setup` now? [Y/n] ').strip().lower()
+    except EOFError:
+        answer = 'n'
+    if answer not in ('', 'y', 'yes'):
+        raise CoresError('not set up; run `.\\cores setup` when ready (`.\\bundle` makes a private Python with everything included).')
+    import argparse as _ap, importlib
+    cmd_setup(_ap.Namespace(add_path=False), cfg)
+    importlib.invalidate_caches()
+    if missing_packages():
+        raise CoresError('setup finished but the packages still cannot be imported; run `.\\cores doctor` for details.')
+    say('Setup complete; continuing.\n')
 
 
 def main(argv=None):
@@ -1526,6 +1563,8 @@ def main(argv=None):
             say('')
             cmd_latest(a, cfg)
             return 0
+        if a.cmd in NEEDS_PACKAGES:
+            check_dependencies(cfg)
         return a.fn(a, cfg) or 0
     except CoresError as ex:
         say(f'cores: {ex}')
