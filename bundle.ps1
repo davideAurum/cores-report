@@ -110,6 +110,6 @@ try {
 
 if ($code -eq 0 -and -not $DryRun) {
     Write-Host ''
-    Write-Host 'Done. `.\cores doctor` now reports the bundled Python; `.\cores run` uses it in preference to any other.'
+    Write-Host 'Done. `.\cores doctor` now reports the bundled Python; `.\cores generate` uses it in preference to any other.'
 }
 exit $code

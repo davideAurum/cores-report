@@ -23,7 +23,7 @@
 // button (CORES's own advice), a couple of times, before giving up and showing the dialog text.
 // The HTML is then delivered every way that is switched on (defaults: clipboard + download):
 //   - clipboard: the whole report goes on the clipboard, which Citrix relays to your PC; there run
-//         cores run --clipboard            (or keep  cores watch --clipboard --print  running)
+//         cores generate                   (or keep  cores watch --clipboard --print  running)
 //     and it is saved into reports\ and turned into the Daily Report without any download;
 //   - download: saved by the browser as "CORES report <id> <date> <time>.html";
 //   - folder: written straight into a folder chosen with the browser's folder picker (Chromium's File System
@@ -100,7 +100,7 @@
 
   function copyText(text, name, attempt, popup) {
     attempt = attempt || 1;
-    var done = 'report HTML is on the clipboard (' + text.length.toLocaleString() + ' chars); on your PC run   cores run --clipboard';
+    var done = 'report HTML is on the clipboard (' + text.length.toLocaleString() + ' chars); on your PC run   cores generate';
     var why = [];
     if (devtoolsCopy) {
       try { devtoolsCopy(text); log(done + ' (DevTools copy)'); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }

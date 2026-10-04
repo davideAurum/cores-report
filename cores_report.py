@@ -7,7 +7,8 @@ Usage:
 Each patient is a two-row block: Location / Patient | Summary | Vitals · Vent · I&O · Lines | Labs | Meds | Tasks / Sit Awareness | Notes (blank, for
 handwriting), then a full-width PRN row.
 Click a column header to sort; use the toolbar to filter. Hidden patients are not printed. Designed for ~1000 px
-(letter landscape) and up.
+(letter landscape) and up. The toolbar's Paper switch prints portrait instead; Optimize widths picks the column widths
+that fit the shown patients on the fewest pages.
 The "Inspect" toggle shows the glossary name of any element on hover (names per REPORT_GLOSSARY.md).
 Opening the result with #print on the end of its URL brings up the print dialog at once (cores.py uses this).
 """
@@ -180,9 +181,12 @@ body.inspect .insp-hl{outline:2px solid #e07a00;outline-offset:1px;background:rg
 #insp-tip{position:fixed;z-index:99;background:#222;color:#fff;font-size:11px;padding:3px 8px;border-radius:3px;pointer-events:none;display:none;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)}
 #insp-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;background:#1f4e79;color:#fff;font-size:12px;padding:6px 12px;border-radius:4px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .foot{color:var(--mute);font-size:9px;margin-top:8px;text-align:center}
+.toolbar .optmsg{color:var(--mute)}
+/* off-screen copy used by Optimize widths: the print rules below, applied on screen so it can be measured */
+.pm{position:absolute;left:-30000px;top:0;font-size:9px;line-height:1.22;background:#fff}
+.pm .rpt thead th{position:static} .pm .rpt > thead > tr > th,.pm .rpt > tbody > tr > td{padding:3px 5px} .pm .pmw{display:flow-root}
 @media screen{body{background:#e9e9e9}.page{background:#fff;padding:14px 18px;box-shadow:0 0 6px rgba(0,0,0,.15);max-width:1800px;margin:0 auto}}
 @media print{
-  @page{size:letter landscape;margin:.3in}
   body{padding:0;font-size:9px;line-height:1.22}
   .page{padding:0}
   .toolbar,#insp-tip,#insp-toast,.rz{display:none!important}
@@ -253,19 +257,27 @@ JS = """
   },true);
   sortBy('location',1); apply();
   // column widths (drag a header boundary) and section visibility; both persist in localStorage
+  // widths are kept per paper orientation; the orientation <select> starts at the default cores_report.py baked in
   const cols=[...table.querySelectorAll('colgroup col')], ths=[...table.querySelectorAll('thead th')];
-  const defaults=cols.map(c=>c.style.width), KEYW='cores-report-cols-v1', KEYS='cores-report-hidden-v1';
+  const defaults=cols.map(c=>c.style.width), KEYS='cores-report-hidden-v1', KEYO='cores-report-orient-v1';
+  const keyW=o=>o==='portrait'?'cores-report-cols-portrait-v1':'cores-report-cols-v1';
   const COLNAME=ths.map(th=>th.dataset.name.replace(' header',' column'));
-  let base=defaults.slice(), hidden=new Set();
-  try{const s=JSON.parse(localStorage.getItem(KEYW)||'null'); if(s&&s.length===cols.length)base=s;}catch(e){}
+  const orientSel=document.getElementById('orient'), pageSz=document.getElementById('pagesz'), optMsg=document.getElementById('opt-msg');
+  let orient=orientSel.value, hidden=new Set();
+  try{const s=localStorage.getItem(KEYO); if(s==='portrait'||s==='landscape')orient=s;}catch(e){}
+  function loadW(o){try{const s=JSON.parse(localStorage.getItem(keyW(o))||'null'); if(s&&s.length===cols.length)return s;}catch(e){} return defaults.slice();}
+  let base=loadW(orient);
   try{const s=JSON.parse(localStorage.getItem(KEYS)||'null'); if(Array.isArray(s))hidden=new Set(s);}catch(e){}
   const secStyle=document.createElement('style'); document.head.appendChild(secStyle);
   const COLPARTS=__COLPARTS__;
-  function render(){
-    const rules=[];
+  function effHidden(){
     // a container whose parts are all hidden is hidden too (Allergy / Diet block -> Labs -> columns)
     const eff=new Set(hidden);
     for(let changed=true;changed;){changed=false; for(const k in COLPARTS){const parts=COLPARTS[k]; if(!eff.has(k)&&parts.length&&parts.every(p=>eff.has(p))){eff.add(k);changed=true;}}}
+    return eff;
+  }
+  function render(){
+    const rules=[], eff=effHidden();
     cols.forEach((c,i)=>{const off=eff.has(COLNAME[i]); c.style.width=off?'0':base[i];
       // keep the cell in the row (display:none would shift the other cells' column slots); collapse it instead
       if(off)rules.push('.rpt thead th:nth-child('+(i+1)+'),.rpt tr.main>td:nth-child('+(i+1)+'){width:0!important;padding:0!important;border-left:0!important;border-right:0!important;font-size:0!important;overflow:hidden}'
@@ -273,8 +285,9 @@ JS = """
     eff.forEach(n=>{if(!COLNAME.includes(n))rules.push('[data-name="'+n.replace(/"/g,'')+'"]{display:none!important}');});
     secStyle.textContent=rules.join(' ');
     document.querySelectorAll('[data-sec]').forEach(cb=>{cb.checked=!hidden.has(cb.dataset.sec);});
+    pageSz.textContent='@page{size:letter '+orient+';margin:.3in}'; orientSel.value=orient;
   }
-  function saveW(){try{localStorage.setItem(KEYW,JSON.stringify(base));}catch(e){}}
+  function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify(base));}catch(e){}}
   function saveS(){try{localStorage.setItem(KEYS,JSON.stringify([...hidden]));}catch(e){}}
   ths.forEach((th,i)=>{
     if(i===ths.length-1)return;
@@ -286,11 +299,103 @@ JS = """
       const x0=e.clientX, w0=ths[i].getBoundingClientRect().width, w1=ths[j].getBoundingClientRect().width, tw=table.getBoundingClientRect().width;
       h.classList.add('on'); document.body.classList.add('resizing');
       function move(ev){const d=Math.max(-(w0-90),Math.min(w1-90,ev.clientX-x0)); base[i]=((w0+d)/tw*100).toFixed(2)+'%'; base[j]=((w1-d)/tw*100).toFixed(2)+'%'; render();}
-      function up(){document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);h.classList.remove('on');document.body.classList.remove('resizing');saveW();}
+      function up(){document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);h.classList.remove('on');document.body.classList.remove('resizing');saveW();optMsg.textContent='';}
       document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
     });
   });
-  document.getElementById('cols').addEventListener('click',()=>{base=defaults.slice();render();try{localStorage.removeItem(KEYW);}catch(e){}});
+  document.getElementById('cols').addEventListener('click',()=>{base=defaults.slice();optMsg.textContent='';render();try{localStorage.removeItem(keyW(orient));}catch(e){}});
+  orientSel.addEventListener('change',()=>{orient=orientSel.value;base=loadW(orient);optMsg.textContent='';render();try{localStorage.setItem(KEYO,orient);}catch(e){}});
+  // Optimize widths. An off-screen copy of the table, laid out as it prints (page width, print font and padding), is
+  // measured with every column at every width from 40 px up in 5 px steps: that gives each patient's cell height as a
+  // function of its column's width, and the narrowest width at which nothing is clipped. A patient block is as tall
+  // as its tallest cell, blocks never split across pages and the column headers repeat on every page, so the page
+  // count of any split of the width follows from those tables. A local search (moving width between pairs of
+  // columns, from the current widths and from 40 random splits) then looks for the split with the fewest pages and,
+  // among those, the least total height. The Notes column keeps its width (it is for handwriting); hidden columns and
+  // filtered-out patients are left out. The result is laid out once more to check it, and kept only if it is better.
+  const PAGE={landscape:[998.4,758.4],portrait:[758.4,998.4]};  // letter less the .3in margins, in CSS px (96 per inch)
+  const STEP=5, KMIN=8, optBtn=document.getElementById('optimize');
+  const tick=()=>new Promise(r=>setTimeout(r,0));
+  async function optimize(){
+    const [W,PH]=PAGE[orient], eff=effHidden(), n=cols.length, notes=COLNAME.indexOf('Notes column');
+    const vis=COLNAME.map(c=>!eff.has(c)), idx=[...Array(n).keys()].filter(i=>vis[i]&&i!==notes);
+    const fixedCols=[...Array(n).keys()].filter(i=>vis[i]&&!idx.includes(i));
+    if(!idx.length){optMsg.textContent='No columns to optimize';return;}
+    const pct=base.map((b,i)=>vis[i]?parseFloat(b)||0:0), pctSum=pct.reduce((a,b)=>a+b,0)||1, curPx=pct.map(x=>x/pctSum*W);
+    const box=document.createElement('div'); box.className='pm'; box.style.width=W+'px';
+    const hd=document.querySelector('.rpt-head').cloneNode(true), t=table.cloneNode(true);
+    t.removeAttribute('id'); t.querySelectorAll('.rz,tbody.hide').forEach(x=>x.remove());
+    box.appendChild(hd); box.appendChild(t); document.body.appendChild(box);
+    try{
+      const tcols=[...t.querySelectorAll('colgroup col')], blk=[...t.querySelectorAll('tbody.blk')], P=blk.length;
+      if(!P){optMsg.textContent='No patients shown';return;}
+      const wrap=blk.map(b=>[...b.querySelector('tr.main').children].map(td=>{const d=document.createElement('div');d.className='pmw';while(td.firstChild)d.appendChild(td.firstChild);td.appendChild(d);return d;}));
+      const setW=px=>{tcols.forEach((c,i)=>c.style.width=px[i]+'px'); t.style.width=px.reduce((a,b)=>a+b,0)+'px';};
+      const KMAX=Math.floor(W*0.8/STEP);
+      const H=idx.map(()=>blk.map(()=>new Float32Array(KMAX+1))), fitK=idx.map(()=>new Int16Array(P).fill(-1));
+      for(let k=KMIN;k<=KMAX;k++){
+        setW(cols.map((c,i)=>idx.includes(i)?k*STEP:curPx[i]));
+        idx.forEach((i,a)=>{for(let p=0;p<P;p++){const d=wrap[p][i]; H[a][p][k]=d.offsetHeight; if(fitK[a][p]<0&&d.scrollWidth<=d.clientWidth+1)fitK[a][p]=k;}});
+        if(k%8===0){optMsg.textContent='Measuring… '+Math.round(100*(k-KMIN)/(KMAX-KMIN))+'%'; await tick();}
+      }
+      // each column gets 1 px beyond its measured width, so that rounding when printing never tips a line into wrapping
+      const avail=W-fixedCols.reduce((s,i)=>s+curPx[i],0), U=Math.floor((avail-idx.length)/STEP);
+      if(idx.length*KMIN>U){optMsg.textContent='The Notes column leaves no room; narrow it first';return;}
+      // how much is cut off at the right edge at these widths, summed over cells (a cell that clips even at the widest
+      // is not counted: it always does); squeezing one column hard costs more than trimming several a little
+      const clipped=g=>{let c=0;for(let a=0;a<idx.length;a++)for(let p=0;p<P;p++)if(fitK[a][p]>g[a])c+=fitK[a][p]-g[a];return c;};
+      const realClips=()=>{let c=0;idx.forEach((i,a)=>{for(let p=0;p<P;p++){const d=wrap[p][i];if(fitK[a][p]>=0&&d.scrollWidth>d.clientWidth+1)c++;}});return c;};
+      // what the model leaves out (PRN row, borders, padding, the Notes column) is calibrated on the current layout
+      setW(curPx);
+      const headH=hd.getBoundingClientRect().height+8, theadH=t.tHead.getBoundingClientRect().height;
+      const nowH=blk.map(b=>b.getBoundingClientRect().height), clipsBefore=realClips();
+      const fixedH=wrap.map(w=>Math.max(0,...fixedCols.map(i=>w[i].offsetHeight)));
+      const extra=blk.map((b,p)=>nowH[p]-Math.max(fixedH[p],...idx.map(i=>wrap[p][i].offsetHeight)));
+      // pages as the browser fills them; 6 px kept spare so that a block that only just fits is not relied on
+      const PAGEH=PH-6, pages=hs=>{let pg=1,y=headH+theadH,start=y;for(const h of hs){if(y+h>PAGEH&&y>start){pg++;y=start=theadH;}y+=h;while(y>PAGEH){pg++;y=theadH+(y-PAGEH);}}return pg;};
+      const heights=g=>blk.map((b,p)=>{let m=fixedH[p];for(let a=0;a<idx.length;a++){const v=H[a][p][Math.min(g[a],KMAX)];if(v>m)m=v;}return m+extra[p];});
+      // least cut off first, then fewest pages, then least total height
+      const cost=g=>{const hs=heights(g);return clipped(g)*1e9+pages(hs)*1e7+hs.reduce((a,b)=>a+b,0);};
+      const fix=g=>{  // bring a split to exactly U steps, none narrower than KMIN
+        let d=U-g.reduce((a,b)=>a+b,0);
+        for(let a=0;d!==0;a=(a+1)%g.length){if(d>0){g[a]++;d--;}else if(g[a]>KMIN){g[a]--;d++;}}
+        return g;
+      };
+      const search=g=>{
+        let c=cost(g);
+        for(let better=true;better;){
+          better=false; let bestC=c,best=null;
+          for(let a=0;a<g.length;a++)for(let b=0;b<g.length;b++)if(a!==b)for(const k of [1,2,4,8,16,32]){
+            if(g[a]-k<KMIN)break;
+            g[a]-=k;g[b]+=k; const v=cost(g); if(v<bestC-1e-6){bestC=v;best=[a,b,k];} g[a]+=k;g[b]-=k;
+          }
+          if(best){g[best[0]]-=best[2];g[best[1]]+=best[2];c=bestC;better=true;}
+        }
+        return [c,g];
+      };
+      optMsg.textContent='Searching…'; await tick();
+      let [bestC,bestG]=search(fix(idx.map(i=>Math.max(KMIN,Math.floor(curPx[i]/STEP))))), seed=12345;
+      const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647, free=U-idx.length*KMIN;
+      for(let s=0;s<40;s++){
+        const w=idx.map(()=>-Math.log(rnd()+1e-9)), ws=w.reduce((a,b)=>a+b,0);
+        const [c,g]=search(fix(w.map(x=>KMIN+Math.floor(free*x/ws))));
+        if(c<bestC){bestC=c;bestG=g;}
+      }
+      const px=curPx.slice(); idx.forEach((i,a)=>px[i]=bestG[a]*STEP+1);
+      const big=idx.reduce((m,i)=>px[i]>px[m]?i:m,idx[0]); px[big]+=avail-idx.reduce((s,i)=>s+px[i],0);
+      // check against a real layout of the new widths
+      const before=pages(nowH), totBefore=nowH.reduce((a,b)=>a+b,0);
+      setW(px); const newH=blk.map(b=>b.getBoundingClientRect().height), after=pages(newH), totAfter=newH.reduce((a,b)=>a+b,0), clipsAfter=realClips();
+      const cutBefore=clipped(idx.map(i=>curPx[i]/STEP)), cutAfter=clipped(bestG);
+      const pl=x=>'~'+x+' page'+(x>1?'s':''), cl=x=>x?'; '+x+' cell'+(x>1?'s':'')+' still cut off at the right edge (hide a section to make room)':'';
+      if(!(cutAfter<cutBefore-0.5||(cutAfter<cutBefore+0.5&&(after<before||(after===before&&totAfter<totBefore*0.995))))){optMsg.textContent='Already as tight as it gets: '+pl(before)+' '+orient+cl(clipsBefore);return;}
+      cols.forEach((c,i)=>{if(vis[i])base[i]=(px[i]/W*100).toFixed(3)+'%';});
+      render(); saveW();
+      optMsg.textContent='Optimized for '+orient+': '+pl(before)+' \\u2192 '+pl(after)+', '+Math.abs(Math.round(100*(1-totAfter/totBefore)))+(totAfter<=totBefore?'% shorter':'% taller')
+        +(clipsBefore>clipsAfter?', '+(clipsBefore-clipsAfter)+' fewer cells cut off':'')+cl(clipsAfter);
+    }finally{box.remove();}
+  }
+  optBtn.addEventListener('click',async()=>{optBtn.disabled=true;try{await optimize();}catch(err){optMsg.textContent='Optimize failed: '+err.message;}finally{optBtn.disabled=false;}});
   document.querySelectorAll('[data-sec]').forEach(cb=>cb.addEventListener('change',()=>{if(cb.checked)hidden.delete(cb.dataset.sec);else hidden.add(cb.dataset.sec);render();saveS();}));
   document.getElementById('sec-all').addEventListener('click',()=>{hidden.clear();render();saveS();});
   document.addEventListener('click',e=>{const m=document.getElementById('secmenu'); if(m.open&&!m.contains(e.target))m.open=false;});
@@ -790,7 +895,9 @@ def options(values):
     return ''.join(f'<option value="{e(v)}">{e(v)}</option>' for v in values)
 
 
-def render(data):
+def render(data, orientation='landscape'):
+    """The Daily Report page. orientation is the paper it prints on until the toolbar's Paper switch is changed."""
+    orient = 'portrait' if orientation == 'portrait' else 'landscape'
     h = data.get('header', {})
     recs = data['records']
     gen = datetime.datetime.now().strftime('%m/%d/%y %H:%M')
@@ -800,7 +907,8 @@ def render(data):
     rows = ''.join(render_row(r, h.get('report_date', '')) for r in recs)
     return f'''<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>ICU Daily Report {e(h.get("service", ""))} / {e(h.get("team", ""))} — {e(h.get("report_date", ""))}</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style></head>
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
+<style id="pagesz">@page{{size:letter {orient};margin:.3in}}</style></head>
 <body><div class="page">
 <div class="rpt-head" data-name="Report header"><div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span style="color:var(--accent)" data-name="Current service / team">{e(h.get("service", ""))} / {e(h.get("team", ""))}</span></h1>
 <div class="conf">CONFIDENTIAL — contains PHI. Handle and dispose of properly.</div></div>
@@ -814,9 +922,12 @@ def render(data):
  <label>Sort <select id="sort"><option value="location">Location</option><option value="pname">Name</option><option value="sevrank">Severity</option><option value="los">LOS</option><option value="age">Age</option><option value="tasks">Open tasks</option><option value="drips">Drips</option></select></label>
  <button id="reset" type="button">Reset</button>
  <button id="print" type="button">Print</button>
+ <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
+ <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
  <details class="secmenu" id="secmenu"><summary title="Choose which sections are shown">Sections &#9662;</summary><div class="menu">{sections_menu()}<div class="menu-foot"><button id="sec-all" type="button">Show all</button></div></div></details>
  <label title="Hover to see an element's name, click to copy it"><input type="checkbox" id="inspect"> Inspect</label>
+ <span class="optmsg" id="opt-msg"></span>
  <span class="count" id="count"></span>
 </div>
 <div id="insp-tip"></div><div id="insp-toast"></div>
@@ -851,7 +962,7 @@ def main(argv):
         data = parse_file(src)
     out = args[1] if len(args) > 1 else re.sub(r'\.(html?|json)$', '', src) + ' - Daily Report.html'
     with open(out, 'w', encoding='utf-8') as fh:
-        fh.write(render(data))
+        fh.write(render(data, 'portrait' if '--portrait' in argv else 'landscape'))
     print(f'{len(data["records"])} patients -> {out}')
 
 

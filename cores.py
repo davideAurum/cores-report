@@ -1,31 +1,14 @@
 #!/usr/bin/env python3
-"""cores -- one command for the CORES ICU Daily Report workflow.
+"""cores -- CORES ICU Daily Report: `cores capture`, then `cores generate`.
 
-Daily use (three steps):
-  1. cores capture           copies capture_report.js to the clipboard and shows the steps to run it in CORES
-  2. (in the CORES window)   paste, Enter, then  captureCores(281)  -> "CORES report 281 <date> <time>.html" downloads
-  3. cores run               newest capture (Downloads) -> reports\\ -> parse -> Daily Report -> opens in the browser
-     cores run --print       ... and prints it (browser print dialog, or straight to a printer with --to / --kiosk)
-
-All commands (FILE defaults to the newest matching file; `cores <command> -h` shows the options):
-  run [FILE | --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]   process a capture (or a .json / Daily Report)
-  capture [--direct --id 281|8] [--no-download] [--folder]   capture script + its call -> clipboard, and the steps
-  watch [--clipboard] [--print]                     auto-run every new capture (from the clipboard and/or Downloads)
-  parse FILE [-o X.json]      capture -> JSON                         render FILE [-o X]   capture/JSON -> Daily Report
-  open [FILE]                 open a Daily Report                     print [FILE] [--to PRINTER | --kiosk | --dialog]
-  pdf [FILE] [-o X.pdf]       Daily Report -> PDF (headless Edge)     latest               what `run` would use
-  clean [--keep N] [--dry-run] [--inbox]                               annotate FILE        annotatable copy of a capture
-  har FILE                    HAR / copied cURL -> capture HTML       doctor | setup [--add-path] | config [--init] [--set K V]
-  help [COMMAND]              this text, or one command's options (also: cores -h, cores <command> -h, -help, /?)
-  bundle [--dry-run]          put a private copy of Python (+ packages) in python\\ so the folder runs without Python
-                              installed (on a PC that has no Python at all, run  .\\bundle  instead: same thing, no Python needed)
-
-Captures found in Downloads or next to the scripts are moved into reports\\ before anything is written (--copy copies).
-Everything runs locally. The captures, JSON, Daily Reports and PDFs contain PHI.
+`cores` on its own lists only those two. Also available: watch, open, print, pdf, clean, doctor, setup, config,
+bundle, parse, render, latest, annotate, har; `cores help COMMAND` shows one, README.md describes them all.
 """
 import argparse
 import contextlib
 import datetime as dt
+import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -36,6 +19,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +38,8 @@ DEFAULTS = {
     'printer': '',                   # printer name for `--print` without a dialog (needs Adobe Acrobat); '' = browser print dialog
     'acrobat': '',                   # Acrobat.exe / AcroRd32.exe used for printing to a named printer; '' = auto
     'keep': 3,                       # capture sets kept by `cores clean`
-    'open_after_run': True,          # `cores run` opens the Daily Report in the browser
+    'open_after_run': True,          # `cores generate` opens the Daily Report in the browser
+    'orientation': 'landscape',      # paper a new Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
 }
 REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)'}
 DERIVED = {'json': '{stem}.json', 'report': '{stem} - Daily Report.html', 'pdf': '{stem} - Daily Report.pdf',
@@ -66,6 +52,8 @@ SUFFIX_RE = re.compile(r' - (Daily Report|annotate)( \(\d+\))?(\.part)?$', re.I)
 STAMP_RE = re.compile(r'(\d{4})-(\d{2})-(\d{2}) (\d{2})(\d{2})')  # the date and time captureCores() puts in the file name
 KIND_NAMES = {'capture': 'capture', 'json': 'parsed JSON', 'report': 'Daily Report', 'pdf': 'PDF', 'annotate': 'annotate copy',
               'part': 'unfinished PDF'}
+CAPTURE_NAME_RE = re.compile(r'<!--\s*CORES capture ([^<>\r\n\\/:*?"|]+?\.html)\s*-->')  # written by captureCores()
+CF_UNICODETEXT = 13
 
 
 class CoresError(Exception):
@@ -111,6 +99,9 @@ def load_config():
         raise CoresError('"keep" in the config must be a whole number')
     if cfg['import_mode'] not in ('move', 'copy'):
         raise CoresError('"import_mode" in the config must be "move" or "copy"')
+    cfg['orientation'] = str(cfg['orientation']).strip().lower()
+    if cfg['orientation'] not in ('landscape', 'portrait'):
+        raise CoresError('"orientation" in the config must be "landscape" or "portrait"')
     return cfg
 
 
@@ -154,11 +145,22 @@ def inbox_dirs(cfg):
     return [expand(d) for d in cfg['inbox_dirs']]
 
 
+def in_inbox(p, cfg):
+    """True when p sits directly in one of the inbox folders."""
+    return Path(p).resolve().parent in [d.resolve() for d in inbox_dirs(cfg) if d.is_dir()]
+
+
 # ---------------------------------------------------------------- files
 
 def stem_of(p):
     """'CORES report 281 2026-09-15 1957 - Daily Report.html' -> 'CORES report 281 2026-09-15 1957'."""
     return SUFFIX_RE.sub('', Path(p).stem)
+
+
+def derived(p, kind):
+    """The 'json' / 'report' / 'pdf' / 'annotate' file of p's capture set, next to p."""
+    p = Path(p)
+    return p.with_name(DERIVED[kind].format(stem=stem_of(p)))
 
 
 _SNIFFED = {}  # (path, size, mtime) -> bool, so `watch` does not re-read every stray .html in Downloads on each poll
@@ -240,7 +242,7 @@ def resolve_file(given, kind, cfg, include_inbox=False):
     p = find_newest(kind, cfg, include_inbox)
     if p is None:
         where = ' or '.join(rel(d) for d in search_dirs(cfg, include_inbox))
-        hint = '  Run `cores capture` for the capture steps.' if kind == 'capture' else '  Run `cores run` first.'
+        hint = '  Run `cores capture` for the capture steps.' if kind == 'capture' else '  Run `cores generate` first.'
         raise CoresError(f'no {KIND_NAMES[kind]} found in {where}.{hint}')
     return p
 
@@ -268,7 +270,7 @@ def import_capture(src, cfg, copy=False):
     rd = reports_dir(cfg).resolve()
     if src.parent == rd:
         return src, 'in place'
-    from_inbox = src.parent == HERE or src.parent in [d.resolve() for d in inbox_dirs(cfg) if d.is_dir()]
+    from_inbox = src.parent == HERE or in_inbox(src, cfg)
     move = from_inbox and not copy and cfg['import_mode'] == 'move'
     dst = rd / src.name
     if dst.exists():
@@ -330,13 +332,13 @@ def do_parse(capture, out=None, data=None):
     capture = Path(capture)
     data = data if data is not None else parse_capture(capture)
     data['source'] = capture.name
-    out = Path(out) if out else capture.with_name(DERIVED['json'].format(stem=stem_of(capture)))
+    out = Path(out) if out else derived(capture, 'json')
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding='utf-8')
     return data, out
 
 
-def do_render(src, out=None, data=None):
+def do_render(src, out=None, data=None, cfg=None):
     from cores_report import render
     src = Path(src)
     if data is None:
@@ -346,9 +348,9 @@ def do_render(src, out=None, data=None):
                 raise CoresError(f'{src.name} is not a parsed CORES report (no "records")')
         else:
             data = parse_capture(src)
-    out = Path(out) if out else src.with_name(DERIVED['report'].format(stem=stem_of(src)))
+    out = Path(out) if out else derived(src, 'report')
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(data), encoding='utf-8')
+    out.write_text(render(data, (cfg or {}).get('orientation', 'landscape')), encoding='utf-8')
     return data, out
 
 
@@ -550,14 +552,14 @@ def remove_dir(d):
 
 
 def make_pdf(report, cfg, out=None):
-    """Daily Report -> PDF with headless Edge/Chrome, honouring the report's @page (letter landscape) CSS. The PDF is
-    written under a temporary name and swapped into place; if the old PDF is open elsewhere (Acrobat keeps a printed
+    """Daily Report -> PDF with headless Edge/Chrome, honouring the report's @page CSS (letter, landscape or portrait).
+    The PDF is written under a temporary name and swapped into place; if the old PDF is open elsewhere (Acrobat keeps a printed
     PDF open) the new one gets a " (2)" name instead of failing."""
     exe = chromium_exe(cfg)
     if not exe:
         raise CoresError('no Microsoft Edge or Google Chrome found for PDF output; set "browser" in cores.config.json')
     report = Path(report).resolve()
-    out = Path(out).resolve() if out else report.with_name(DERIVED['pdf'].format(stem=stem_of(report)))
+    out = Path(out).resolve() if out else derived(report, 'pdf')
     out.parent.mkdir(parents=True, exist_ok=True)
     part = out.with_name(out.stem + '.part.pdf')
     tmp = tempfile.mkdtemp(prefix='cores-pdf-')
@@ -595,6 +597,14 @@ def make_pdf(report, cfg, out=None):
         say(f'note: {out.name} is open in another program (Acrobat?), so the new PDF is {alt.name}')
         out = alt
     return out, exe
+
+
+def windows_printers():
+    """['*Default printer', ' Other printer', ...] on Windows, [] elsewhere or on failure."""
+    if not IS_WIN:
+        return []
+    out = powershell("Get-CimInstance Win32_Printer | ForEach-Object { ($(if ($_.Default) {'*'} else {' '}) + $_.Name) }") or ''
+    return [ln.rstrip() for ln in out.splitlines() if ln.strip()]
 
 
 def default_printer():
@@ -639,29 +649,29 @@ def do_print(report, cfg, to=None, kiosk=False, dialog=False):
     return f'opened in {used} with the print dialog', True
 
 
-def windows_printers():
-    """['*Default printer', ' Other printer', ...] on Windows, [] elsewhere or on failure."""
-    if not IS_WIN:
-        return []
-    out = powershell("Get-CimInstance Win32_Printer | ForEach-Object { ($(if ($_.Default) {'*'} else {' '}) + $_.Name) }") or ''
-    return [ln.rstrip() for ln in out.splitlines() if ln.strip()]
-
-
 # ---------------------------------------------------------------- clipboard, PATH
+
+def win_clipboard_api():
+    """(ctypes, user32, kernel32) with the clipboard and global-memory functions typed for 64-bit handles."""
+    import ctypes
+    from ctypes import wintypes
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    k.GlobalAlloc.restype = wintypes.HGLOBAL
+    k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    k.GlobalLock.restype = ctypes.c_void_p
+    k.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    u.SetClipboardData.restype = wintypes.HANDLE
+    u.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    u.GetClipboardData.restype = wintypes.HANDLE
+    u.GetClipboardData.argtypes = [wintypes.UINT]
+    return ctypes, u, k
+
 
 def to_clipboard(text):
     try:
         if IS_WIN:
-            import ctypes
-            from ctypes import wintypes
-            u, k = ctypes.windll.user32, ctypes.windll.kernel32
-            k.GlobalAlloc.restype = wintypes.HGLOBAL
-            k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-            k.GlobalLock.restype = ctypes.c_void_p
-            k.GlobalLock.argtypes = [wintypes.HGLOBAL]
-            k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-            u.SetClipboardData.restype = wintypes.HANDLE
-            u.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+            ctypes, u, k = win_clipboard_api()
             data = text.encode('utf-16-le') + b'\0\0'
             if not u.OpenClipboard(None):
                 return False
@@ -671,7 +681,7 @@ def to_clipboard(text):
                 ptr = k.GlobalLock(h)
                 ctypes.memmove(ptr, data, len(data))
                 k.GlobalUnlock(h)
-                return bool(u.SetClipboardData(13, h))  # CF_UNICODETEXT; the system owns h from here
+                return bool(u.SetClipboardData(CF_UNICODETEXT, h))  # the system owns h from here
             finally:
                 u.CloseClipboard()
         if IS_MAC:
@@ -686,22 +696,12 @@ def to_clipboard(text):
     return False
 
 
-CAPTURE_NAME_RE = re.compile(r'<!--\s*CORES capture ([^<>\r\n\\/:*?"|]+?\.html)\s*-->')  # written by captureCores()
-
-
 def clipboard_text():
     """Text on the clipboard, or ''."""
     try:
         if IS_WIN:
-            import ctypes
-            from ctypes import wintypes
-            u, k = ctypes.windll.user32, ctypes.windll.kernel32
-            u.GetClipboardData.restype = wintypes.HANDLE
-            u.GetClipboardData.argtypes = [wintypes.UINT]
-            k.GlobalLock.restype = ctypes.c_void_p
-            k.GlobalLock.argtypes = [wintypes.HGLOBAL]
-            k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-            if not u.IsClipboardFormatAvailable(13):  # CF_UNICODETEXT
+            ctypes, u, k = win_clipboard_api()
+            if not u.IsClipboardFormatAvailable(CF_UNICODETEXT):
                 return ''
             for _ in range(5):  # another program may hold the clipboard for a moment
                 if u.OpenClipboard(None):
@@ -710,7 +710,7 @@ def clipboard_text():
             else:
                 return ''
             try:
-                h = u.GetClipboardData(13)
+                h = u.GetClipboardData(CF_UNICODETEXT)
                 if not h:
                     return ''
                 p = k.GlobalLock(h)
@@ -738,7 +738,6 @@ def clipboard_is_script(text):
 def clipboard_capture(cfg, skip_sha=None):
     """A CORES report on the clipboard (captureCores puts it there) -> saved into the reports folder.
     Returns (path or None, sha of the clipboard text or None, saved_now); skip_sha = a text already handled."""
-    import hashlib
     text = clipboard_text()
     if not text or 'row_template' not in text or 'column_name=' not in text or clipboard_is_script(text):
         return None, None, False
@@ -795,24 +794,24 @@ def run_pipeline(src, cfg, do_open=True, want_print=False, want_pdf=False, copy=
         report = src.resolve()
         say(f'Daily Report: {rel(report)}')
     elif kind == 'json':
-        data, report = do_render(src)
+        data, report = do_render(src, cfg=cfg)
         say(f'Rendered: {rel(report)}  ({describe(data)})')
     elif kind == 'capture':
         if skip_done:
             rd = reports_dir(cfg)
             twin = rd / src.name
-            if src.resolve().parent != rd.resolve() and twin.exists() and same_bytes(twin, src) \
-                    and twin.with_name(DERIVED['report'].format(stem=stem_of(twin))).exists():
-                if cfg['import_mode'] == 'move' and not copy and src.resolve().parent in [d.resolve() for d in inbox_dirs(cfg) if d.is_dir()]:
+            done = derived(twin, 'report')
+            if src.resolve().parent != rd.resolve() and done.exists() and same_bytes(twin, src):
+                if cfg['import_mode'] == 'move' and not copy and in_inbox(src, cfg):
                     src.unlink()
                     say(f'Capture:  {src.name} was already processed from the clipboard; removed the duplicate in {src.parent}')
                 else:
                     say(f'Capture:  {src.name} was already processed; left alone')
-                return twin.with_name(DERIVED['report'].format(stem=stem_of(twin)))
+                return done
         cap, data = take_capture(src, cfg, copy=copy)   # parsed where it is, moved in only when it parses
         data, js = do_parse(cap, data=data)
         say(f'Parsed:   {rel(js)}  ({describe(data)})')
-        data, report = do_render(js, data=data)
+        data, report = do_render(js, data=data, cfg=cfg)
         say(f'Rendered: {rel(report)}')
     else:
         raise CoresError(f'{src.name} is not a CORES capture, parsed JSON, or Daily Report')
@@ -875,7 +874,7 @@ def clean_sets(cfg, keep, dry_run, yes, inbox):
         root = sorted(p for p in HERE.iterdir() if p.is_file() and kind_of(p))
         if root:
             say(f'note: {len(root)} report file(s) (PHI) sit next to the scripts in {HERE}; `cores clean` does not touch them. '
-                f'`cores run` on a capture there moves it into {rel(rd)}; delete or move the rest by hand:')
+                f'`cores generate` on a capture there moves it into {rel(rd)}; delete or move the rest by hand:')
             for p in root:
                 say(f'    {p.name}')
     if not doomed:
@@ -901,26 +900,46 @@ def clean_sets(cfg, keep, dry_run, yes, inbox):
 
 # ---------------------------------------------------------------- commands
 
-def print_wanted(a):
-    return bool(a.print or a.to or a.kiosk or a.dialog)
+def pipeline_opts(a, cfg):
+    """run_pipeline() keyword arguments from the options `run` and `watch` share."""
+    return dict(do_open=not a.no_open and cfg['open_after_run'], want_print=bool(a.print or a.to or a.kiosk or a.dialog),
+                want_pdf=a.pdf, copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog)
 
 
-def cmd_run(a, cfg):
-    if a.clipboard:
-        src, _, saved_now = clipboard_capture(cfg)
-        if src is None:
-            if clipboard_is_script(clipboard_text()):
-                raise CoresError('the clipboard holds the capture script (from `cores capture`), not a report. If a report was '
-                                 'on the clipboard when `cores capture` ran, it was saved into the reports folder first: '
-                                 'run `cores run` (no --clipboard) to build it. Otherwise capture again in CORES, then run this '
-                                 'before the next `cores capture`.')
-            raise CoresError('no CORES report on the clipboard. In the CORES window run captureCores(...) (`cores capture` '
-                             'shows the steps); it puts the report there. Or use `cores run` for a downloaded capture.')
+def say_error(ex):
+    say(f'error: {ex}' if isinstance(ex, (CoresError, PermissionError)) else f'error: {type(ex).__name__}: {ex}')
+
+
+def unrendered_capture(cfg):
+    """Newest capture in the reports folder that has no Daily Report yet (e.g. rescued from the clipboard by `capture`)."""
+    return newest([p for p in files_of_kind(reports_dir(cfg, create=False), 'capture') if not derived(p, 'report').exists()])
+
+
+def generate_source(a, cfg):
+    """What `generate` works on: FILE if given; else the newest capture in Downloads; else the clipboard."""
+    if a.file:
+        return resolve_file(a.file, 'capture', cfg)
+    if not a.clipboard:
+        src = newest([p for d in inbox_dirs(cfg) for p in files_of_kind(d, 'capture')])
+        if src:
+            return src
+        say(f'No capture in {" or ".join(str(d) for d in inbox_dirs(cfg))}; using the clipboard.')
+    src, _, saved_now = clipboard_capture(cfg)
+    if src:
         say(f'Clipboard: {rel(src)}' + ('' if saved_now else '  (this report was saved before)'))
-    else:
-        src = resolve_file(a.file, 'capture', cfg, include_inbox=True)
-    run_pipeline(src, cfg, do_open=not a.no_open and cfg['open_after_run'], want_print=print_wanted(a), want_pdf=a.pdf,
-                 copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog)
+        return src
+    if clipboard_is_script(clipboard_text()):
+        src = unrendered_capture(cfg)
+        if src:
+            say(f'The clipboard holds the capture script; using the report `cores capture` saved before it: {rel(src)}')
+            return src
+        raise CoresError('the clipboard holds the capture script (from `cores capture`), not a report. Open the report in '
+                         'CORES with the script running, then run this again.')
+    raise CoresError('no CORES report in Downloads or on the clipboard. `cores capture` shows the steps to capture one.')
+
+
+def cmd_generate(a, cfg):
+    run_pipeline(generate_source(a, cfg), cfg, **pipeline_opts(a, cfg))
 
 
 def cmd_capture(a, cfg):
@@ -937,7 +956,7 @@ def cmd_capture(a, cfg):
     rescued, _, saved_now = clipboard_capture(cfg)  # a report still on the clipboard from the last capture must not be lost
     if rescued:
         say(f'The clipboard held a report from CORES: {"saved as" if saved_now else "already saved as"} {rel(rescued)}. '
-            'Run `cores run` to build its Daily Report.')
+            'Run `cores generate` to build its Daily Report.')
     copied = to_clipboard(text)
     inbox = ', '.join(str(d) for d in inbox_dirs(cfg))
     say('CORES capture')
@@ -957,10 +976,8 @@ def cmd_capture(a, cfg):
         + ('' if a.no_download else ' and downloads as "CORES report <id> <date> <time>.html"')
         + ('; the patient list shows a button to save it into your folder' if a.folder else '') + '. The report window closes.')
     say('  4. Back on this PC:')
-    say('       cores run --clipboard --print       saves it into reports\\, makes the Daily Report, prints')
+    say(f'       cores generate --print              newest capture in {inbox}, else the clipboard -> Daily Report -> print')
     say('       cores watch --clipboard --print     ... automatically for every capture, until Ctrl+C')
-    if not a.no_download:
-        say(f'       cores run                           uses the downloaded file (newest capture in {inbox})')
     say(f'  Report ids (for --direct): {", ".join(f"{k} = {v}" for k, v in REPORT_IDS.items())}.')
     say('  Options: --direct [--id 8], --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once).')
     say('  If the CORES console says it could not copy, click "Copy to clipboard" in the banner at the top of the patient list.')
@@ -979,10 +996,10 @@ def cmd_render(a, cfg):
     else:
         src = find_newest('json', cfg) or resolve_file(None, 'capture', cfg, include_inbox=True)
     if src.suffix.lower() == '.json':
-        data, out = do_render(src, a.out)
+        data, out = do_render(src, a.out, cfg=cfg)
     else:
         cap, data = take_capture(src, cfg, copy=a.copy)
-        data, out = do_render(cap, a.out, data=data)
+        data, out = do_render(cap, a.out, data=data, cfg=cfg)
     say(f'Rendered: {rel(out)}  ({describe(data)})')
     if a.open:
         say(f'Opened:   in the {open_in_browser(out, cfg)}')
@@ -1027,6 +1044,7 @@ def cmd_watch(a, cfg):
 
     seen = snapshot()  # what is already there is left alone; a file that reappears with new content counts as new
     pending, busy, clip_sha, clip_sha_seen = {}, {}, None, None
+    opts = pipeline_opts(a, cfg)
     say(f'Watching {", ".join(str(d) for d in dirs)}{" and the clipboard" if a.clipboard else ""} for new captures every '
         f'{a.interval:g}s (Ctrl+C to stop)')
     while True:
@@ -1037,16 +1055,13 @@ def cmd_watch(a, cfg):
                 path, sha, saved_now = None, None, False
                 say(f'error reading the clipboard capture: {ex}')
             clip_sha = sha or clip_sha
-            # a report that was saved and rendered before (e.g. by `cores run --clipboard` just before this watch started) is left alone
-            if path and (saved_now or not path.with_name(DERIVED['report'].format(stem=stem_of(path))).exists()):
+            # a report that was saved and rendered before (e.g. by `cores generate` just before this watch started) is left alone
+            if path and (saved_now or not derived(path, 'report').exists()):
                 say(f'\n{dt.datetime.now():%H:%M:%S}  capture from the clipboard: {path.name}')
                 try:
-                    run_pipeline(path, cfg, do_open=not a.no_open and cfg['open_after_run'], want_print=print_wanted(a), want_pdf=a.pdf,
-                                 copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog)
-                except CoresError as ex:
-                    say(f'error: {ex}')
-                except Exception as ex:
-                    say(f'error: {type(ex).__name__}: {ex}')
+                    run_pipeline(path, cfg, **opts)
+                except Exception as ex:  # keep watching whatever went wrong with this capture
+                    say_error(ex)
             elif path and sha != clip_sha_seen:
                 say(f'{dt.datetime.now():%H:%M:%S}  the clipboard holds {path.name}, which is already processed')
             clip_sha_seen = sha or clip_sha_seen
@@ -1058,19 +1073,16 @@ def cmd_watch(a, cfg):
                 continue
             say(f'\n{dt.datetime.now():%H:%M:%S}  new capture: {path.name}')
             try:
-                run_pipeline(path, cfg, do_open=not a.no_open and cfg['open_after_run'], want_print=print_wanted(a), want_pdf=a.pdf,
-                             copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog, skip_done=True)
+                run_pipeline(path, cfg, **opts, skip_done=True)
             except PermissionError as ex:
                 busy[path] = busy.get(path, 0) + 1
                 if busy[path] <= 5:
                     say(f'  {ex}; trying again shortly')
                     pending.pop(path, None)
                     continue  # not marked seen: retried on a later tick
-                say(f'error: {ex}')
-            except CoresError as ex:
-                say(f'error: {ex}')
+                say_error(ex)
             except Exception as ex:  # keep watching whatever went wrong with this one file
-                say(f'error: {type(ex).__name__}: {ex}')
+                say_error(ex)
             seen[path] = sig
             pending.pop(path, None)
             busy.pop(path, None)
@@ -1092,8 +1104,8 @@ def cmd_latest(a, cfg):
     for kind in ('capture', 'json', 'report', 'pdf'):
         n = find_newest(kind, cfg)
         say(f'  newest {KIND_NAMES[kind]:<12} {rel(n) if n else "-"}')
-    use = find_newest('capture', cfg, include_inbox=True)
-    say(f'`cores run` would use: {use if use else "nothing (no capture found)"}')
+    use = newest([p for d in inbox_dirs(cfg) for p in files_of_kind(d, 'capture')])
+    say(f'`cores generate` would use: {use or "the clipboard (no capture in Downloads)"}')
 
 
 def cmd_clean(a, cfg):
@@ -1174,7 +1186,6 @@ def cmd_doctor(a, cfg):
 
 
 def cmd_setup(a, cfg):
-    import importlib.util
     req = HERE / 'requirements.txt'
     if importlib.util.find_spec('pip') is None:  # the bundled (embeddable) Python has no pip; its packages come with it
         try:
@@ -1238,21 +1249,21 @@ def bundle_check(dest=None):
     return True, f'{rel(exe)}: Python {got["version"]}, beautifulsoup4 {got["bs4_version"]}, lxml {got["lxml_version"]}'
 
 
+def http_request(url, method='GET'):
+    return urllib.request.Request(url, method=method, headers={'User-Agent': 'cores-cli'})
+
+
 def http_get(url, timeout=120):
-    import urllib.request
-    req = urllib.request.Request(url, headers={'User-Agent': 'cores-cli'})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(http_request(url), timeout=timeout) as r:
             return r.read()
     except OSError as ex:
         raise CoresError(f'could not download {url}: {ex}')
 
 
 def http_size(url):
-    import urllib.request
-    req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'cores-cli'})
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(http_request(url, 'HEAD'), timeout=30) as r:
             return int(r.headers.get('Content-Length') or 0)
     except OSError as ex:
         raise CoresError(f'not available: {url} ({ex})')
@@ -1281,8 +1292,6 @@ def pypi_wheel(pkg, tag):
 def cmd_bundle(a, cfg):
     """Put python.org's embeddable Python plus beautifulsoup4 / soupsieve / lxml into <folder>\\python, so cores.cmd can
     run on a computer with no Python installed. Needs internet once (python.org and pypi.org)."""
-    import hashlib
-    import zipfile
     if not IS_WIN:
         raise CoresError('bundling uses the Windows embeddable Python; run it on Windows')
     ver = a.version or platform.python_version()
@@ -1299,7 +1308,7 @@ def cmd_bundle(a, cfg):
     # soupsieve and typing_extensions are beautifulsoup4's; bundle_check() below is what notices when one is missing.
     for pkg, tag in (('beautifulsoup4', 'py3-none-any.whl'), ('soupsieve', 'py3-none-any.whl'),
                      ('typing_extensions', 'py3-none-any.whl'), ('lxml', f'{cp}-{cp}-win_{arch}.whl')):
-        fn, url, size, sha = pypi_wheel(pkg, tag)
+        _, url, size, sha = pypi_wheel(pkg, tag)
         plan.append((pkg, url, size, sha))
     total = 0
     for name, url, size, _ in plan:
@@ -1398,13 +1407,24 @@ def cmd_config(a, cfg):
 # ---------------------------------------------------------------- main
 
 def build_parser():
-    p = argparse.ArgumentParser(prog='cores', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(prog='cores', description='CORES ICU Daily Report')
     sub = p.add_subparsers(dest='cmd', metavar='command')
 
-    def add(name, fn, help, **kw):
-        sp = sub.add_parser(name, help=help, description=help, formatter_class=argparse.RawDescriptionHelpFormatter, **kw)
+    def add(name, fn, help, listed=None, **kw):
+        """listed: the one-line text for the overview; commands without it work but are not listed there."""
+        if listed:
+            kw['help'] = listed
+        sp = sub.add_parser(name, description=help, formatter_class=argparse.RawDescriptionHelpFormatter, **kw)
         sp.set_defaults(fn=fn)
         return sp
+
+    sp = add('capture', cmd_capture, 'put capture_report.js (plus its captureCores(...) call) on the clipboard and show how to run it in the CORES window',
+             listed='put the capture script on the clipboard and show the steps for CORES')
+    sp.add_argument('--direct', action='store_true', help='the script opens the report itself (captureCores(ID)) instead of capturing the window CORES opens')
+    sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed)')
+    sp.add_argument('--no-download', action='store_true', help='clipboard hand-off only: the browser does not download a file')
+    sp.add_argument('--folder', action='store_true', help='also save into a folder chosen once with the browser\'s folder picker')
+    sp.add_argument('--no-run', action='store_true', help='copy the script without the captureCores(...) call at the end')
 
     def print_opts(sp, implies=False):
         pre = '(implies --print) ' if implies else ''
@@ -1416,22 +1436,17 @@ def build_parser():
     def copy_opt(sp):
         sp.add_argument('--copy', action='store_true', help='copy the capture into the reports folder instead of moving it')
 
-    sp = add('run', cmd_run, 'capture -> reports folder -> parse -> Daily Report -> browser. FILE may also be a .json or a Daily Report.')
-    sp.add_argument('file', nargs='?', metavar='FILE', help='capture to process (default: newest capture in the inbox / reports folders)')
-    sp.add_argument('--clipboard', action='store_true', help='take the capture from the clipboard (captureCores puts it there) instead of a file')
+    sp = add('generate', cmd_generate, 'make the Daily Report from the newest capture in Downloads, or from the clipboard when '
+                                       'Downloads has none, and open it. FILE may also be a .json or a Daily Report.',
+             listed='make the Daily Report from the newest capture in Downloads, else the clipboard')
+    sp.add_argument('file', nargs='?', metavar='FILE', help='capture to process (default: newest in Downloads, else the clipboard)')
+    sp.add_argument('--clipboard', action='store_true', help='use the clipboard even when Downloads has a capture')
     sp.add_argument('--print', action='store_true', help='print the Daily Report: browser print dialog, or no dialog with --to / --kiosk or a "printer" in the config')
     print_opts(sp, implies=True)
     sp.add_argument('--pdf', action='store_true', help='also write "<capture> - Daily Report.pdf" with headless Edge/Chrome')
     sp.add_argument('--no-open', action='store_true', help='do not open the Daily Report in the browser')
     copy_opt(sp)
     sp.add_argument('--clean', action='store_true', help='afterwards delete older capture sets, keeping "keep" (config) newest')
-
-    sp = add('capture', cmd_capture, 'put capture_report.js (plus its captureCores(...) call) on the clipboard and show how to run it in the CORES window')
-    sp.add_argument('--direct', action='store_true', help='the script opens the report itself (captureCores(ID)) instead of capturing the window CORES opens')
-    sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed)')
-    sp.add_argument('--no-download', action='store_true', help='clipboard hand-off only: the browser does not download a file')
-    sp.add_argument('--folder', action='store_true', help='also save into a folder chosen once with the browser\'s folder picker')
-    sp.add_argument('--no-run', action='store_true', help='copy the script without the captureCores(...) call at the end')
 
     sp = add('parse', cmd_parse, 'capture HTML -> parsed JSON (the capture is moved into the reports folder first; the JSON is written next to it)')
     sp.add_argument('file', nargs='?', metavar='FILE')
@@ -1452,7 +1467,7 @@ def build_parser():
     sp.add_argument('file', nargs='?', metavar='FILE')
     print_opts(sp)
 
-    sp = add('pdf', cmd_pdf, 'Daily Report -> PDF with headless Edge/Chrome (letter landscape, as the print layout)')
+    sp = add('pdf', cmd_pdf, 'Daily Report -> PDF with headless Edge/Chrome (letter, in the orientation the report was made with)')
     sp.add_argument('file', nargs='?', metavar='FILE')
     sp.add_argument('-o', '--out', help='output .pdf path')
     sp.add_argument('--open', action='store_true', help='open the PDF afterwards')
@@ -1468,7 +1483,7 @@ def build_parser():
     copy_opt(sp)
     sp.add_argument('--clean', action='store_true', help='delete older capture sets after each run')
 
-    add('latest', cmd_latest, 'show the newest capture, JSON, Daily Report and PDF, and what `cores run` would use')
+    add('latest', cmd_latest, 'show the newest capture, JSON, Daily Report and PDF, and what `cores generate` would use')
 
     sp = add('clean', cmd_clean, 'delete older capture sets (capture, JSON, Daily Report, PDF, annotate copy) from the reports folder')
     sp.add_argument('--keep', type=int, metavar='N', help='capture sets to keep (default: "keep" in the config, 3)')
@@ -1560,16 +1575,11 @@ def main(argv=None):
         cfg = load_config()
         if not a.cmd:
             parser.print_help()
-            say('')
-            cmd_latest(a, cfg)
             return 0
         if a.cmd in NEEDS_PACKAGES:
             check_dependencies(cfg)
         return a.fn(a, cfg) or 0
-    except CoresError as ex:
-        say(f'cores: {ex}')
-        return 1
-    except PermissionError as ex:
+    except (CoresError, PermissionError) as ex:
         say(f'cores: {ex}')
         return 1
     except KeyboardInterrupt:

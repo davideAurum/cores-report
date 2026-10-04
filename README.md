@@ -1,7 +1,7 @@
 # CORES Daily Report
 
 Turns a UAB CORES ("Core Work Mgr") ICU handoff report into a clean, filterable, printable **Daily Report** with one
-command: `cores run`.
+command: `cores generate`.
 
 > The captures, the JSON files and the Daily Reports contain PHI. Everything here runs on your own computer and
 > nothing is sent anywhere. Keep `reports\` and Downloads tidy with `cores clean`.
@@ -17,23 +17,23 @@ command: `cores run`.
    `cores capture --no-download` it is also downloaded as `CORES report 281 <date> <time>.html`. The report window
    closes itself. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
-3. **`cores run --clipboard --print`** saves the report from the clipboard into `reports\`, checks that it parses,
-   writes `reports\CORES report 281 <date> <time> - Daily Report.html`, opens it and brings the print dialog up (or
-   prints without a dialog once a printer is configured, see *Printing*). Leave off `--print` to just open it.
-   **`cores run`** without `--clipboard` uses the downloaded file instead: the newest capture in Downloads is moved
-   into `reports\` and processed the same way.
+3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the
+   clipboard. It saves it into `reports\`, checks that it parses, writes
+   `reports\CORES report 281 <date> <time> - Daily Report.html` and opens it. Every option is optional: `--print`
+   also brings the print dialog up (or prints without a dialog once a printer is configured, see *Printing*), and
+   `--clipboard` uses the clipboard even when Downloads has a capture.
 
 Hands-free: keep `cores watch --clipboard --print` running in a terminal; every capture is saved, rendered and
 printed as it arrives, from the clipboard or from Downloads.
 
-Order matters with the clipboard: run `cores run --clipboard` *before* the next `cores capture`, because the latter
+Order matters with the clipboard: run `cores generate` *before* the next `cores capture`, because the latter
 puts the script on the clipboard. If you do it the other way round nothing is lost: `cores capture` first saves any
-report it finds on the clipboard into `reports\` and tells you so; `cores run` then builds it. Inside Citrix the
+report it finds on the clipboard into `reports\` and tells you so; `cores generate` then builds it. Inside Citrix the
 browser's download may land in a Citrix folder rather than your Downloads, which is why the clipboard is the
 dependable route.
 
 No terminal handy? Drop the downloaded file onto **Make Daily Report.cmd** or **Print Daily Report.cmd**, or
-double-click either to use the newest capture in Downloads. (A file dropped from anywhere other than Downloads or
+double-click either to use the newest capture in Downloads, else the clipboard. (A file dropped from anywhere other than Downloads or
 this folder is copied into `reports\`, and the original stays where it was; the window says so and stays open for a
 few seconds.)
 
@@ -46,7 +46,7 @@ after the first capture; pick a folder once (for example this folder's `reports\
 and every later capture is written there, with at most one click when the browser asks again. It works only if the
 Cerner-hosted browser allows the folder picker (the File System Access API); the clipboard route needs nothing.
 
-`cores` on its own shows the help and what `cores run` would use next.
+`cores` on its own lists just these two commands; `cores latest` shows what `cores generate` would use next.
 
 ## Setup (once per computer)
 
@@ -106,12 +106,12 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 
 | Command | What it does |
 |---|---|
-| `cores run [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | capture -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` takes the report captureCores put on the clipboard. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
+| `cores generate [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | newest capture in Downloads, else the clipboard -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` uses the clipboard even when Downloads has a capture. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
 | `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself |
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores print [FILE] [--to PRINTER \| --kiosk \| --dialog]` | print a Daily Report (see *Printing*) |
-| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter landscape |
+| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the orientation the report was made with |
 | `cores parse FILE [-o X.json] [--copy]` | capture -> JSON only (a capture in Downloads or next to the scripts is moved into `reports\` first) |
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
 | `cores latest` | newest capture / JSON / Daily Report / PDF, and what `run` would use |
@@ -125,15 +125,30 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | `cores bundle [--dry-run] [--force] [--version X.Y.Z]` | put a private Python plus packages in `python\` so the folder needs no installed Python |
 | `.\bundle` (not a `cores` command) | the same thing on a PC with no Python at all -- see [No Python on the computer?](#no-python-on-the-computer) |
 
-`cores -h`, `cores -help`, `cores /?` and `cores <command> -h` all work as well, and `cores` on its own shows the help
-followed by what `cores run` would use next. The pipeline pieces still work on their own too:
+`cores` on its own (or `cores -h`, `-help`, `/?`, `cores help`) lists only `capture` and `generate`; every command
+above still works, and `cores <command> -h` or `cores help <command>` shows its options. The pipeline pieces still
+work on their own too:
 `python cores_parse.py X.html` and `python cores_report.py X.html`.
 
 ## Printing
 
-The Daily Report prints letter landscape; a patient block never straddles a page break.
+The Daily Report prints on letter paper, landscape unless you choose portrait; a patient block never straddles a page
+break.
 
-- **`cores print`** or **`cores run --print`**: the report opens in your browser with the print dialog already up.
+- **Paper** (toolbar): Landscape or Portrait. The report sets the paper itself, so the browser's own Layout choice is
+  greyed out in the print dialog. Use this switch instead. Your choice is remembered, and column widths are kept
+  separately for each orientation. `cores pdf`, `--to` and `--kiosk` print in a browser that has not seen this switch,
+  so they use the `orientation` setting (`cores config --set orientation portrait`), which applies to reports made
+  from then on.
+- **Optimize widths** (toolbar): picks column widths for the patients and sections currently shown. It lays the
+  report out off-screen the way it prints, measures how tall every patient's cells are at every column width, then
+  searches for the widths that (1) cut off the least content at the right edge, (2) use the fewest pages, and
+  (3) take up the least height overall. The toolbar then shows the page count before and after (estimates, usually
+  exact). The Notes column keeps its width. Press it again after changing sections, filters or paper. *Reset columns*
+  undoes it. If it says cells are still cut off, the shown sections do not fit the paper; hide one in *Sections*
+  (portrait usually needs that).
+
+- **`cores print`** or **`cores generate --print`**: the report opens in your browser with the print dialog already up.
   Choose the printer and press Print. (Ctrl+P in an open report does the same.) Once a printer is set in the config
   this prints without a dialog instead; `--dialog` brings the dialog back for one run.
 - **`cores print --to "PRINTER NAME"`**: no dialog. A PDF is made with headless Edge/Chrome and Adobe Acrobat sends it
@@ -160,7 +175,8 @@ or use `cores config --set KEY VALUE`.
 | `printer` | none | printer name for no-dialog printing (needs Acrobat) |
 | `acrobat` | auto | path to `Acrobat.exe` / `AcroRd32.exe` |
 | `keep` | `3` | capture sets kept by `cores clean` and `run --clean` |
-| `open_after_run` | `true` | `cores run` opens the Daily Report |
+| `open_after_run` | `true` | `cores generate` opens the Daily Report |
+| `orientation` | `landscape` | paper new Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
 
 ## Files
 
@@ -171,7 +187,7 @@ or use `cores config --set KEY VALUE`.
 | `Make Daily Report.cmd`, `Print Daily Report.cmd` | drag-and-drop targets |
 | `capture_report.js` | pasted into the CORES window's console to capture a report |
 | `cores_parse.py`, `cores_parse_anes.py` | capture HTML -> JSON (I-PASS six-column and Anesthesia nine-column layouts) |
-| `cores_report.py` | JSON -> Daily Report HTML: search, filters, sort, Sections menu, Inspect, print layout |
+| `cores_report.py` | JSON -> Daily Report HTML: search, filters, sort, Sections menu, Inspect, paper orientation, Optimize widths, print layout |
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
 | `requirements.txt` | Python packages |
@@ -192,7 +208,7 @@ into `reports\` by hand.
   failed to fetch the list for the report. The script presses OK and the window's Reload button for you (twice by
   default; `captureCores(281, {retries: 4})` for more) and reports the dialog text if it keeps failing. If it does,
   press F5 in the CORES patient-list window, open your list again, and run the capture again. A capture made while
-  this dialog was up is the empty report template; it is named `... UNRENDERED.html` and `cores run` refuses it.
+  this dialog was up is the empty report template; it is named `... UNRENDERED.html` and `cores generate` refuses it.
 - **The report window shows another error dialog or is slow**: the console prints what the window shows when the wait
   runs out; `captureCores(281, {timeout: 180})` waits longer.
 - **The console says it could not copy to the clipboard**: the page cannot write the clipboard while the report window
@@ -202,13 +218,13 @@ into `reports\` by hand.
   defines a function of that name.) The download still happens either way.
 - **Fallback capture**: with DevTools *Network* open and *Preserve log* ticked, open the report as usual, right-click
   the request list, *Save all as HAR with content*, then `cores har file.har`.
-- **`cores run --clipboard` says there is no report on the clipboard**: Citrix may block or cap clipboard transfer
+- **`cores generate` says there is no report on the clipboard**: Citrix may block or cap clipboard transfer
   from the session to your PC (a capture is 0.4 to 2 MB of text). The console in CORES says whether the copy worked;
   if the banner at the top of the patient list offers *Copy to clipboard*, click it. Otherwise use the downloaded
-  file: plain `cores run`.
+  file: `cores generate` uses it whenever Downloads has one.
 - **`cores` is not recognised**: use `.\cores` from this folder, or run `.\cores setup --add-path` and open a new
   terminal.
-- **`cores run` says "no capture found"**: `cores latest` shows where it looked; `cores config` shows the inbox
+- **`cores generate` says "no CORES report in Downloads or on the clipboard"**: `cores latest` shows where it looked; `cores config` shows the inbox
   folders.
 - **The Daily Report looks wrong for a field**: `cores annotate` shows how the source maps to parser fields;
   `REPORT_GLOSSARY.md` has the agreed names.
