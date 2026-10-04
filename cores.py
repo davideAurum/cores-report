@@ -901,7 +901,7 @@ def clean_sets(cfg, keep, dry_run, yes, inbox):
 # ---------------------------------------------------------------- commands
 
 def pipeline_opts(a, cfg):
-    """run_pipeline() keyword arguments from the options `run` and `watch` share."""
+    """run_pipeline() keyword arguments from the options `generate` and `watch` share."""
     return dict(do_open=not a.no_open and cfg['open_after_run'], want_print=bool(a.print or a.to or a.kiosk or a.dialog),
                 want_pdf=a.pdf, copy=a.copy, clean=a.clean, printer=a.to, kiosk=a.kiosk, dialog=a.dialog)
 
@@ -1516,14 +1516,14 @@ def build_parser():
     sp.add_argument('--dry-run', action='store_true', help='only show what would be downloaded and how big it is')
     sp.add_argument('--force', action='store_true', help='replace an existing python\\ folder')
 
-    sp = add('help', cmd_help, 'show this help, or the options of one command: cores help run')
+    sp = add('help', cmd_help, 'show this help, or the options of one command: cores help generate')
     sp.add_argument('topic', nargs='?', metavar='COMMAND')
     p.sub = sub
     return p
 
 
 HELP_ALIASES = {'-help', '-?', '/?', '/help'}  # what Windows users tend to type; all mean --help
-NEEDS_PACKAGES = {'run', 'capture', 'parse', 'watch'}  # the commands that import cores_parse (bs4 + lxml)
+NEEDS_PACKAGES = {'generate', 'capture', 'parse', 'watch'}  # the commands that import cores_parse (bs4 + lxml)
 
 
 def missing_packages():

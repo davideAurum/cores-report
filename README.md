@@ -114,14 +114,14 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the orientation the report was made with |
 | `cores parse FILE [-o X.json] [--copy]` | capture -> JSON only (a capture in Downloads or next to the scripts is moved into `reports\` first) |
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
-| `cores latest` | newest capture / JSON / Daily Report / PDF, and what `run` would use |
+| `cores latest` | newest capture / JSON / Daily Report / PDF, and what `generate` would use |
 | `cores clean [--keep N] [--inbox] [--dry-run] [-y]` | delete older capture sets from `reports\` (default keeps 3); `--inbox` also removes captures left in Downloads that are identical to a copy already in `reports\` |
 | `cores annotate FILE [--open] [--copy]` | annotatable copy of a capture: hover shows the parser field, click names it (same rule for captures) |
 | `cores har FILE` | fallback capture: recover the report HTML from a DevTools HAR export or a copied cURL |
 | `cores doctor` | environment check |
 | `cores setup [--add-path]` | install packages, create `reports\`, doctor |
 | `cores config [--init] [--set KEY VALUE]` | show settings; write `cores.config.json`; change one setting |
-| `cores help [COMMAND]` | this list, or one command's options (`cores help run`) |
+| `cores help [COMMAND]` | this list, or one command's options (`cores help generate`) |
 | `cores bundle [--dry-run] [--force] [--version X.Y.Z]` | put a private Python plus packages in `python\` so the folder needs no installed Python |
 | `.\bundle` (not a `cores` command) | the same thing on a PC with no Python at all -- see [No Python on the computer?](#no-python-on-the-computer) |
 
@@ -158,7 +158,7 @@ break.
 - **`cores print --kiosk`**: no dialog, to the Windows default printer, using Edge/Chrome kiosk printing. Check what
   the default printer is first (`cores doctor` marks it); a virtual "PDF" printer as default will ask for a file name.
   If printing has not finished after two minutes the browser is closed and the command reports an error.
-- On `run` and `watch`, `--to`, `--kiosk` and `--dialog` imply `--print`.
+- On `generate` and `watch`, `--to`, `--kiosk` and `--dialog` imply `--print`.
 - **`cores pdf`** writes `reports\<capture> - Daily Report.pdf` to keep, email, or print later.
 
 ## Settings
@@ -174,7 +174,7 @@ or use `cores config --set KEY VALUE`.
 | `browser` | auto | path to `msedge.exe` / `chrome.exe` for PDF and kiosk printing |
 | `printer` | none | printer name for no-dialog printing (needs Acrobat) |
 | `acrobat` | auto | path to `Acrobat.exe` / `AcroRd32.exe` |
-| `keep` | `3` | capture sets kept by `cores clean` and `run --clean` |
+| `keep` | `3` | capture sets kept by `cores clean` and `generate --clean` |
 | `open_after_run` | `true` | `cores generate` opens the Daily Report |
 | `orientation` | `landscape` | paper new Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
 
