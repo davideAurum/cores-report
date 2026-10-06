@@ -2,7 +2,7 @@
 SYSTEMS, Results, Handoff, Action List). Produces the same record shape as the I-PASS parser in cores_parse.py
 (field names per REPORT_GLOSSARY.md).
 
-Used automatically by cores_parse.parse_file() when the report title contains 'Anesthesia'.
+Used automatically by cores_parse.parse_file() when the patient rows have these columns (cores_parse.LAYOUTS).
 """
 import re
 

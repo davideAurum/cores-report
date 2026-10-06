@@ -3,7 +3,7 @@ Tasks/Plan, Notes). Produces the same record shape as the I-PASS parser in cores
 REPORT_GLOSSARY.md). The report has no labs, vent, I&O or lines; its vitals come as a LAST / MIN / MAX table, with
 temperature in degrees C.
 
-Used automatically by cores_parse.parse_file() when the report title contains 'Medicine'.
+Used automatically by cores_parse.parse_file() when the patient rows have these columns (cores_parse.LAYOUTS).
 """
 import re
 

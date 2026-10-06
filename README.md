@@ -233,6 +233,9 @@ into `reports\` by hand.
   terminal.
 - **`cores generate` says "no CORES report in Downloads or on the clipboard"**: `cores latest` shows where it looked; `cores config` shows the inbox
   folders.
+- **`cores generate` says the capture is "a CORES report this tool has no parser for"**: the capture is fine, but
+  it is a report whose columns no parser reads (only I-PASS Detailed, report 8; Anesthesia ICU w/ Meds, report 281; and
+  Medicine Report +VS/Meds, report 7, are supported). Capture one of those; the message names the report and its columns.
 - **The Daily Report looks wrong for a field**: `cores annotate` shows how the source maps to parser fields;
   `REPORT_GLOSSARY.md` has the agreed names.
 

@@ -2,10 +2,11 @@
 
 Usage:  python cores_parse.py "CORES report 281 2026-09-16 0715.html" [out.json]
 
-Handles three layouts, chosen by the report title in the page header:
+Handles three layouts (LAYOUTS below), chosen by the column names of the patient rows:
   - "I-PASS Detailed"     (six columns)               -> parse_row() below
   - "Anesthesia Report"   (nine columns)              -> cores_parse_anes.parse_row()
   - "Medicine Report"     (five columns)              -> cores_parse_med.parse_row()
+Any other layout raises UnsupportedLayout, naming the report title and its columns.
 
 All produce the same record shape. Field names follow REPORT_GLOSSARY.md (David's names):
   unit, room, bed, location, code_status, isolation, covid, severity,
@@ -17,11 +18,30 @@ All produce the same record shape. Field names follow REPORT_GLOSSARY.md (David'
   meds {infusions|antibiotics|scheduled|prn: [{drug, dose_frequency, days_on, highlighted, last_dose, rate}]}, notes [...]
 Requires: beautifulsoup4, lxml
 """
+import importlib
 import json
 import re
 import sys
 
 from bs4 import BeautifulSoup
+
+# report layouts read here: name, the columns (td column_name) its row parser needs, the module holding its parse_row()
+LAYOUTS = [
+    ('I-PASS Detailed', ('Illness Severity', 'Patient Summary', 'Action List', 'Situational Awareness (Vitals/Labs)',
+                         'Situational Awareness (Meds)', 'Notes'), 'cores_parse'),
+    ('Anesthesia Report', ('Bed', 'Patient', 'Summary', 'Access', 'PROCEDURES/VITALS', 'SYSTEMS', 'Results', 'Handoff',
+                           'Action List'), 'cores_parse_anes'),
+    ('Medicine Report', ('Pt Info', 'Pt Summary', 'Vitals/Meds', 'Tasks/Plan', 'Notes'), 'cores_parse_med'),
+]
+
+
+class UnsupportedLayout(ValueError):
+    """A CORES report whose patient rows have columns that no layout in LAYOUTS reads."""
+
+    def __init__(self, title, columns):
+        self.title, self.columns = title, columns
+        super().__init__(f'no parser for this report layout ({title or "untitled report"}; columns: {", ".join(columns)}). '
+                         f'Supported: {", ".join(name for name, _, _ in LAYOUTS)}')
 
 # fishbone cell class -> analyte, taken from the page's own Mustache templates
 SLOT = {
@@ -269,6 +289,21 @@ def parse_header(soup):
             'report_date': raw.get('print_date', ''), 'printed_by': raw.get('name', ''), 'printed_by_id': raw.get('username', '')}
 
 
+def row_parser(rows, header):
+    """parse_row() of the layout whose columns the rows have (all rows together, so a capture cut short mid-row still
+    matches); UnsupportedLayout when none has them all."""
+    found = []
+    for tr in rows:
+        found += [td['column_name'] for td in tr.find_all('td', attrs={'column_name': True}) if td['column_name'] not in found]
+    for _, columns, module in LAYOUTS:
+        if set(columns) <= set(found):
+            return importlib.import_module(module).parse_row
+    for _, columns, module in LAYOUTS:
+        if set(found) <= set(columns):  # only some of a known layout's columns: cut short inside its first row
+            return importlib.import_module(module).parse_row
+    raise UnsupportedLayout(header.get('report_format', ''), found)
+
+
 def parse_file(path):
     # Captures are UTF-8, but CORES's <meta> says windows-1250 and lxml obeys it on a large file (a 1.5 MB capture came
     # out with every bullet as 'â€˘'), so the encoding is given outright.
@@ -277,17 +312,9 @@ def parse_file(path):
     for s in soup.find_all('script'):
         s.decompose()
     header = parse_header(soup)
-    if 'Anesthesia' in header.get('report_format', ''):
-        from cores_parse_anes import parse_row as parse_row_fn
-    elif 'Medicine' in header.get('report_format', ''):
-        from cores_parse_med import parse_row as parse_row_fn
-    else:
-        parse_row_fn = parse_row
-    records = []
-    for tr in soup.select('tr.row_template'):
-        if tr.find('td', attrs={'column_name': True}):
-            records.append(parse_row_fn(tr))
-    return {'header': header, 'source': path, 'records': records}
+    rows = [tr for tr in soup.select('tr.row_template') if tr.find('td', attrs={'column_name': True})]
+    parse_row_fn = row_parser(rows, header) if rows else None
+    return {'header': header, 'source': path, 'records': [parse_row_fn(tr) for tr in rows]}
 
 
 if __name__ == '__main__':

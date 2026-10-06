@@ -305,8 +305,9 @@ def describe(data):
 
 
 def parse_capture(capture):
-    """Parse a capture with cores_parse, turning a parser crash, a capture cut short or an empty result into a clear message."""
-    from cores_parse import parse_file
+    """Parse a capture with cores_parse, turning a parser crash, a capture cut short, a report no parser reads or an empty
+    result into a clear message."""
+    from cores_parse import UnsupportedLayout, parse_file
     capture = Path(capture)
     again = ('Run captureCores() again in CORES (`cores capture` shows the steps); the new, newer capture is picked up '
              f'automatically and this file is left where it is: {capture}')
@@ -322,6 +323,11 @@ def parse_capture(capture):
                          'would be missing from the Daily Report. A clipboard transfer with a size limit (Citrix) or an '
                          'interrupted download cuts a capture short; when the clipboard copy keeps arriving cut short, use '
                          'the downloaded file (`cores generate FILE`). ' + again)
+    if isinstance(crash, UnsupportedLayout):  # a complete capture of a report nothing here reads: capturing it again will not help
+        raise CoresError(f'{capture.name} is a CORES report this tool has no parser for: '
+                         + (f'"{crash.title}", ' if crash.title else '') + f'with the columns {", ".join(crash.columns)}. '
+                         + f'Reports it reads: {"; ".join(f"{k} = {v}" for k, v in REPORT_IDS.items())}. '
+                         + f'Capture one of those instead (`cores capture`); this file is left where it is: {capture}')
     if crash:
         raise CoresError(f'could not parse {capture.name} ({type(crash).__name__}: {crash}). ' + again)
     data['source'] = capture.name
