@@ -52,7 +52,7 @@ def lab_flag(key, value, sex=''):
 
 
 # Normal ranges for red-flagging vitals (inclusive). Temp is Fahrenheit as CORES prints it.
-VITAL_NORMAL = {'temp': (97.0, 100.3), 'hr': (60, 100), 'rr': (12, 20), 'spo2': (92, 100), 'sbp': (90, 140), 'dbp': (60, 90), 'map': (65, 105)}
+VITAL_NORMAL = {'temp': (97.0, 100.3), 'temp_c': (36.1, 37.9), 'hr': (60, 100), 'rr': (12, 20), 'spo2': (92, 100), 'sbp': (90, 140), 'dbp': (60, 90), 'map': (65, 105)}
 # Vent block, split into what the clinician set and what the ventilator measured
 VENT_SETTINGS = [('set_rate', 'Rate'), ('vt_set', 'VT'), ('fio2', 'FiO2'), ('peep', 'PEEP'), ('psv', 'PSV'), ('ie_ratio', 'I:E')]
 VENT_MEASURED = [('vt_measured', 'VT'), ('vt_spont', 'VT spont'), ('minute_volume_spont', 'MV spont'),
@@ -427,10 +427,13 @@ def sev_chip(sev):
 
 
 def flag(kind, value):
-    """Wrap a vital value; red if outside VITAL_NORMAL[kind]."""
+    """Wrap a vital value; red if outside VITAL_NORMAL[kind]. A temperature under 50 is in degrees C (the Medicine
+    report charts C, the others F)."""
     if value in ('', None):
         return ''
     try:
+        if kind == 'temp' and float(value) < 50:
+            kind = 'temp_c'
         lo, hi = VITAL_NORMAL[kind]
         abn = not (lo <= float(value) <= hi)
     except (ValueError, KeyError):
@@ -741,7 +744,8 @@ def dose_html(d):
 
 def merge_doses(items):
     """Collapse entries with the same drug name into one line: 'magnesium sulfate 2 gm, 4 gm'.
-    Returns [{drug, doses: [(dose_frequency, last_dose)], days_on, highlighted}] in first-seen order.
+    Returns [{drug, doses: [(dose_frequency, last_dose)], days_on, highlighted}] in first-seen order. An IV drip's
+    current rate takes the last dose's place: CORES prints both as '@ …'.
     Identical dose strings collapse to one (keeping a last-dose tag if either had one). Doses are sorted by their
     leading number when every dose starts with one (25 mcg, 50 mcg, 100 mcg), else left in source order.
     days_on is kept only if every merged entry agrees; highlighted if any entry is."""
@@ -754,7 +758,7 @@ def merge_doses(items):
             out.append(m)
         elif m['days_on'] != it.get('days_on'):
             m['days_on'] = None
-        dose, ld = it['dose_frequency'].strip(), it.get('last_dose') or ''
+        dose, ld = it['dose_frequency'].strip(), it.get('last_dose') or it.get('rate') or ''
         dup = next((i for i, (d, _) in enumerate(m['doses']) if d == dose), None)
         if dup is None:
             m['doses'].append((dose, ld))
@@ -899,6 +903,7 @@ def render(data, orientation='landscape'):
     """The Daily Report page. orientation is the paper it prints on until the toolbar's Paper switch is changed."""
     orient = 'portrait' if orientation == 'portrait' else 'landscape'
     h = data.get('header', {})
+    team = ' / '.join(x for x in (h.get('service', ''), h.get('team', '')) if x)  # the Medicine report has a team only
     recs = data['records']
     gen = datetime.datetime.now().strftime('%m/%d/%y %H:%M')
     units = sorted({r['unit'] for r in recs if r['unit']})
@@ -906,11 +911,11 @@ def render(data, orientation='landscape'):
     o2s = sorted({r.get('o2_delivery', '') for r in recs if r.get('o2_delivery')})
     rows = ''.join(render_row(r, h.get('report_date', '')) for r in recs)
     return f'''<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>ICU Daily Report {e(h.get("service", ""))} / {e(h.get("team", ""))} — {e(h.get("report_date", ""))}</title>
+<html lang="en"><head><meta charset="utf-8"><title>ICU Daily Report {e(team)} — {e(h.get("report_date", ""))}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
 <style id="pagesz">@page{{size:letter {orient};margin:.3in}}</style></head>
 <body><div class="page">
-<div class="rpt-head" data-name="Report header"><div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span style="color:var(--accent)" data-name="Current service / team">{e(h.get("service", ""))} / {e(h.get("team", ""))}</span></h1>
+<div class="rpt-head" data-name="Report header"><div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span style="color:var(--accent)" data-name="Current service / team">{e(team)}</span></h1>
 <div class="conf">CONFIDENTIAL — contains PHI. Handle and dispose of properly.</div></div>
 <div class="meta">CORES data as of <b data-name="Report date">{e(h.get("report_date", ""))}</b> for <span data-name="Printed by">{e(h.get("printed_by", ""))}</span><br>{len(recs)} patients · rendered {gen}</div></div>
 <div class="toolbar" data-name="Toolbar">

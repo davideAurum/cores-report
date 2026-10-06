@@ -41,7 +41,8 @@ DEFAULTS = {
     'open_after_run': True,          # `cores generate` opens the Daily Report in the browser
     'orientation': 'landscape',      # paper a new Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
 }
-REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)'}
+REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)',
+              '7': 'Medicine Report +VS/Meds (five columns)'}
 DERIVED = {'json': '{stem}.json', 'report': '{stem} - Daily Report.html', 'pdf': '{stem} - Daily Report.pdf',
            'annotate': '{stem} - annotate.html'}
 # derived-file names, tolerating the " (2)" a browser or Explorer appends to a duplicate
@@ -295,7 +296,8 @@ def import_capture(src, cfg, copy=False):
 def describe(data):
     h = data.get('header') or {}
     fmt = re.sub(r'^UAB Core Work Mgr\s*', '', h.get('report_format', '')).strip() or 'unknown format'
-    return (f"{len(data['records'])} patients, {fmt}, {h.get('service') or '?'} / {h.get('team') or '?'}, "
+    team = ' / '.join(x for x in (h.get('service'), h.get('team')) if x) or '? / ?'  # the Medicine report has a team only
+    return (f"{len(data['records'])} patients, {fmt}, {team}, "
             f"data as of {h.get('report_date') or '?'}")
 
 
@@ -1158,7 +1160,7 @@ def cmd_doctor(a, cfg):
             line(True, f'{pkg} installed')
         except ImportError:
             line(False, f'{pkg} installed', f'missing; run `cores setup` or `{Path(sys.executable).name} -m pip install {pkg}`')
-    for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_report.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
+    for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_parse_med.py', 'cores_report.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
         line((HERE / f).exists(), f, '' if (HERE / f).exists() else 'missing')
     try:
         b = chromium_exe(cfg)
@@ -1421,7 +1423,7 @@ def build_parser():
     sp = add('capture', cmd_capture, 'put capture_report.js (plus its captureCores(...) call) on the clipboard and show how to run it in the CORES window',
              listed='put the capture script on the clipboard and show the steps for CORES')
     sp.add_argument('--direct', action='store_true', help='the script opens the report itself (captureCores(ID)) instead of capturing the window CORES opens')
-    sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed)')
+    sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed, 7 = Medicine Report +VS/Meds)')
     sp.add_argument('--no-download', action='store_true', help='clipboard hand-off only: the browser does not download a file')
     sp.add_argument('--folder', action='store_true', help='also save into a folder chosen once with the browser\'s folder picker')
     sp.add_argument('--no-run', action='store_true', help='copy the script without the captureCores(...) call at the end')

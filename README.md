@@ -186,7 +186,7 @@ or use `cores config --set KEY VALUE`.
 | `bundle.cmd`, `bundle.ps1` | build `python\` on a PC with no Python installed |
 | `Make Daily Report.cmd`, `Print Daily Report.cmd` | drag-and-drop targets |
 | `capture_report.js` | pasted into the CORES window's console to capture a report |
-| `cores_parse.py`, `cores_parse_anes.py` | capture HTML -> JSON (I-PASS six-column and Anesthesia nine-column layouts) |
+| `cores_parse.py`, `cores_parse_anes.py`, `cores_parse_med.py` | capture HTML -> JSON (I-PASS six-column, Anesthesia nine-column and Medicine five-column layouts) |
 | `cores_report.py` | JSON -> Daily Report HTML: search, filters, sort, Sections menu, Inspect, paper orientation, Optimize widths, print layout |
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |

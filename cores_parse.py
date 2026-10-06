@@ -2,18 +2,19 @@
 
 Usage:  python cores_parse.py "CORES report 281 2026-09-16 0715.html" [out.json]
 
-Handles two layouts, chosen by the report title in the page header:
+Handles three layouts, chosen by the report title in the page header:
   - "I-PASS Detailed"     (six columns)               -> parse_row() below
   - "Anesthesia Report"   (nine columns)              -> cores_parse_anes.parse_row()
+  - "Medicine Report"     (five columns)              -> cores_parse_med.parse_row()
 
-Both produce the same record shape. Field names follow REPORT_GLOSSARY.md (David's names):
+All produce the same record shape. Field names follow REPORT_GLOSSARY.md (David's names):
   unit, room, bed, location, code_status, isolation, covid, severity,
   patient_name, mrn, dob, age, sex, los_days, admit_attending, admit_service, allergies, contact,
   admit_diagnosis, summary {narrative, status, lines}, tld [{days, description}], vent {...}, diet, tube_feeds,
   restraints, procedures, vitals {temp|hr|rr|spo2|sbp|dbp|map_noninvasive|map_invasive|art_bp|gcs: {last,min,max}},
   o2_delivery, gases [...], labs {analyte: {current, prior}}, glucose_trend, lactate_trend,
   net_io_since_admission, io {columns, rows}, handoff {...}, tasks [...], sit_awareness [...],
-  meds {infusions|antibiotics|scheduled|prn: [{drug, dose_frequency, days_on, highlighted, last_dose}]}, notes [...]
+  meds {infusions|antibiotics|scheduled|prn: [{drug, dose_frequency, days_on, highlighted, last_dose, rate}]}, notes [...]
 Requires: beautifulsoup4, lxml
 """
 import json
@@ -52,7 +53,7 @@ VENT_KEYS = {'Type': 'mode', 'Set': 'set_rate', 'Set Rate': 'set_rate', 'VT Set'
              'Static Comp': 'static_compliance'}
 
 # CORES medication section labels -> field names
-MED_KEYS = {'Infusions': 'infusions', 'IVF': 'infusions', 'Antibiotics': 'antibiotics',
+MED_KEYS = {'Infusions': 'infusions', 'IVF': 'infusions', 'IVs': 'infusions', 'Antibiotics': 'antibiotics',
             'Scheduled Meds': 'scheduled', 'PRN Meds': 'prn'}
 
 BR = re.compile(r'<br\s*/?>', re.I)
@@ -264,17 +265,22 @@ def parse_header(soup):
     if h is None:
         return {}
     raw = {f['field']: txt(f) for f in h.find_all(attrs={'field': True})}
-    return {'report_format': txt(h.find('td')), 'service': raw.get('service', ''), 'team': raw.get('team', ''),
+    return {'report_format': txt(h.find('td')), 'service': raw.get('service', ''), 'team': raw.get('team') or raw.get('sub_team', ''),
             'report_date': raw.get('print_date', ''), 'printed_by': raw.get('name', ''), 'printed_by_id': raw.get('username', '')}
 
 
 def parse_file(path):
-    soup = BeautifulSoup(open(path, encoding='utf-8', errors='replace').read(), 'lxml')
+    # Captures are UTF-8, but CORES's <meta> says windows-1250 and lxml obeys it on a large file (a 1.5 MB capture came
+    # out with every bullet as 'â€˘'), so the encoding is given outright.
+    raw = open(path, encoding='utf-8', errors='replace').read()
+    soup = BeautifulSoup(raw.encode('utf-8'), 'lxml', from_encoding='utf-8')
     for s in soup.find_all('script'):
         s.decompose()
     header = parse_header(soup)
     if 'Anesthesia' in header.get('report_format', ''):
         from cores_parse_anes import parse_row as parse_row_fn
+    elif 'Medicine' in header.get('report_format', ''):
+        from cores_parse_med import parse_row as parse_row_fn
     else:
         parse_row_fn = parse_row
     records = []

@@ -5,8 +5,8 @@
 //                             print button). The window CORES opens is captured as soon as the report has rendered,
 //                             with everything CORES passes it, so it works exactly when CORES's own button works.
 //     captureCores(281)       DIRECT mode: the script opens the report itself in a popup (281 = Anesthesia ICU w/ Meds,
-//                             8 = I-PASS Detailed). Quicker, but CORES sometimes answers "Can't Load Patient List" to a
-//                             window it did not open itself.
+//                             8 = I-PASS Detailed, 7 = Medicine Report +VS/Meds). Quicker, but CORES sometimes answers
+//                             "Can't Load Patient List" to a window it did not open itself.
 //     options, either mode:   captureCores({download: false})  clipboard only, no download / save dialog
 //                             captureCores({folder: true})     also write the file into a folder you pick once
 //                             captureCores({timeout: 180})     seconds to wait for the report (default 120)

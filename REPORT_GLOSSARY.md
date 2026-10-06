@@ -4,8 +4,9 @@ Agreed names for the parts of the CORES reports and the rendered Daily Report, s
 unambiguous. Three columns per entry: **your name** (from the annotate list) → **parser field** (the JSON key
 written by `cores_parse.py`) → **source** (the CORES label or element it comes from).
 
-Reports handled: `Anesthesia Report` (report_id 281, nine columns) and `I-PASS Detailed` (report_id 8, six
-columns). Fields marked *Anes only* / *I-PASS only* exist in one layout.
+Reports handled: `Anesthesia Report` (report_id 281, nine columns), `I-PASS Detailed` (report_id 8, six
+columns) and `Medicine Report +VS/Meds` (report_id 7, five columns; its sources are listed in their own section
+below). Fields marked *Anes only* / *I-PASS only* exist in one layout.
 
 ## Page header
 | Your name | Parser field | Source |
@@ -126,7 +127,31 @@ header to see which.
 | name of medicine | `meds.<section>[].drug` | drug name |
 | dose and frequency | `meds.<section>[].dose_frequency` | gray text after the name |
 | highlighted | `meds.<section>[].highlighted` | bold in CORES (meaning not yet confirmed) |
-| last dose | `meds.<section>[].last_dose` | `@ 6 hrs` after PRN entries (I-PASS only) |
+| last dose | `meds.<section>[].last_dose` | `@ 6 hrs` after PRN entries (I-PASS and Medicine) |
+| drip rate | `meds.infusions[].rate` | `norepinephrine @ 0.18 mcg/kg/min` after IV Meds entries (Medicine only); rendered as `@ 0.18 mcg/kg/min` |
+
+## Medicine Report +VS/Meds (report_id 7)
+Five columns: Pt Info, Pt Summary, Vitals/Meds, Tasks/Plan, Notes. No labs, vent, I&O, lines or admit diagnosis
+(its `Admission Dx` section is commented out in the CORES template).
+
+| Source | Parser field |
+|---|---|
+| Pt Info gray bar | `patient_name` |
+| Pt Info first row: MRN, DOB, age, sex | `mrn`, `dob`, `age`, `sex` |
+| `MICU - MI25 01` | `unit`, `room`, `bed`, `location` |
+| `LOS:`, `COVID:` (only when tested, e.g. `Not Detected (09/27)`), `Allergies:`, `Diet:` | `los_days`, `covid`, `allergies`, `diet` |
+| Pt Summary gray bar: Stable / Watcher / Unstable | `severity` |
+| `Patient Summary` text | `summary` (narrative and status lines, as in I-PASS) |
+| Vitals table, LAST / MIN / MAX rows: Temp (degrees C), SBP, DBP, HR, RR, SpO2 | `vitals.<temp/sbp/dbp/hr/rr/spo2>.last` / `.min` / `.max` |
+| Vitals table `O2` column | not parsed: it seems to mix every result with O2 in its name, blood gases included (VBG pO2, FiO2, flow, saturations) |
+| `Scheduled Meds`, `PRN Meds`, `Abx Meds`, `IV Meds` | `meds.scheduled`, `meds.prn`, `meds.antibiotics`, `meds.infusions` |
+| Tasks/Plan gray bar `Code Status:` | `code_status` |
+| `Action Items` (a checklist, no done state) | `tasks` (`[ ] …`) |
+| `Sit. Aware. / Contingency` | `sit_awareness` |
+| Notes | `notes` |
+
+The Daily Report flags a temperature under 50 as degrees C (normal 36.1 to 37.9), so this report's temperatures are
+not all marked low.
 
 ## Rendered Daily Report (names shown by the Inspect toggle)
 Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, Print, Reset columns, **Sections**
