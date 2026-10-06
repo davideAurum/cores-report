@@ -18,7 +18,7 @@ command: `cores generate`.
    closes itself. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
 3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the
-   clipboard. It saves it into `reports\`, checks that it parses, writes
+   clipboard. It saves it into `reports\`, checks that it is complete and parses, writes
    `reports\CORES report 281 <date> <time> - Daily Report.html` and opens it. Every option is optional: `--print`
    also brings the print dialog up (or prints without a dialog once a printer is configured, see *Printing*), and
    `--clipboard` uses the clipboard even when Downloads has a capture.
@@ -225,6 +225,10 @@ into `reports\` by hand.
   from the session to your PC (a capture is 0.4 to 2 MB of text). The console in CORES says whether the copy worked;
   if the banner at the top of the patient list offers *Copy to clipboard*, click it. Otherwise use the downloaded
   file: `cores generate` uses it whenever Downloads has one.
+- **`cores generate` says the capture "is incomplete"**: the file or clipboard text stops part-way (a whole capture
+  ends with `</html>`), so patients at the end would be missing; it is refused rather than turned into a Daily
+  Report with patients left out. A capped Citrix clipboard transfer or an interrupted download does this. Capture
+  again; if the clipboard copy is cut short every time, use the downloaded file (`cores generate FILE`).
 - **`cores` is not recognised**: use `.\cores` from this folder, or run `.\cores setup --add-path` and open a new
   terminal.
 - **`cores generate` says "no CORES report in Downloads or on the clipboard"**: `cores latest` shows where it looked; `cores config` shows the inbox

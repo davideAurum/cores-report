@@ -54,6 +54,9 @@ STAMP_RE = re.compile(r'(\d{4})-(\d{2})-(\d{2}) (\d{2})(\d{2})')  # the date and
 KIND_NAMES = {'capture': 'capture', 'json': 'parsed JSON', 'report': 'Daily Report', 'pdf': 'PDF', 'annotate': 'annotate copy',
               'part': 'unfinished PDF'}
 CAPTURE_NAME_RE = re.compile(r'<!--\s*CORES capture ([^<>\r\n\\/:*?"|]+?\.html)\s*-->')  # written by captureCores()
+# A whole capture ends with </html>: CORES's own HTML for its PDF does, and captureCores() adds it to a rendered page.
+# A copy cut short (a capped clipboard transfer, an interrupted download) does not, and lxml quietly drops its partial rows.
+CAPTURE_END_RE = re.compile(rb'</html>\s*$', re.I)
 CF_UNICODETEXT = 13
 
 
@@ -302,27 +305,29 @@ def describe(data):
 
 
 def parse_capture(capture):
-    """Parse a capture with cores_parse, turning a parser crash or an empty result into a clear message."""
+    """Parse a capture with cores_parse, turning a parser crash, a capture cut short or an empty result into a clear message."""
     from cores_parse import parse_file
     capture = Path(capture)
+    again = ('Run captureCores() again in CORES (`cores capture` shows the steps); the new, newer capture is picked up '
+             f'automatically and this file is left where it is: {capture}')
     try:
-        data = parse_file(str(capture))
+        data, crash = parse_file(str(capture)), None
     except PermissionError:
         raise  # still being written by the browser: not a bad capture, `watch` tries again
-    except Exception as ex:  # a truncated / template-only capture crashes the row parsers
-        size = capture.stat().st_size
-        raise CoresError(f'could not parse {capture.name} ({type(ex).__name__}: {ex}). The file is {size:,} bytes'
-                         + ('; a complete capture is usually well over 100,000 bytes, so this one was probably cut short. '
-                            if size < 100_000 else '. ')
-                         + 'Run captureCores() again in CORES (`cores capture` shows the steps); the new, newer capture is '
-                         + f'picked up automatically and this file is left where it is: {capture}')
+    except Exception as ex:  # a cut-short / template-only capture can crash the row parsers
+        data, crash = None, ex
+    blob = capture.read_bytes()
+    if not CAPTURE_END_RE.search(blob[-512:]):  # checked first: a cut-short capture parses without error more often than not
+        raise CoresError(f'{capture.name} is incomplete: it stops part-way ({len(blob):,} bytes, no closing </html>), so patients '
+                         'would be missing from the Daily Report. A clipboard transfer with a size limit (Citrix) or an '
+                         'interrupted download cuts a capture short; when the clipboard copy keeps arriving cut short, use '
+                         'the downloaded file (`cores generate FILE`). ' + again)
+    if crash:
+        raise CoresError(f'could not parse {capture.name} ({type(crash).__name__}: {crash}). ' + again)
     data['source'] = capture.name
     if not data['records']:
         raise CoresError(f'no patient rows found in {capture.name}; is it a CORES report capture? File: {capture}')
-    try:
-        holes = capture.read_bytes().count(b'{{')  # Mustache placeholders: a rendered report has a few dozen, the bare template thousands
-    except OSError:
-        holes = 0
+    holes = blob.count(b'{{')  # Mustache placeholders: a rendered report has a few dozen, the bare template thousands
     if holes > 200 and not (data.get('header') or {}).get('report_date'):
         raise CoresError(f'{capture.name} is the unrendered CORES report template ({holes:,} unfilled {{{{placeholders}}}}, no report date): '
                          'CORES did not render the report before it was captured. Look at the report popup in CORES for an error message, '
@@ -772,13 +777,13 @@ def clipboard_capture(cfg, skip_sha=None):
     """A CORES report on the clipboard (captureCores puts it there) -> saved into the reports folder.
     Returns (path or None, sha of the clipboard text or None, saved_now); skip_sha = a text already handled."""
     text = clipboard_text()
-    if not text or 'row_template' not in text or 'column_name=' not in text or clipboard_is_script(text):
+    m = CAPTURE_NAME_RE.search(text[:400])  # a capture cut short before its first row still starts with its name
+    if not text or clipboard_is_script(text) or not (m or ('row_template' in text and 'column_name=' in text)):
         return None, None, False
     text = text.replace('\r\n', '\n')
     sha = hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()
     if sha == skip_sha:
         return None, sha, False
-    m = CAPTURE_NAME_RE.search(text[:400])
     name = m.group(1).strip() if m else f'CORES report clip {dt.datetime.now():%Y-%m-%d %H%M}.html'
     dst = reports_dir(cfg) / name
     if dst.exists():
