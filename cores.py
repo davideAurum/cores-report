@@ -39,7 +39,7 @@ DEFAULTS = {
     'acrobat': '',                   # Acrobat.exe / AcroRd32.exe used for printing to a named printer; '' = auto
     'keep': 3,                       # capture sets kept by `cores clean`
     'open_after_run': True,          # `cores generate` opens the Daily Report in the browser
-    'orientation': 'landscape',      # paper a new Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
+    'orientation': 'landscape',      # paper a Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
 }
 REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)'}
 DERIVED = {'json': '{stem}.json', 'report': '{stem} - Daily Report.html', 'pdf': '{stem} - Daily Report.pdf',
@@ -352,6 +352,37 @@ def do_render(src, out=None, data=None, cfg=None):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render(data, (cfg or {}).get('orientation', 'landscape')), encoding='utf-8')
     return data, out
+
+
+def refresh_report(report, cfg):
+    """A Daily Report made by another version of cores_report.py, or for other paper than the "orientation" setting,
+    is re-rendered in place from its JSON (else its capture) before it is opened, printed or made into a PDF. Otherwise
+    it would print as it was made: one from before the Paper switch prints landscape only, and the PDF and no-dialog
+    paths would ignore a changed setting. Left as it is when neither source is there."""
+    from cores_report import RENDERER, renderer_meta
+    report = Path(report)
+    orient = (cfg or {}).get('orientation', 'landscape')
+    try:
+        with open(report, encoding='utf-8', errors='replace') as fh:
+            head = fh.read(4096)
+    except OSError:
+        return report
+    if renderer_meta(orient) in head:
+        return report
+    why = ('made for other paper than the "orientation" setting' if f'content="{RENDERER} ' in head
+           else 'made by an older version of cores')
+    for src in (derived(report, 'json'), report.with_name(stem_of(report) + '.html')):
+        if src != report and src.is_file() and kind_of(src) in ('json', 'capture'):
+            try:
+                do_render(src, report, cfg=cfg)
+            except Exception as ex:  # a capture or JSON that no longer parses: keep the report as it was
+                say(f'Note:     {report.name} was {why} and could not be re-rendered from {src.name} ({ex})')
+                return report
+            say(f'Updated:  {rel(report)}  ({why}; re-rendered from {src.name})')
+            return report
+    say(f'Note:     {report.name} was {why}, and its JSON and capture are gone, so it prints as it was made '
+        '(landscape only, if it has no Paper switch)')
+    return report
 
 
 def take_capture(src, cfg, copy=False, parse=True):
@@ -793,6 +824,7 @@ def run_pipeline(src, cfg, do_open=True, want_print=False, want_pdf=False, copy=
     if kind == 'report':
         report = src.resolve()
         say(f'Daily Report: {rel(report)}')
+        refresh_report(report, cfg)
     elif kind == 'json':
         data, report = do_render(src, cfg=cfg)
         say(f'Rendered: {rel(report)}  ({describe(data)})')
@@ -1006,18 +1038,18 @@ def cmd_render(a, cfg):
 
 
 def cmd_open(a, cfg):
-    rep = resolve_file(a.file, 'report', cfg)
+    rep = refresh_report(resolve_file(a.file, 'report', cfg), cfg)
     say(f'Opened:   {rel(rep)} in the {open_in_browser(rep, cfg)}')
 
 
 def cmd_print(a, cfg):
-    rep = resolve_file(a.file, 'report', cfg)
+    rep = refresh_report(resolve_file(a.file, 'report', cfg), cfg)
     msg, _ = do_print(rep, cfg, to=a.to, kiosk=a.kiosk, dialog=a.dialog)
     say(f'Print:    {rel(rep)}: {msg}')
 
 
 def cmd_pdf(a, cfg):
-    rep = resolve_file(a.file, 'report', cfg)
+    rep = refresh_report(resolve_file(a.file, 'report', cfg), cfg)
     pdf, exe = make_pdf(rep, cfg, a.out)
     say(f'PDF:      {rel(pdf)}  ({pdf.stat().st_size:,} bytes, via {exe.stem})')
     if a.open:

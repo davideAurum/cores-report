@@ -13,10 +13,22 @@ The "Inspect" toggle shows the glossary name of any element on hover (names per 
 Opening the result with #print on the end of its URL brings up the print dialog at once (cores.py uses this).
 """
 import datetime
+import hashlib
 import html
 import json
 import re
 import sys
+
+# Which version of this file made a Daily Report, and for which paper (written into its <head>). cores.py re-renders a
+# report made by any other version, or for other paper than its "orientation" setting, before it opens, prints or PDFs
+# it, so an old report gets what was added since (the Paper switch, say) and a changed setting applies to it too.
+with open(__file__, 'rb') as _fh:
+    RENDERER = hashlib.sha1(_fh.read().replace(b'\r\n', b'\n')).hexdigest()[:12]
+
+
+def renderer_meta(orient):
+    return f'<meta name="cores-renderer" content="{RENDERER} {orient}">'
+
 
 # Lab panels in fishbone order; each renders as analyte header row, current row, prior row.
 LAB_PANELS = [
@@ -906,7 +918,7 @@ def render(data, orientation='landscape'):
     o2s = sorted({r.get('o2_delivery', '') for r in recs if r.get('o2_delivery')})
     rows = ''.join(render_row(r, h.get('report_date', '')) for r in recs)
     return f'''<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>ICU Daily Report {e(h.get("service", ""))} / {e(h.get("team", ""))} — {e(h.get("report_date", ""))}</title>
+<html lang="en"><head><meta charset="utf-8">{renderer_meta(orient)}<title>ICU Daily Report {e(h.get("service", ""))} / {e(h.get("team", ""))} — {e(h.get("report_date", ""))}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
 <style id="pagesz">@page{{size:letter {orient};margin:.3in}}</style></head>
 <body><div class="page">

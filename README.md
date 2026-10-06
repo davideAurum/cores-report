@@ -111,7 +111,7 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores print [FILE] [--to PRINTER \| --kiosk \| --dialog]` | print a Daily Report (see *Printing*) |
-| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the orientation the report was made with |
+| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the `orientation` setting's paper |
 | `cores parse FILE [-o X.json] [--copy]` | capture -> JSON only (a capture in Downloads or next to the scripts is moved into `reports\` first) |
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
 | `cores latest` | newest capture / JSON / Daily Report / PDF, and what `generate` would use |
@@ -138,8 +138,11 @@ break.
 - **Paper** (toolbar): Landscape or Portrait. The report sets the paper itself, so the browser's own Layout choice is
   greyed out in the print dialog. Use this switch instead. Your choice is remembered, and column widths are kept
   separately for each orientation. `cores pdf`, `--to` and `--kiosk` print in a browser that has not seen this switch,
-  so they use the `orientation` setting (`cores config --set orientation portrait`), which applies to reports made
-  from then on.
+  so they use the `orientation` setting (`cores config --set orientation portrait`).
+- **Older reports**: a Daily Report made by an older version of cores (one from before the Paper switch can only
+  print landscape), or for other paper than the `orientation` setting, is re-rendered from its JSON when
+  `cores open`, `cores print` or `cores pdf` uses it. Double-clicking the file shows it as it was made; open it with
+  `cores open` instead.
 - **Optimize widths** (toolbar): picks column widths for the patients and sections currently shown. It lays the
   report out off-screen the way it prints, measures how tall every patient's cells are at every column width, then
   searches for the widths that (1) cut off the least content at the right edge, (2) use the fewest pages, and
@@ -176,7 +179,7 @@ or use `cores config --set KEY VALUE`.
 | `acrobat` | auto | path to `Acrobat.exe` / `AcroRd32.exe` |
 | `keep` | `3` | capture sets kept by `cores clean` and `generate --clean` |
 | `open_after_run` | `true` | `cores generate` opens the Daily Report |
-| `orientation` | `landscape` | paper new Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
+| `orientation` | `landscape` | paper Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
 
 ## Files
 
