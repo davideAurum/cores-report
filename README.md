@@ -111,7 +111,7 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores print [FILE] [--to PRINTER \| --kiosk \| --dialog]` | print a Daily Report (see *Printing*) |
-| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the `orientation` setting's paper |
+| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the `orientation` setting's paper and the `black_and_white` setting's colors |
 | `cores parse FILE [-o X.json] [--copy]` | capture -> JSON only (a capture in Downloads or next to the scripts is moved into `reports\` first) |
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
 | `cores latest` | newest capture / JSON / Daily Report / PDF, and what `generate` would use |
@@ -139,8 +139,14 @@ break.
   greyed out in the print dialog. Use this switch instead. Your choice is remembered, and column widths are kept
   separately for each orientation. `cores pdf`, `--to` and `--kiosk` print in a browser that has not seen this switch,
   so they use the `orientation` setting (`cores config --set orientation portrait`).
+- **B&W** (toolbar): black and white, for a black-and-white printer. Nothing is told apart by color alone: headings,
+  unit chips and the isolation icon turn black, abnormal vital signs are bold and underlined, abnormal labs keep their
+  ▲/▼ arrows (now black), severity shows as a fill (Unstable black, Watcher gray, Stable white), highlighted meds are
+  underlined, and the Volume chart's intake, urine and other output are dark gray, mid-gray and hatched. Your choice is remembered; `cores pdf`,
+  `--to` and `--kiosk` use the `black_and_white` setting (`cores config --set black_and_white true`).
 - **Older reports**: a Daily Report made by an older version of cores (one from before the Paper switch can only
-  print landscape), or for other paper than the `orientation` setting, is re-rendered from its JSON when
+  print landscape), or for other paper or B&W than the `orientation` and `black_and_white` settings, is re-rendered
+  from its JSON when
   `cores open`, `cores print` or `cores pdf` uses it. Double-clicking the file shows it as it was made; open it with
   `cores open` instead.
 - **Optimize widths** (toolbar): picks column widths for the patients and sections currently shown. It lays the
@@ -180,6 +186,7 @@ or use `cores config --set KEY VALUE`.
 | `keep` | `3` | capture sets kept by `cores clean` and `generate --clean` |
 | `open_after_run` | `true` | `cores generate` opens the Daily Report |
 | `orientation` | `landscape` | paper Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
+| `black_and_white` | `false` | Daily Reports start in black and white, for a black-and-white printer; the report's B&W box overrides it in your browser |
 
 ## Files
 
@@ -190,7 +197,7 @@ or use `cores config --set KEY VALUE`.
 | `Make Daily Report.cmd`, `Print Daily Report.cmd` | drag-and-drop targets |
 | `capture_report.js` | pasted into the CORES window's console to capture a report |
 | `cores_parse.py`, `cores_parse_anes.py`, `cores_parse_med.py` | capture HTML -> JSON (I-PASS six-column, Anesthesia nine-column and Medicine five-column layouts) |
-| `cores_report.py` | JSON -> Daily Report HTML: search, filters, sort, Sections menu, Inspect, paper orientation, Optimize widths, print layout |
+| `cores_report.py` | JSON -> Daily Report HTML: search, filters, sort, Sections menu, Inspect, paper orientation, B&W, Optimize widths, print layout |
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
 | `requirements.txt` | Python packages |

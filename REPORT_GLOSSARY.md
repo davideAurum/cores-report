@@ -93,8 +93,8 @@ Vent block split (confirmed 2026-09-15): **Vent settings** = mode, set_rate, vt_
 | Mean Arterial Pressure, arterial line | `vitals.map_invasive` | `MAP (Invasive):` — CORES prints no min/max for it |
 | Arterial line BP | `vitals.art_bp` | `Art BP 134 / 57` (I-PASS only) |
 
-Rendered "BP" cell = SBP/DBP (MAP); it uses the arterial line values when present, else cuff. Hover the BP
-header to see which.
+Rendered "BP" item (in the Vitals line) = SBP/DBP (MAP) mmHg; it uses the arterial line values when present, else
+cuff. Hover BP to see which ("BP from the arterial line" / "BP from the cuff").
 
 ## Results column
 | Your name | Parser field | Source |
@@ -154,27 +154,54 @@ The Daily Report flags a temperature under 50 as degrees C (normal 36.1 to 37.9)
 not all marked low.
 
 ## Rendered Daily Report (names shown by the Inspect toggle)
-Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, Print, Reset columns, **Sections**
+Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, Print, **B&W** (black and white: see
+README, Printing), Paper, Optimize widths, Reset columns, **Sections**
 (a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; indented
-entries are parts of the entry above them — Admission, Allergy / Diet block, Ventilation, I&O, Trends, Labs —
+entries are parts of the entry above them — Admission, Allergy / Diet block, Vitals, Ventilation, Volume, Trends, Labs —
 and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
 column widths are remembered by the browser), Inspect.
 
-Each patient is a **Patient block** of two rows. Row 1: Patient column (patient info with the Location block
-as a square unit / room-bed chip to its right, then Severity chip and Isolation tag, the Admission block, and
-the Allergy / Diet block at the bottom) · Summary column · Vitals column (vitals,
-ventilation, I&O, lines) · Labs column (fishbones) · Meds column (Infusions,
-Antibiotics, Scheduled stacked) · Sit Awareness column (Tasks, Situational Awareness) · Notes column (blank,
+Section headings (VITALS, VOLUME, ADMISSION, TASKS, …) are blue capitals with no rule under them; a thin rule
+divides the sections of a cell from each other.
+
+Each patient is a **Patient block** of two rows. Row 1: Snapshot column (header "Snapshot"; the Location block, a unit / room-bed chip
+outlined and lettered in that unit's color, then 8 px to its right the Patient name, last name and comma on the
+first line, first name and MI on the second, and the Isolation tag (a Lucide biohazard icon in a box, red, black in B&W; hover
+shows the isolation text) to the right of the name when the patient is on isolation; then the Severity chip, and
+the Allergy / Diet block at the bottom) · Hospital Summary column (Admission at the top, then the Patient summary
+and Status lines) · Vitals column (header "Vitals · Vent · Volume · Labs · Lines": Vitals across the top, then
+Ventilation, then Volume and Labs side by side with a rule between them — Labs goes under Volume when the column
+is too narrow, as in portrait — then Tubes / Lines / Drains; Labs, heading "LABS (today)", was a column of its own
+until 2026-10-10) · Meds column (Infusions,
+Antibiotics, Scheduled stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (blank,
 for handwriting). Row 2: **PRN row**, full width, PRN meds flowing into as many columns as fit. Same-name drugs are merged onto one line with doses comma-separated.
-Inside them: Location block (Unit, Room, Bed, Severity chip, Isolation tag), Patient name, MRN, Date of birth,
-Age, Sex, Code status, Admission (Admit diagnosis with the `ADMIT:` prefix stripped, Admit date, Length of stay),
-Patient summary, Status lines, Allergy / Diet block (Allergies, Diet,
-TF, Restraints), Tasks, Situational Awareness, Vitals (Temperature, Heart rate, Respiratory rate, Blood pressure),
-Ventilation (O2 delivery, Vent settings, Vent measurements, Blood gas), I&O (I&O chart — one mirror column per
-day: intake rises in blue, output hangs below in red with urine solid at the baseline and other output continuing
-as a wash, values at the bar tips, the day's net underneath with a "Net:" label in the chart's left gutter, legend to
-the right of the chart, scaled to that patient's largest value; Net I&O since admission, shown as
-"Cumulative net" at the right of the I & O heading),
+Unit colors (`UNIT_PALETTE` in `cores_report.py`): MICU, MCCU, CCU, ICVU, NICU, BMT and UED always get the
+same color (`UNIT_PINNED`); any other unit gets a color no other unit on that report has, starting from one picked
+from its name, so it can differ from day to day. Past thirteen units two unpinned units share a color, never a pinned
+unit's. A chip with no unit is gray. In a Snapshot column too narrow
+for the chip and the name side by side, the name moves under the chip.
+Inside them: Location block (Unit, Room, Bed), Severity chip, Isolation tag (boxed biohazard icon), Patient name (Last name, First name
+and MI), MRN and Date of birth on one line ("MRN … | DOB …", labels bold, values plain),
+Age, Sex, Code status, Admission ("Dx: …", the Admit diagnosis with the `ADMIT:` prefix stripped; "Date: MM/DD/YY (LOS n days)", the Admit date
+and Length of stay; only the labels bold),
+Patient summary, Status lines, Allergy / Diet block (Allergies — "No Known Medication Allergies" or "No Known Drug
+Allergies" shown as NKDA, alone or in a list ("NKA, NKDA"); search finds either form — Diet — each diet order up to its
+first comma, the orders joined by " / " ("NPO / Regular"): CORES separates orders with a bare comma and an order's
+details with a comma and a space; a comma inside parentheses or a number like 1,800 does not count, and an order listed
+twice shows once; hovering shows the whole field, and search still finds all of it —
+TF, Restraints), Tasks, Situational Awareness, Vitals (one line under a VITALS heading, "T … °F | HR … bpm | BP SBP/DBP (MAP) mmHg | RR … bpm | SpO2 …% on NC |
+GCS …" (°C for a temperature under 50; O2 delivery after SpO2, shortened: Room air RA, Nasal cannula NC, High
+flow nasal cannula HFNC, Ventilator vent, Non-rebreather mask NRB, anything else as CORES writes it), labels bold, values plain and red when out of range, units gray, only the ones CORES reported: Temperature, Heart rate, Blood
+pressure, Respiratory rate, SpO2, O2 delivery, GCS),
+Ventilation (Vent settings, Vent measurements, Blood gas; left out when there are none), Volume (the I&O; heading VOLUME; Volume chart — one mirror column per
+day, today's column left out (only the days before the report date): intake rises in blue, output hangs below in red with urine solid at the baseline and other output continuing
+as a wash, then under the bars a small table of In, Out and Net rows, one value per day (— where CORES gave no
+value), a rule above Net; the rows are labelled with Lucide icons in the chart's left gutter (In row label:
+square-arrow-right-enter turned 90° clockwise; Out row label: square-arrow-right-exit turned 90°; Net row label:
+square-sigma; hover names them); the zero line starts at the table's left edge; legend (Volume legend) 8 px to the
+right of the bars with its middle entry, Urine, level with the zero line; scaled to that patient's largest value;
+Net I&O since admission: "Σ<sub>cum</sub> = total" on one line, a larger Σ (14 px) and its subscript bold, the rest regular,
+8 px to the right of the table and level with the Out row (under the heading when there is no chart), hover for its name),
 Tubes / Lines / Drains (TLD item), Labs — today's values only, as classic fishbones, row 1: CBC fishbone (spine
 with forked ends: WBC left, Plt right, Hgb over Hct) beside the Coags fishbone (inverted Y: PT left, PTT right,
 INR below); row 2: BMP fishbone (Na | Cl | BUN over K | CO2 | Cr, Glu in the open angle at the end) beside the

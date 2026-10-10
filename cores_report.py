@@ -1,10 +1,11 @@
 """Render parsed CORES data (from cores_parse.py) as a filterable, sortable, printable HTML table.
 
 Usage:
-  python cores_report.py "CORES report 281 2026-09-16 0715.html" [out.html]   # parse + render in one step
-  python cores_report.py data.json [out.html]                                   # render from saved JSON
+  python cores_report.py "CORES report 281 2026-09-16 0715.html" [out.html] [--portrait] [--bw]   # parse + render in one step
+  python cores_report.py data.json [out.html] [--portrait] [--bw]                                   # render from saved JSON
+--portrait starts the report on portrait paper, --bw in black and white (both can be changed in its toolbar).
 
-Each patient is a two-row block: Location / Patient | Summary | Vitals · Vent · I&O · Lines | Labs | Meds | Tasks / Sit Awareness | Notes (blank, for
+Each patient is a two-row block: Snapshot | Hospital Summary | Vitals · Vent · Volume · Labs · Lines | Meds | Tasks / Sit Awareness | Notes (blank, for
 handwriting), then a full-width PRN row.
 Click a column header to sort; use the toolbar to filter. Hidden patients are not printed. Designed for ~1000 px
 (letter landscape) and up. The toolbar's Paper switch prints portrait instead; Optimize widths picks the column widths
@@ -18,16 +19,18 @@ import html
 import json
 import re
 import sys
+import zlib
 
-# Which version of this file made a Daily Report, and for which paper (written into its <head>). cores.py re-renders a
-# report made by any other version, or for other paper than its "orientation" setting, before it opens, prints or PDFs
-# it, so an old report gets what was added since (the Paper switch, say) and a changed setting applies to it too.
+# Which version of this file made a Daily Report, for which paper and whether black and white (written into its <head>).
+# cores.py re-renders a report made by any other version, or for other paper or B&W than its "orientation" and
+# "black_and_white" settings, before it opens, prints or PDFs it, so an old report gets what was added since (the Paper
+# switch, say) and a changed setting applies to it too.
 with open(__file__, 'rb') as _fh:
     RENDERER = hashlib.sha1(_fh.read().replace(b'\r\n', b'\n')).hexdigest()[:12]
 
 
-def renderer_meta(orient):
-    return f'<meta name="cores-renderer" content="{RENDERER} {orient}">'
+def renderer_meta(orient, bw=False):
+    return f'<meta name="cores-renderer" content="{RENDERER} {orient}{" bw" if bw else ""}">'
 
 
 # Lab panels in fishbone order; each renders as analyte header row, current row, prior row.
@@ -72,35 +75,57 @@ VENT_MEASURED = [('vt_measured', 'VT'), ('vt_spont', 'VT spont'), ('minute_volum
 MED_SECTIONS = [('infusions', 'Infusions'), ('antibiotics', 'Antibiotics'), ('scheduled', 'Scheduled'), ('prn', 'PRN')]
 SEV_CLASS = {'watcher': 'sev-watch', 'unstable': 'sev-unstable', 'stable': 'sev-stable'}
 SEV_RANK = {'unstable': 0, 'watcher': 1, 'stable': 2}
+# Location block outline and text color per unit, each at least 4.5:1 on white and on the #fafafa of every other patient.
+# Thirteen hues are about as many as stay apart at a glance; the unit's name is on the chip either way.
+UNIT_PALETTE = ['#1f4e79', '#b34700', '#00796b', '#ad1457', '#8a6d00', '#6a1b9a', '#0277bd', '#33691e', '#c92a63', '#6d4c41',
+                '#557700', '#c62828', '#7e57c2']
+# Units that always get the same color. Any other unit gets a color no other unit on the report has, starting from one
+# picked from its name; which one it ends up with depends on the other units that day.
+UNIT_PINNED = {'MICU': 0, 'MCCU': 1, 'CCU': 2, 'ICVU': 3, 'NICU': 4, 'BMT': 5, 'UED': 6}
+
+
+def unit_colors(units):
+    """{unit: color} for the units in one report, no two alike while the palette lasts."""
+    n = len(UNIT_PALETTE)
+    slot = {u: UNIT_PINNED[u] for u in units if u in UNIT_PINNED}
+    loose = [i for i in range(n) if i not in UNIT_PINNED.values()]
+    for u in sorted(set(units) - set(slot)):
+        h = zlib.crc32(u.encode())
+        k = h % len(loose)
+        # a pinned unit's color is free on a day that unit has no patients
+        free = [i for i in loose[k:] + loose[:k] + sorted(UNIT_PINNED.values()) if i not in slot.values()]
+        slot[u] = free[0] if free else loose[k]  # past thirteen units, share a color, but never a pinned unit's
+    return {u: UNIT_PALETTE[i] for u, i in slot.items()}
+
+
 # Toggleable parts of the page, grouped for the Sections menu. Names are the data-name attributes in the markup;
 # entries ending in ' column' hide a whole column (header, cells and width).
 SECTIONS = [
-    ('Location / Patient', ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                            'Admission', 'Admit diagnosis', 'Admit date', 'Length of stay',
-                            'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
-    ('Summary', ['Patient summary', 'Status lines']),
-    ('Vitals', ['Vitals', 'Ventilation', 'O2 delivery', 'Vent settings', 'Vent measurements', 'Blood gas',
-                'I&O', 'I&O chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
+    ('Snapshot', ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
+                  'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
+    ('Hospital Summary', ['Admission', 'Admit diagnosis', 'Admit date', 'Length of stay', 'Patient summary', 'Status lines']),
+    ('Vitals', ['Vitals', 'O2 delivery', 'Ventilation', 'Vent settings', 'Vent measurements', 'Blood gas',
+                'Volume', 'Volume chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
     ('Labs', ['Labs', 'CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs',
               'Trends', 'Glucose trend', 'Lactic acid trend']),
     ('Meds', ['Infusions', 'Antibiotics', 'Scheduled', 'PRN row']),
     ('Tasks', ['Tasks', 'Situational Awareness']),
-    ('Columns', ['Patient column', 'Summary column', 'Vitals column', 'Labs column', 'Meds column', 'Sit Awareness column',
+    ('Columns', ['Snapshot column', 'Hospital Summary column', 'Vitals column', 'Meds column', 'Sit Awareness column',
                  'Notes column']),
 ]
 # Parts of each container: when every part is hidden the container disappears too (applied bottom-up).
 COLPARTS = {
     'Admission': ['Admit diagnosis', 'Admit date', 'Length of stay'],
     'Allergy / Diet block': ['Allergies', 'Diet', 'TF', 'Restraints'],
-    'Ventilation': ['O2 delivery', 'Vent settings', 'Vent measurements', 'Blood gas'],
-    'I&O': ['I&O chart', 'Net I&O since admission'],
+    'Vitals': ['Temperature', 'Heart rate', 'Blood pressure', 'Respiratory rate', 'SpO2', 'O2 delivery', 'GCS'],
+    'Ventilation': ['Vent settings', 'Vent measurements', 'Blood gas'],
+    'Volume': ['Volume chart', 'Net I&O since admission'],
     'Trends': ['Glucose trend', 'Lactic acid trend'],
     'Labs': ['CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs', 'Trends'],
-    'Patient column': ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                       'Admission', 'Allergy / Diet block'],
-    'Summary column': ['Patient summary', 'Status lines'],
-    'Vitals column': ['Vitals', 'Ventilation', 'I&O', 'Tubes / Lines / Drains'],
-    'Labs column': ['Labs'],
+    'Snapshot column': ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
+                        'Allergy / Diet block'],
+    'Hospital Summary column': ['Admission', 'Patient summary', 'Status lines'],
+    'Vitals column': ['Vitals', 'Ventilation', 'Volume', 'Labs', 'Tubes / Lines / Drains'],
     'Meds column': ['Infusions', 'Antibiotics', 'Scheduled'],
     'Sit Awareness column': ['Tasks', 'Situational Awareness'],
 }
@@ -139,43 +164,55 @@ body.resizing{cursor:col-resize;user-select:none}
 .rpt > tbody.blk > tr.medrow > td{border-top:1px dashed var(--line);padding:3px 6px 5px}
 .rpt > tbody.blk{border-bottom:2px solid var(--accent)}
 .rpt > tbody.hide{display:none}
-.pthead{margin-bottom:2px;overflow:hidden} .pthead .name{margin:0;font-size:11px;line-height:1.2;display:block}
-.bedchip{float:right;margin:0 0 2px 4px;min-width:36px;padding:3px 2px;border:1.5px solid var(--accent);border-radius:4px;text-align:center;line-height:1.15;color:var(--accent);font-weight:700}
-.bedchip .u{display:block;font-size:9px;letter-spacing:.2px} .bedchip .rb{display:block;font-size:10px}
-.pttags{margin:3px 0 0} .pttags .sev{margin-right:4px} .pttags .iso{display:inline-block;margin-top:2px}
-.adm{margin-top:5px} .adm div{margin:0 0 1px}
-.sev{display:inline-block;padding:1px 7px;border-radius:9px;font-weight:700;font-size:9.5px;color:#fff;background:var(--mute);margin:2px 0}
+/* Location block left, name 8px to its right; in a column too narrow for both the name goes under the chip */
+.pthead{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;margin-bottom:3px}
+.pthead .name{flex:0 1 auto;min-width:0;margin:0;line-height:1.2;overflow-wrap:break-word} .pthead .name > span{display:block}
+.bedchip{flex:none;min-width:44px;padding:2px 3px;border:2px solid var(--unit,var(--mute));border-radius:4px;text-align:center;line-height:1.1;font-weight:700;color:var(--unit,var(--mute))}
+.bedchip .u{display:block;font-size:10px;letter-spacing:.4px} .bedchip .rb{display:block;font-size:11.5px}
+.pttags{margin:3px 0 0} .pttags .sev{margin-right:4px}
+.adm div{margin:0 0 1px}
+.sev{display:inline-block;padding:1px 7px;border-radius:9px;font-weight:700;font-size:9.5px;color:#fff;background:var(--mute);margin:2px 0;print-color-adjust:exact;-webkit-print-color-adjust:exact}
 .sev-watch{background:var(--watch)} .sev-unstable{background:var(--unstable)} .sev-stable{background:var(--stable)}
-.pt .name{font-size:12px;font-weight:700;display:block;margin-bottom:2px}
+.pt .name{font-size:12px;font-weight:700}
 .kv{color:var(--mute)} .kv b{color:var(--ink);font-weight:600}
-.pt .kv{display:block}
-h4{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);margin:5px 0 2px;border-bottom:1px solid var(--line);padding-bottom:1px}
+.pt .kv{display:block} .pt .pid{display:block} .pt .pid .kv{display:inline;white-space:nowrap}
+.pt [data-name="MRN"]{white-space:nowrap} .pt [data-name="MRN"]::after{content:"|";margin:0 4px;color:var(--mute)} .pt [data-name="MRN"].endvis::after{content:none}
+h4{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);margin:5px 0 2px}
 h4:first-child{margin-top:0}
-h4 .hdr-r{float:right;text-transform:none;letter-spacing:0;font-weight:400;color:var(--mute)} h4 .hdr-r b{color:var(--ink);font-weight:700}
+/* a cell's sections (Vitals, Ventilation, Volume, …) are divided by a rule; their headings have none */
+.sec ~ .sec{border-top:1px solid var(--line);margin-top:5px;padding-top:4px} .medbar .sec ~ .sec{border-top:0;margin-top:0;padding-top:0}
+/* Volume and Labs side by side, tops level, a rule between them; Labs goes under Volume when the column is too narrow */
+.duo{display:flex;flex-wrap:wrap;align-items:flex-start;container-type:inline-size} .duo > .sec{flex:none}
+/* Labs takes the rest of the row, at least its widest fishbone row (CBC + coags, 174px) plus the rule; long trends wrap */
+.duo > .sec ~ .sec{flex:1 1 0;min-width:184px;border-top:0;margin:0 0 0 8px;padding:0 0 0 8px;border-left:1px solid var(--line)}
+/* too narrow for both (portrait): Labs on its own line under Volume, ruled off like any other section */
+@container (max-width:351px){.duo > .sec ~ .sec{flex-basis:100%;margin:5px 0 0;padding:4px 0 0;border-left:0;border-top:1px solid var(--line)}}
+/* the first section still shown in a cell, its earlier ones hidden in Sections, has no rule (set by the page script) */
+.sec.lead{border-top:0;margin-top:0;padding-top:0} .duo > .sec.lead{border-left:0;margin-left:0;padding-left:0}
+.ionet-alt{display:none}
+.ionet{margin:2px 0 3px} .ionet sub{font-size:.75em;line-height:0;vertical-align:-.3em}
 p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
-[data-name="Situational Awareness"] ul,[data-name="Tasks"] ul{padding-left:11px;line-height:1.2} [data-name="Situational Awareness"] li,[data-name="Tasks"] li{margin:0} [data-name="Situational Awareness"] h4{margin-top:4px}
+[data-name="Situational Awareness"] ul,[data-name="Tasks"] ul{padding-left:11px;line-height:1.2} [data-name="Situational Awareness"] li,[data-name="Tasks"] li{margin:0}
 .tasks li{list-style:none;margin-left:-14px} .tasks li::before{content:"\\2610  ";}
 .status td{padding:0 6px 1px 0;vertical-align:top;border:0} .status td:first-child{color:var(--mute);white-space:nowrap}
 .care{border-top:1px solid var(--line);margin-top:5px;padding-top:3px} .care > div{margin:0 0 3px}
 .care .allergies{color:#e00000;font-weight:600}
 .abn{color:#d00000}
-.iso{display:block;margin-top:3px;font-size:9px;font-weight:600;color:var(--unstable);border:1px solid var(--unstable);border-radius:3px;padding:0 4px;width:max-content}
+/* Isolation: a biohazard icon right of the name, the two kept together (they go under the chip together) */
+.pthead .nameiso{display:flex;align-items:center;gap:3px;min-width:0} .iso{flex:none;color:var(--unstable);border:1.5px solid currentColor;border-radius:3px;padding:1px} .iso svg{display:block}
 .lines{padding-left:12px;font-size:9.5px;color:var(--ink)} .lines li{margin:0} .lines .days{color:var(--mute);font-size:9px}
-.vit{width:100%;font-size:10px;border-collapse:collapse} .vit td,.vit th{padding:1px 3px;text-align:center;border:0;border-bottom:1px solid var(--line)}
-.vit th{font-weight:600;background:var(--band)}
+.vitl .vi{white-space:nowrap} .vitl .vi:not(:last-child)::after{content:"|";margin:0 4px;color:var(--mute)} .vitl .vi.endvis::after{content:none} .vitl .unit{color:var(--mute)}
 .lab{width:100%;font-size:10px;border-collapse:collapse;table-layout:fixed;margin-bottom:4px}
 .lab th{font-weight:600;color:var(--mute);font-size:9px;text-align:center;padding:0 1px;border:0;border-bottom:1px solid var(--line)}
 .lab th.pnl{text-align:left;color:var(--accent);font-size:9.5px;width:30px;vertical-align:top;border-bottom:0}
 .lab td{text-align:center;padding:1px;border:0;white-space:nowrap}
 .lab td.cur{font-weight:700} .lab td.pri{color:var(--mute);font-style:italic;font-size:9px;line-height:1.1}
-.fishrow{display:flex;gap:4px;align-items:center;margin:1px 0} .fish{display:block;flex:none;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.fishrow{display:flex;gap:4px;align-items:center;margin:1px 0} .fish{display:block;flex:none;overflow:visible;print-color-adjust:exact;-webkit-print-color-adjust:exact}  /* a value's arrow may run past the bone */
 .lft{font-size:10px;line-height:1.2;padding-left:2px} .labarr{color:#d00000;font-size:6.5px;vertical-align:2px;margin-left:1px}
 .trend{margin:2px 0 3px;font-size:10px} .trend b{color:var(--mute);font-weight:600}
 .gas{margin:2px 0 3px} .gas b{font-weight:600}
-.iowrap{display:flex;gap:3px;align-items:flex-start;margin:2px 0 3px}
-.iochart{display:block;flex:none;print-color-adjust:exact;-webkit-print-color-adjust:exact}
-.ioside{display:flex;flex-direction:column;gap:5px;padding-top:2px;min-width:0;line-height:1.15;font-size:9px} .ioside .ionet{margin-top:auto;font-weight:700;line-height:1}
-.iokey{display:flex;flex-direction:column;gap:2px;color:var(--mute)} .iokey span{white-space:nowrap} .iokey i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:-1px}
+.iowrap{margin:2px 0 3px}
+.iochart{display:block;overflow:visible;print-color-adjust:exact;-webkit-print-color-adjust:exact}
 .io{border-collapse:collapse} .io td{padding:0 6px 0 0;text-align:right;border:0} .io td:first-child{text-align:left;color:var(--mute)} .io th{font-weight:600;text-align:right;padding:0 6px 0 0;color:var(--mute);border:0}
 .medbar{display:flex;gap:0 14px;align-items:flex-start}
 .medbar .medsec{min-width:130px} .medbar .medsec h4{margin-top:0}
@@ -185,7 +222,7 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .meds{margin:0;padding:0;list-style:none;column-width:150px;column-gap:12px}
 .meds li{break-inside:avoid;margin:0;padding-left:8px;text-indent:-8px;line-height:1.2}
 .meds .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px}
-.medsec h4{white-space:nowrap;letter-spacing:.3px} .medsec + .medsec{margin-top:8px}
+.medsec h4{white-space:nowrap;letter-spacing:.3px}
 .meds .drug{font-weight:600} .meds .det{color:var(--mute)} .meds .hi .drug{color:var(--accent)} .meds .day{color:var(--mute);font-size:9px} .meds .ld{color:var(--watch);font-size:9px}
 .empty{color:var(--mute);font-style:italic}
 body.inspect [data-name]{cursor:crosshair}
@@ -194,6 +231,16 @@ body.inspect .insp-hl{outline:2px solid #e07a00;outline-offset:1px;background:rg
 #insp-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;background:#1f4e79;color:#fff;font-size:12px;padding:6px 12px;border-radius:4px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .foot{color:var(--mute);font-size:9px;margin-top:8px;text-align:center}
 .toolbar .optmsg{color:var(--mute)}
+/* Black and white (toolbar B&W, or the black_and_white setting): nothing told apart by color alone. Headings, chips and
+   tags go black; abnormal vitals bold and underlined, abnormal labs keep their ▲/▼ arrows (black); severity by fill
+   (Unstable black, Watcher gray, Stable white); highlighted meds underlined; Volume chart intake dark, urine mid-gray,
+   other output hatched */
+body.bw{--accent:#000;--watch:#000;--unstable:#000;--stable:#000}
+body.bw .bedchip{border-color:#000;color:#000} body.bw .care .allergies{color:#000;font-weight:700}
+body.bw .abn{color:#000;font-weight:700;text-decoration:underline} body.bw .labarr{color:#000} body.bw tspan[class^="lab-"]{fill:#000}
+body.bw .sev{background:#fff;color:#000;border:1px solid #000;padding:0 6px} body.bw .sev-watch{background:#c8c8c8} body.bw .sev-unstable{background:#000;color:#fff}
+body.bw .hi .drug{text-decoration:underline}
+body.bw .bar-in{fill:#3a3a3a} body.bw .bar-ur{fill:#9a9a9a} body.bw .bar-ot{fill:url(#bw-hatch);fill-opacity:1;stroke:#444;stroke-width:.6}
 /* off-screen copy used by Optimize widths: the print rules below, applied on screen so it can be measured */
 .pm{position:absolute;left:-30000px;top:0;font-size:9px;line-height:1.22;background:#fff}
 .pm .rpt thead th{position:static} .pm .rpt > thead > tr > th,.pm .rpt > tbody > tr > td{padding:3px 5px} .pm .pmw{display:flow-root}
@@ -262,7 +309,7 @@ JS = """
     tip.style.left=Math.min(e.clientX+12,window.innerWidth-tip.offsetWidth-8)+'px'; tip.style.top=(e.clientY+16)+'px';
   });
   document.addEventListener('click',e=>{
-    if(!insp.checked)return; const t=e.target.closest('[data-name]'); if(!t)return;
+    if(!insp.checked||e.target.closest('.toolbar'))return; const t=e.target.closest('[data-name]'); if(!t)return;
     e.preventDefault(); e.stopPropagation(); const n=chain(t);
     if(navigator.clipboard)navigator.clipboard.writeText(n).catch(()=>{});
     toast.textContent='Copied: '+n; toast.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>toast.style.display='none',2000);
@@ -276,10 +323,19 @@ JS = """
   const COLNAME=ths.map(th=>th.dataset.name.replace(' header',' column'));
   const orientSel=document.getElementById('orient'), pageSz=document.getElementById('pagesz'), optMsg=document.getElementById('opt-msg');
   let orient=orientSel.value, hidden=new Set();
+  // B&W starts as the report was made (the black_and_white setting) unless this browser chose otherwise
+  const bwBox=document.getElementById('bw'), KEYB='cores-report-bw-v1';
+  let bw=document.body.classList.contains('bw');
+  try{const s=localStorage.getItem(KEYB); if(s==='1'||s==='0')bw=s==='1';}catch(e){}
+  const setBW=()=>{document.body.classList.toggle('bw',bw); bwBox.checked=bw;};
+  setBW();
+  bwBox.addEventListener('change',()=>{bw=bwBox.checked; setBW(); try{localStorage.setItem(KEYB,bw?'1':'0');}catch(e){}});
   try{const s=localStorage.getItem(KEYO); if(s==='portrait'||s==='landscape')orient=s;}catch(e){}
-  function loadW(o){try{const s=JSON.parse(localStorage.getItem(keyW(o))||'null'); if(s&&s.length===cols.length)return s;}catch(e){} return defaults.slice();}
+  // saved widths are kept only while the default widths they were made against are unchanged; a new layout starts afresh
+  function loadW(o){try{const s=JSON.parse(localStorage.getItem(keyW(o))||'null'); if(s&&s.d===defaults.join()&&s.w&&s.w.length===cols.length)return s.w;}catch(e){} return defaults.slice();}
   let base=loadW(orient);
-  try{const s=JSON.parse(localStorage.getItem(KEYS)||'null'); if(Array.isArray(s))hidden=new Set(s);}catch(e){}
+  const RENAMED={'Patient column':'Snapshot column','Summary column':'Hospital Summary column','I&O':'Volume','I&O chart':'Volume chart','Labs column':'Labs'};  // names saved by older reports
+  try{const s=JSON.parse(localStorage.getItem(KEYS)||'null'); if(Array.isArray(s))hidden=new Set(s.map(n=>RENAMED[n]||n));}catch(e){}
   const secStyle=document.createElement('style'); document.head.appendChild(secStyle);
   const COLPARTS=__COLPARTS__;
   function effHidden(){
@@ -294,12 +350,18 @@ JS = """
       // keep the cell in the row (display:none would shift the other cells' column slots); collapse it instead
       if(off)rules.push('.rpt thead th:nth-child('+(i+1)+'),.rpt tr.main>td:nth-child('+(i+1)+'){width:0!important;padding:0!important;border-left:0!important;border-right:0!important;font-size:0!important;overflow:hidden}'
         +'.rpt thead th:nth-child('+(i+1)+')>*,.rpt tr.main>td:nth-child('+(i+1)+')>*{display:none!important}');});
+    if(eff.has('Volume')&&eff.has('Labs'))rules.push('.duo{display:none!important}');  // the row holding both
+    if(eff.has('Volume chart'))rules.push('.ionet-alt{display:block!important}');  // the total stays, under the heading
     eff.forEach(n=>{if(!COLNAME.includes(n))rules.push('[data-name="'+n.replace(/"/g,'')+'"]{display:none!important}');});
     secStyle.textContent=rules.join(' ');
+    // with sections hidden: no rule above the first one still shown in a cell, no '|' after the last item still shown
+    const shown=x=>getComputedStyle(x).display!=='none';
+    document.querySelectorAll('.rpt .sec').forEach(s=>{let p=s.previousElementSibling; while(p&&!(p.classList.contains('sec')&&shown(p)))p=p.previousElementSibling; s.classList.toggle('lead',!p);});
+    document.querySelectorAll('.rpt .vitl,.rpt .pt .pid').forEach(c=>{const it=[...c.children].filter(x=>x.matches('.vi,[data-name="MRN"],[data-name="Date of birth"]')&&shown(x)); it.forEach((x,i)=>x.classList.toggle('endvis',i===it.length-1));});
     document.querySelectorAll('[data-sec]').forEach(cb=>{cb.checked=!hidden.has(cb.dataset.sec);});
     pageSz.textContent='@page{size:letter '+orient+';margin:.3in}'; orientSel.value=orient;
   }
-  function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify(base));}catch(e){}}
+  function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify({d:defaults.join(),w:base}));}catch(e){}}
   function saveS(){try{localStorage.setItem(KEYS,JSON.stringify([...hidden]));}catch(e){}}
   ths.forEach((th,i)=>{
     if(i===ths.length-1)return;
@@ -453,6 +515,15 @@ def flag(kind, value):
     return f'<span class="{"abn" if abn else ""}">{e(value)}</span>'
 
 
+# O2 delivery as shown after SpO2 ("SpO2 93% on NC"); each comma-separated part CORES lists is shortened if known
+O2_SHORT = {'room air': 'RA', 'nasal cannula': 'NC', 'high flow nasal cannula': 'HFNC', 'ventilator': 'vent',
+            'non-rebreather mask': 'NRB'}
+
+
+def o2_text(o2):
+    return ', '.join(O2_SHORT.get(p.strip().lower(), p.strip()) for p in (o2 or '').split(',') if p.strip())
+
+
 def render_vitals(r):
     v = r['vitals']
     last = lambda k: v.get(k, {}).get('last', '')
@@ -467,22 +538,30 @@ def render_vitals(r):
     bp = ''
     if sbp or dbp or mapv:
         bp = f'{flag("sbp", sbp)}/{flag("dbp", dbp)}' if (sbp or dbp) else ''
-        bp += f' ({flag("map", mapv)})' if mapv else ''
-    cells = [('T', 'Temperature', flag('temp', last('temp'))), ('HR', 'Heart rate', flag('hr', last('hr'))),
-             ('RR', 'Respiratory rate', flag('rr', last('rr'))), ('SpO2', 'SpO2', flag('spo2', last('spo2'))),
-             ('BP', 'Blood pressure', bp), ('GCS', 'GCS', e(last('gcs')) if last('gcs') else '')]
+        bp += f'{" " if bp else ""}({flag("map", mapv)})' if mapv else ''
+    # "T 98.6 °F | HR 80 bpm | BP 120/70 (87) mmHg | RR 16 bpm | SpO2 96% on NC | GCS 15"; RR and GCS only where the
+    # report has them (I-PASS, Medicine). A temperature under 50 is in degrees C, as in flag().
+    t = num(last('temp'))
+    cells = [('T', 'Temperature', flag('temp', last('temp')), ' °C' if t is not None and t < 50 else ' °F'),
+             ('HR', 'Heart rate', flag('hr', last('hr')), ' bpm'), ('BP', 'Blood pressure', bp, ' mmHg'),
+             ('RR', 'Respiratory rate', flag('rr', last('rr')), ' bpm'), ('SpO2', 'SpO2', flag('spo2', last('spo2')), '%'),
+             ('GCS', 'GCS', e(last('gcs')) if last('gcs') else '', '')]
+    o2, after = o2_text(r.get('o2_delivery')), {}
+    if o2 and cells[4][2]:
+        after['SpO2'] = f' <span data-name="O2 delivery">on {e(o2)}</span>'
+    elif o2:                                     # no SpO2 to hang it on
+        cells.insert(5, ('O2', 'O2 delivery', e(o2), ''))
     cells = [c for c in cells if c[2]]           # only the vitals CORES actually reported
     if not cells:
         return ''
-    head = ''.join(f'<th{" title=" + chr(34) + src + chr(34) if k == "BP" else ""}>{k}</th>' for k, _, _ in cells)
-    vals = ''.join(f'<td data-name="{n}"><b>{c}</b></td>' for _, n, c in cells)
-    return f'<div data-name="Vitals"><table class="vit"><tr>{head}</tr><tr>{vals}</tr></table></div>'
+    items = '<wbr>'.join(f'<span class="vi" data-name="{n}"' + (f' title="BP from the {src}"' if k == 'BP' else '')
+                         + f'><b>{k}</b> {c}' + (f'<span class="unit">{u}</span>' if u else '') + after.get(k, '') + '</span>'
+                         for k, n, c, u in cells)
+    return f'<div class="sec" data-name="Vitals"><h4>Vitals</h4><div class="vitl">{items}</div></div>'
 
 
 def render_ventilation(r):
     out = ''
-    if r.get('o2_delivery'):
-        out += f'<div class="gas" data-name="O2 delivery"><b>O2</b> {e(r["o2_delivery"])}</div>'
     if r.get('vent'):
         v = r['vent']
         known = {'mode'} | {k for k, _ in VENT_SETTINGS} | {k for k, _ in VENT_MEASURED}
@@ -495,7 +574,7 @@ def render_ventilation(r):
     for g in r.get('gases') or []:
         vals = ' '.join(f'<b>{e(k)}</b> {e(v)}' for k, v in g['values'].items())
         out += f'<div class="gas" data-name="Blood gas"><b>{e(g["type"])}</b> <span class="kv">({e(g["time"])})</span> {vals}</div>'
-    return (f'<div data-name="Ventilation"><h4>Ventilation</h4>{out}</div>') if out else ''
+    return (f'<div class="sec" data-name="Ventilation"><h4>Ventilation</h4>{out}</div>') if out else ''
 
 
 def num(s):
@@ -532,58 +611,99 @@ def io_day_labels(cols, report_date):
     return [sub.get(c.strip().lower(), c) for c in cols]
 
 
-def io_chart(io, report_date='', min_height=0):
+# Lucide icons (lucide.dev, ISC License, Copyright (c) Lucide Contributors): the inside of each 24x24 SVG
+LUCIDE = {
+    'biohazard': '<circle cx="12" cy="11.9" r="2"/><path d="M6.7 3.4c-.9 2.5 0 5.2 2.2 6.7C6.5 9 3.7 9.6 2 11.6"/><path d="m8.9 10.1 1.4.8"/>'
+                 '<path d="M17.3 3.4c.9 2.5 0 5.2-2.2 6.7 2.4-1.2 5.2-.6 6.9 1.5"/><path d="m15.1 10.1-1.4.8"/>'
+                 '<path d="M16.7 20.8c-2.6-.4-4.6-2.6-4.7-5.3-.2 2.6-2.1 4.8-4.7 5.2"/><path d="M12 13.9v1.6"/>'
+                 '<path d="M13.5 5.4c-1-.2-2-.2-3 0"/><path d="M17 16.4c.7-.7 1.2-1.6 1.5-2.5"/><path d="M5.5 13.9c.3.9.8 1.8 1.5 2.5"/>',
+    'square-sigma': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M16 8.9V7H8l4 5-4 5h8v-1.9"/>',
+    'square-arrow-right-enter': '<path d="m10 16 4-4-4-4"/><path d="M3 12h11"/>'
+                                '<path d="M3 8V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3"/>',
+    'square-arrow-right-exit': '<path d="M10 12h11"/><path d="m17 16 4-4-4-4"/>'
+                               '<path d="M21 6.344V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1.344"/>',
+}
+
+
+def icon(name, size, color, rotate=0, x=None, y=None, extra='', stroke=2.5):
+    """A Lucide icon as an <svg> of size px, stroked in color (stroke wide, in 24ths of the icon) and turned rotate
+    degrees clockwise; x and y place it inside another SVG."""
+    pos = f' x="{x:g}" y="{y:g}"' if x is not None else ''
+    body = LUCIDE[name] if not rotate else f'<g transform="rotate({rotate} 12 12)">{LUCIDE[name]}</g>'
+    return (f'<svg{pos} width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{stroke:g}" '
+            f'stroke-linecap="round" stroke-linejoin="round"{extra}>{body}</svg>')
+
+
+def io_chart(io, report_date='', total=''):
     """Mirror columns per day, drawn at fixed pixel size so its text matches the report (10px): intake (blue)
     rises from a baseline, output (red) hangs below it with urine solid at the baseline and other output
-    continuing as a wash, connected. Intake / output values sit at the bar tips, the day's net underneath."""
+    continuing as a wash, connected; today's column is left out, only the days before it are shown. Under the bars a
+    small table: In, Out and Net rows (labelled with icons), one value per day. The legend sits GAP to the right of the bars, its middle entry level with the zero line, and total
+    (the net since admission) GAP to the right of the table."""
     cols = io_day_labels(io['columns'], report_date)
     rows = io['rows']
     get = lambda k, i: num(rows[k][i]) if k in rows and i < len(rows[k]) else None
     days = []
     for i, c in enumerate(cols):
+        if io['columns'][i].strip().lower() in ('tdy', 'today'):
+            continue
         i_, o_, u_, n_ = get('Intake', i), get('Output', i), get('Urine', i), get('Net', i)
         if i_ is None and o_ is None:
             continue
-        days.append((c, i_ or 0, o_ or 0, u_, n_))
+        days.append((c, i_, o_, u_, n_))
     if not days:
         return ''
-    peak = max(max(i_, o_) for _, i_, o_, _, _ in days) or 1
-    FS, BW, SLOT, MAXH, G = 10, 10, 30, 24, 20      # G = left gutter for the 'Net:' label
-    natural = 22 + MAXH + 1 + MAXH + 10 + 12 + 3
-    if min_height > natural:                     # stretch the bar zones so the legend column beside it fits
-        MAXH += (min_height - natural) / 2
-    y_day, base = 9, 22 + MAXH + 1              # day-label baseline; zero line (value labels sit between)
-    y_net = base + MAXH + 10 + 12
-    W, H = G + SLOT * len(days), round(y_net + 3)
+    peak = max(max(i_ or 0, o_ or 0) for _, i_, o_, _, _ in days) or 1
+    FS, BW, SLOT, MAXH, G, ROW = 10, 10, 30, 24, 14, 11   # G = left gutter for the row icons, ROW = table row pitch
+    GAP, LEGW, ICON = 8, 78, 10                           # bars to legend; legend / total width; icon size
+    y_day, base = 9, 13 + MAXH                   # day-label baseline; zero line
+    y_in = base + MAXH + ROW                     # table rows under the bars; a rule above Net, as under a sum
+    y_out, y_net = y_in + ROW, y_in + 2 * ROW + 2
+    X1 = G + SLOT * len(days)                    # right end of the bars and the table
+    W, H = X1 + GAP + LEGW, round(y_net + 3)
     px = lambda v: MAXH * v / peak
-    txt = lambda x, y, s, **kw: '<text x="%s" y="%s" text-anchor="middle" font-size="%s" font-weight="%s" fill="%s">%s</text>' % (
-        x, y, FS, kw.get('weight', 400), kw.get('fill', '#6b6b6b'), e(s))
+    txt = lambda x, y, s, **kw: '<text x="%s" y="%s" text-anchor="%s" font-size="%s" font-weight="%s" fill="%s">%s</text>' % (
+        x, y, kw.get('anchor', 'middle'), kw.get('size', FS), kw.get('weight', 400), kw.get('fill', '#6b6b6b'), e(s))
+    val = lambda v, sign='': '—' if v is None else format(v, sign + 'g')
     svg = [f'<svg class="iochart" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="Intake and output by day">']
     for k, (c, i_, o_, u_, n_) in enumerate(days):
         x = G + SLOT * (k + 0.5)
-        tip = f'{c}: in {i_:g} · out {o_:g}' + (f' (urine {u_:g})' if u_ is not None else '') + (f' · net {n_:+g}' if n_ is not None else '')
+        tip = f'{c}: in {val(i_)} · out {val(o_)}' + (f' (urine {u_:g})' if u_ is not None else '') + (f' · net {n_:+g}' if n_ is not None else '')
         svg.append(f'<g data-name="{e(c)} I&amp;O"><title>{e(tip)}</title>')
         svg.append(txt(x, y_day, c))
-        if i_ > 0:
-            top = base - px(i_)
-            svg.append(vbar(x, base, top, BW, '#2a78d6'))
-            svg.append(txt(x, top - 2, f'{i_:g}', fill='#1c1c1c'))
-        if o_ > 0:
+        if (i_ or 0) > 0:
+            svg.append(vbar(x, base, base - px(i_), BW, '#2a78d6', extra=' class="bar-in"'))
+        if (o_ or 0) > 0:
             bot = base + px(o_)
             if u_ is None or u_ >= o_:
-                svg.append(vbar(x, base, bot, BW, '#e34948'))
+                svg.append(vbar(x, base, bot, BW, '#e34948', extra=' class="bar-ur"'))
             elif u_ <= 0:
-                svg.append(vbar(x, base, bot, BW, '#e34948', extra=' fill-opacity=".3"'))
+                svg.append(vbar(x, base, bot, BW, '#e34948', extra=' fill-opacity=".3" class="bar-ot"'))
             else:
                 yu = base + px(u_)
-                svg.append(vbar(x, base, yu, BW, '#e34948', round_end=False))
-                svg.append(vbar(x, yu, bot, BW, '#e34948', extra=' fill-opacity=".3"'))
-            svg.append(txt(x, bot + FS, f'{o_:g}', fill='#1c1c1c'))
-        if n_ is not None:
-            svg.append(txt(x, y_net, f'{n_:+g}', weight=700, fill='#1c1c1c').replace('font-size="10"', 'font-size="9.5"'))
+                svg.append(vbar(x, base, yu, BW, '#e34948', round_end=False, extra=' class="bar-ur"'))
+                svg.append(vbar(x, yu, bot, BW, '#e34948', extra=' fill-opacity=".3" class="bar-ot"'))
+        svg.append(txt(x, y_in, val(i_), size=9.5, fill='#1c1c1c'))
+        svg.append(txt(x, y_out, val(o_), size=9.5, fill='#1c1c1c'))
+        svg.append(txt(x, y_net, val(n_, '+'), size=9.5, weight=700, fill='#1c1c1c'))
         svg.append('</g>')
-    svg.append(f'<line x1="{G}" y1="{base}" x2="{W}" y2="{base}" stroke="#bdbdbd" stroke-width="1"/>')
-    svg.append(f'<text x="{G - 3}" y="{y_net}" text-anchor="end" font-size="9.5" font-weight="700" fill="#1c1c1c" data-name="Net row label">Net:</text>')
+    svg.append(f'<line x1="0" y1="{base}" x2="{X1}" y2="{base}" stroke="#bdbdbd" stroke-width="1"/>')
+    svg.append(f'<line x1="{G}" y1="{y_out + 3.5}" x2="{X1}" y2="{y_out + 3.5}" stroke="#cfcfcf" stroke-width="1"/>')
+    svg.append('<g data-name="Volume legend">')
+    for dy, label, extra in ((-11, 'Intake', ' fill="#2a78d6" class="bar-in"'), (0, 'Urine', ' fill="#e34948" class="bar-ur"'),
+                             (11, 'Other out', ' fill="#e34948" fill-opacity=".3" class="bar-ot"')):
+        svg.append(f'<rect x="{X1 + GAP}" y="{base + dy - 4}" width="8" height="8" rx="2"{extra}/>')
+        svg.append(txt(X1 + GAP + 11, base + dy + 3, label, anchor='start', size=9))
+    svg.append('</g>')
+    mid = lambda y: y - 3.3 - ICON / 2          # top of an icon centred on a 9.5px text row with baseline y
+    for y, name, kind, rot, stroke, tip in ((y_in, 'In row label', 'square-arrow-right-enter', 90, 3, 'In'),
+                                            (y_out, 'Out row label', 'square-arrow-right-exit', 90, 3, 'Out'),
+                                            (y_net, 'Net row label', 'square-sigma', 0, 2.5, 'Net')):
+        svg.append(f'<g data-name="{name}"><title>{tip}</title>{icon(kind, ICON, "#1c1c1c", rot, 0, mid(y), stroke=stroke)}</g>')
+    if total:                                    # "Σcum = 1250 mL" level with Out; Σ and its subscript bold, the rest regular
+        svg.append(f'<g data-name="Net I&amp;O since admission"><title>Net I&amp;O since admission</title>'
+                   f'<text x="{X1 + GAP}" y="{y_out}" font-size="9.5" fill="#1c1c1c"><tspan font-weight="700" font-size="14">&#931;</tspan>'
+                   f'<tspan font-weight="700" font-size="7" dy="2.5">cum</tspan><tspan dy="-2.5"> = {e(total)}</tspan></text></g>')
     svg.append('</svg>')
     return ''.join(svg)
 
@@ -593,12 +713,15 @@ def render_io(r, report_date=''):
     cum = r.get('net_io_since_admission')
     if not io and not cum:
         return ''
-    cum_html = f'<span class="hdr-r" data-name="Net I&amp;O since admission">Cumulative net <b>{e(cum)}</b></span>' if cum else ''
-    out = f'<div data-name="I&amp;O"><h4>I &amp; O{cum_html}</h4>'
-    chart = io_chart(io, report_date) if io else ''
+    chart = io_chart(io, report_date, cum or '') if io else ''
+    if not chart and not cum:                    # e.g. only today's column had values
+        return ''
+    out = '<div class="sec" data-name="Volume"><h4>Volume</h4>'
     if chart:
-        out += (f'<div class="iowrap"><div data-name="I&amp;O chart">{chart}</div><div class="ioside"><div class="iokey"><span><i style="background:#2a78d6"></i>Intake</span>'
-                '<span><i style="background:#e34948"></i>Urine</span><span><i style="background:#e34948;opacity:.3"></i>Other out</span></div></div></div>')
+        out += f'<div class="iowrap" data-name="Volume chart">{chart}</div>'
+    if cum:   # beside a chart the total is drawn in it; this copy shows only when there is none, or it is hidden
+        out += (f'<div class="ionet{" ionet-alt" if chart else ""}" data-name="Net I&amp;O since admission" '
+                f'title="Net I&amp;O since admission"><b>&Sigma;<sub>cum</sub></b> = {e(cum)}</div>')
     return out + '</div>'
 
 
@@ -607,7 +730,7 @@ def render_tld(r):
     if not tld:
         return ''
     lis = ''.join(f'<li data-name="TLD item">{("<span class=days>d" + e(x["days"]) + "</span> ") if x.get("days") is not None else ""}{e(x["description"])}</li>' for x in tld)
-    return f'<div data-name="Tubes / Lines / Drains"><h4>Tubes / Lines / Drains</h4><ul class="lines">{lis}</ul></div>'
+    return f'<div class="sec" data-name="Tubes / Lines / Drains"><h4>Tubes / Lines / Drains</h4><ul class="lines">{lis}</ul></div>'
 
 
 def render_trends(r):
@@ -729,11 +852,10 @@ def render_labs(r):
     extra = [(l, k) for l, k in (('TP', 'total_protein'), ('Alb', 'albumin'), ('DBili', 'direct_bili')) if cur(k)]
     extra_html = ('<div class="lft" data-name="Other labs">' + ''.join(f'<div><span class="kv">{e(l)}</span> <b>{e(cur(k))}</b>{lab_arrow(lab_flag(k, cur(k), r.get("sex", "")))}</div>' for l, k in extra) + '</div>') if extra else ''
     rows.append((fish_lft(cur, disp) if has('total_bili', 'alt', 'ast', 'alk_phos') else '') + extra_html)
-    out = '<div data-name="Labs">'
-    for row in rows:
-        if row:
-            out += f'<div class="fishrow">{row}</div>'
-    return out + render_trends(r) + '</div>'
+    body = ''.join(f'<div class="fishrow">{row}</div>' for row in rows if row) + render_trends(r)
+    if not body:                                 # e.g. every lab has only a prior value
+        return ''
+    return f'<div class="sec" data-name="Labs"><h4>Labs <span class="kv" style="font-weight:400;text-transform:none">(today)</span></h4>{body}</div>'
 
 
 FREQ_RE = re.compile(r'\b((?:\d+ times )?Daily\b.*|Nightly\b.*|BID\b.*|TID\b.*|QID(?:ACHS)?\b.*|Every \d+ (?:hr|min|days?)\b.*|Once\b.*|'
@@ -814,7 +936,7 @@ def render_meds(r, keys, bar=False):
             doses = ', '.join(dose_html(d) + (f' <span class="ld">@ {e(ld)}</span>' if ld else '') for d, ld in it['doses'])
             lis += (f'<li class="{"hi" if it.get("highlighted") else ""}" data-name="Med entry">{day}<span class="drug">{e(it["drug"])}</span>'
                     f'<span class="dot">·</span><span class="det">{doses}</span></li>')
-        secs += f'<div class="medsec" style="flex:{len(items) + 2} 1 0" data-name="{e(title)}"><h4>{e(title)} <span class="kv" style="font-weight:400">({len(items)})</span></h4><ul class="meds">{lis}</ul></div>'
+        secs += f'<div class="medsec sec" style="flex:{len(items) + 2} 1 0" data-name="{e(title)}"><h4>{e(title)} <span class="kv" style="font-weight:400">({len(items)})</span></h4><ul class="meds">{lis}</ul></div>'
     if not secs:
         return '' if bar else '<p class="empty">None listed</p>'
     return f'<div class="medbar">{secs}</div>' if bar else secs
@@ -832,6 +954,7 @@ def admit_date(report_date, los):
 def row_text(r):
     """All searchable text for a patient, lowercased."""
     parts = [r['location'], r['unit'], r.get('severity', ''), r['patient_name'], r['mrn'], r['dob'], r['code_status'], r['allergies'],
+             allergy_text(r['allergies']),
              r['diet'], r.get('o2_delivery', ''), r.get('admit_diagnosis', ''), r.get('isolation', ''), r.get('tube_feeds', ''),
              r.get('restraints', ''), r.get('admit_attending', ''), r.get('admit_service', ''),
              ' '.join(x['description'] for x in (r.get('tld') or [])),
@@ -842,25 +965,68 @@ def row_text(r):
     return re.sub(r'\s+', ' ', ' '.join(parts)).lower()
 
 
-def render_row(r, report_date=''):
+def allergy_text(a):
+    """The Allergies field as shown: 'No Known Medication (or Drug) Allergies' shortened to NKDA, alone or in a list
+    ('NKA, No Known Medication Allergies' -> 'NKA, NKDA')."""
+    nkda = re.compile(r'\s*no known (medication|drug) allergies\.?\s*', re.I)
+    if not a or not nkda.search(a):
+        return a
+    return ', '.join('NKDA' if nkda.fullmatch(p) else p.strip() for p in a.split(','))
+
+
+def split_commas(s, bare=False):
+    """s split at its commas, except one inside parentheses or between digits ('(1,800 calories)'); bare=True splits
+    only at a comma with no space after it."""
+    out, depth, start = [], 0, 0
+    for i, c in enumerate(s):
+        depth += (c == '(') - (c == ')')
+        if c == ',' and depth <= 0 and not (s[i - 1:i].isdigit() and s[i + 1:i + 2].isdigit()) and not (bare and s[i + 1:i + 2].isspace()):
+            out.append(s[start:i])
+            start = i + 1
+    return out + [s[start:]]
+
+
+def diet_text(d):
+    """Each diet order up to its first comma, the orders joined by ' / ': 'NPO,Regular, For Level 4 Pureed…' ->
+    'NPO / Regular'. CORES separates orders with a bare comma and an order's details with a comma and a space."""
+    heads = [split_commas(o.strip(' ,'))[0].strip() for o in split_commas((d or '').strip(' ,'), bare=True)]
+    return ' / '.join(dict.fromkeys(h for h in heads if h))
+
+
+def render_name(name):
+    """'DOE, JANE Q' as last name and comma on one line, first name and middle initial under it."""
+    last, comma, rest = name.partition(',')
+    if comma and last.strip() and rest.strip():
+        inner = f'<span data-name="Last name">{e(last.strip())},</span><span data-name="First name and MI">{e(rest.strip())}</span>'
+    else:
+        inner = f'<span>{e(name)}</span>'
+    return f'<span class="name" data-name="Patient name">{inner}</span>'
+
+
+def render_row(r, report_date='', unit_color=None):
     s = r['summary']
     narrative = ''.join(f'<p>{e(p)}</p>' for p in s['narrative'])
     status = ''.join(f'<tr data-name="{e(k)} line"><td>{e(k)}</td><td>{e(v)}</td></tr>' for k, v in s['status'].items())
     status = f'<table class="status" data-name="Status lines">{status}</table>' if status else ''
     adm = admit_date(report_date, r['los_days'])
     dx = re.sub(r'^\s*ADMIT:\s*', '', r.get('admit_diagnosis') or '', flags=re.I)
-    admit = '<div class="adm" data-name="Admission"><h4>Admission</h4>'
+    admit = '<div class="adm sec" data-name="Admission"><h4>Admission</h4>'
     if dx:
         admit += f'<div data-name="Admit diagnosis"><b>Dx:</b> {e(dx)}</div>'
-    if adm:
-        admit += f'<div data-name="Admit date"><b>{e(adm)}</b></div>'
-    los = f'(LOS {e(r["los_days"])} days)' if r['los_days'] is not None else '(LOS unknown)'
-    admit += f'<div class="kv" data-name="Length of stay">{los}</div></div>'
-    care_items = (('Allergies', r['allergies']), ('Diet', r['diet']), ('TF', r.get('tube_feeds', '')), ('Restraints', r.get('restraints', '')))
-    care = ''.join(f'<div data-name="{k}"><b>{k}</b> <span class="{k.lower()}">{e(v)}</span></div>' for k, v in care_items if v)
+    n = r['los_days']
+    los = '(LOS unknown)' if n is None else f'(LOS {e(n)} day{"" if n == 1 else "s"})'
+    admit += (f'<div><span data-name="Admit date"><b>Date:</b> {e(adm) or "—"}</span> '
+              f'<span class="kv" data-name="Length of stay">{los}</span></div></div>')
+    care_items = (('Allergies', allergy_text(r['allergies'])), ('Diet', diet_text(r['diet'])), ('TF', r.get('tube_feeds', '')), ('Restraints', r.get('restraints', '')))
+    full = {'Diet': (r['diet'] or '').strip()}  # hovering a shortened diet shows all of it
+    care = ''.join(f'<div data-name="{k}"><b>{k}</b> <span class="{k.lower()}"'
+                   + (f' title="{e(full[k])}"' if full.get(k, v) != v else '') + f'>{e(v)}</span></div>' for k, v in care_items if v)
     care = f'<div class="care" data-name="Allergy / Diet block">{care}</div>' if care else ''
-    iso = f'<span class="iso" data-name="Isolation tag" title="{e(r["isolation"])}">Isolation</span>' if r.get('isolation') else ''
-    handoff = ''.join(f'<div data-name="{e(k)}"><h4>{e(k)}</h4><p>{e(v)}</p></div>' for k, v in (r.get('handoff') or {}).items())
+    iso = (f'<span class="iso" data-name="Isolation tag" title="{e(r["isolation"])}">{icon("biohazard", 11, "currentColor", stroke=2.25)}</span>'
+           if r.get('isolation') else '')
+    name = render_name(r['patient_name'])
+    name = f'<span class="nameiso">{name}{iso}</span>' if iso else name
+    handoff = ''.join(f'<div class="sec" data-name="{e(k)}"><h4>{e(k)}</h4><p>{e(v)}</p></div>' for k, v in (r.get('handoff') or {}).items())
     notes = ''.join(f'<p>{e(n)}</p>' for n in r.get('notes') or [])
     tasks = ''.join(f'<li>{e(t.replace("[ ] ", "", 1))}</li>' for t in r['tasks'])
     plan = ''.join(f'<li>{e(re.sub(r"^- ?", "", p))}</li>' for p in r['sit_awareness'])
@@ -873,25 +1039,26 @@ def render_row(r, report_date=''):
     }
     attrs = ' '.join(f'data-{k}="{e(v)}"' for k, v in data.items())
     prn = render_prn_line(r)
-    prn = f'<tr class="medrow" data-name="PRN row"><td colspan="7">{prn}</td></tr>' if prn else ''
+    prn = f'<tr class="medrow" data-name="PRN row"><td colspan="6">{prn}</td></tr>' if prn else ''
+    io, labs = render_io(r, report_date), render_labs(r)
+    duo = f'<div class="sec duo">{io}{labs}</div>' if io and labs else io + labs   # Volume and Labs side by side
     roombed = e(r['room']) + (f'-<span data-name="Bed">{e(r["bed"])}</span>' if r['bed'] else '')
-    chip = (f'<div class="bedchip" data-name="Location block" title="{e(r["location"])}"><span class="u" data-name="Unit">{e(r["unit"])}</span>'
+    tint = f' style="--unit:{unit_color}"' if unit_color else ''
+    chip = (f'<div class="bedchip" data-name="Location block" title="{e(r["location"])}"{tint}><span class="u" data-name="Unit">{e(r["unit"])}</span>'
             + (f'<span class="rb" data-name="Room">{roombed}</span>' if r['room'] else '') + '</div>')
-    tags = sev_chip(sev) + iso
+    tags = sev_chip(sev)
     return f'''
 <tbody class="blk" {attrs} data-name="Patient block">
 <tr class="main">
- <td class="pt" data-name="Patient column"><div class="pthead">{chip}<span class="name" data-name="Patient name">{e(r["patient_name"])}</span></div>
-   <span class="kv" data-name="MRN">MRN <b>{e(r["mrn"])}</b></span>
-   <span class="kv" data-name="Date of birth">DOB <b>{e(r["dob"])}</b> (<span data-name="Age">{e(r["age"])}</span> <span data-name="Sex">{e(r["sex"])}</span>)</span>
-   <span class="kv" data-name="Code status">Code <b>{e(r["code_status"]) or "—"}</b></span>
-   {('<div class="pttags">' + tags + '</div>') if tags else ''}{admit}{care}</td>
- <td data-name="Summary column"><div data-name="Patient summary">{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<h4>Notes</h4>' + notes) if notes else ''}</td>
- <td data-name="Vitals column">{render_vitals(r)}{render_ventilation(r)}{render_io(r, report_date)}{render_tld(r)}</td>
- <td data-name="Labs column">{render_labs(r)}</td>
+ <td class="pt" data-name="Snapshot column"><div class="pthead">{chip}{name}</div>
+   <div class="pid"><span data-name="MRN"><b>MRN</b> {e(r["mrn"])}</span><span data-name="Date of birth"><b>DOB</b> {e(r["dob"])} <span class="kv">(<span data-name="Age">{e(r["age"])}</span> <span data-name="Sex">{e(r["sex"])}</span>)</span></span></div>
+   <span class="pid" data-name="Code status"><b>Code</b> {e(r["code_status"]) or "—"}</span>
+   {('<div class="pttags">' + tags + '</div>') if tags else ''}{care}</td>
+ <td data-name="Hospital Summary column">{admit}<div class="sec" data-name="Patient summary">{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<div class="sec"><h4>Notes</h4>' + notes + '</div>') if notes else ''}</td>
+ <td data-name="Vitals column">{render_vitals(r)}{render_ventilation(r)}{duo}{render_tld(r)}</td>
  <td data-name="Meds column">{render_meds(r, ('infusions', 'antibiotics', 'scheduled', 'other'))}</td>
- <td data-name="Sit Awareness column"><div data-name="Tasks"><h4>Tasks</h4>{('<ul class="tasks">' + tasks + '</ul>') if tasks else '<p class="empty">None</p>'}</div>
-     <div data-name="Situational Awareness"><h4>Situational Awareness</h4>{('<ul>' + plan + '</ul>') if plan else '<p class="empty">None</p>'}</div>{handoff}</td>
+ <td data-name="Sit Awareness column"><div class="sec" data-name="Tasks"><h4>Tasks</h4>{('<ul class="tasks">' + tasks + '</ul>') if tasks else '<p class="empty">None</p>'}</div>
+     <div class="sec" data-name="Situational Awareness"><h4>Situational Awareness</h4>{('<ul>' + plan + '</ul>') if plan else '<p class="empty">None</p>'}</div>{handoff}</td>
  <td class="notes" data-name="Notes column"></td>
 </tr>
 {prn}
@@ -911,8 +1078,9 @@ def options(values):
     return ''.join(f'<option value="{e(v)}">{e(v)}</option>' for v in values)
 
 
-def render(data, orientation='landscape'):
-    """The Daily Report page. orientation is the paper it prints on until the toolbar's Paper switch is changed."""
+def render(data, orientation='landscape', bw=False):
+    """The Daily Report page. orientation is the paper it prints on until the toolbar's Paper switch is changed; bw=True
+    starts it in black and white until the toolbar's B&W box is changed."""
     orient = 'portrait' if orientation == 'portrait' else 'landscape'
     h = data.get('header', {})
     team = ' / '.join(x for x in (h.get('service', ''), h.get('team', '')) if x)  # the Medicine report has a team only
@@ -921,12 +1089,14 @@ def render(data, orientation='landscape'):
     units = sorted({r['unit'] for r in recs if r['unit']})
     sevs = sorted({r.get('severity', '') for r in recs if r.get('severity')}, key=lambda s: SEV_RANK.get(s.lower(), 9))
     o2s = sorted({r.get('o2_delivery', '') for r in recs if r.get('o2_delivery')})
-    rows = ''.join(render_row(r, h.get('report_date', '')) for r in recs)
+    colors = unit_colors(units)
+    rows = ''.join(render_row(r, h.get('report_date', ''), colors.get(r['unit'])) for r in recs)
     return f'''<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">{renderer_meta(orient)}<title>ICU Daily Report {e(team)} — {e(h.get("report_date", ""))}</title>
+<html lang="en"><head><meta charset="utf-8">{renderer_meta(orient, bw)}<title>ICU Daily Report {e(team)} — {e(h.get("report_date", ""))}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
 <style id="pagesz">@page{{size:letter {orient};margin:.3in}}</style></head>
-<body><div class="page">
+<body{' class="bw"' if bw else ''}><div class="page">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="bw-hatch" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="3" fill="#fff"/><line x1="0" y1="0" x2="0" y2="3" stroke="#444" stroke-width="1.1"/></pattern></defs></svg>
 <div class="rpt-head" data-name="Report header"><div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span style="color:var(--accent)" data-name="Current service / team">{e(team)}</span></h1>
 <div class="conf">CONFIDENTIAL — contains PHI. Handle and dispose of properly.</div></div>
 <div class="meta">CORES data as of <b data-name="Report date">{e(h.get("report_date", ""))}</b> for <span data-name="Printed by">{e(h.get("printed_by", ""))}</span><br>{len(recs)} patients · rendered {gen}</div></div>
@@ -939,6 +1109,7 @@ def render(data, orientation='landscape'):
  <label>Sort <select id="sort"><option value="location">Location</option><option value="pname">Name</option><option value="sevrank">Severity</option><option value="los">LOS</option><option value="age">Age</option><option value="tasks">Open tasks</option><option value="drips">Drips</option></select></label>
  <button id="reset" type="button">Reset</button>
  <button id="print" type="button">Print</button>
+ <label title="Black and white, for a black-and-white printer: grays, hatching, bold and underlining in place of color"><input type="checkbox" id="bw"> B&amp;W</label>
  <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
  <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
@@ -949,14 +1120,13 @@ def render(data, orientation='landscape'):
 </div>
 <div id="insp-tip"></div><div id="insp-toast"></div>
 <table class="rpt" id="rpt" data-name="Report table">
-<colgroup><col style="width:12%"><col style="width:15%"><col style="width:19%"><col style="width:19%"><col style="width:14%"><col style="width:13%"><col style="width:8%"></colgroup>
+<colgroup><col style="width:15%"><col style="width:14%"><col style="width:37%"><col style="width:14%"><col style="width:12%"><col style="width:8%"></colgroup>
 <thead data-name="Column headers"><tr>
- <th data-key="location" data-name="Patient header">Location / Patient<span class="dir"></span></th>
- <th data-key="text" data-name="Summary header">Summary<span class="dir"></span></th>
- <th data-key="o2" data-name="Vitals header">Vitals · Vent · I&amp;O · Lines<span class="dir"></span></th>
- <th data-name="Labs header" style="cursor:default">Labs <span class="kv" style="font-weight:400">(today)</span></th>
+ <th data-key="location" data-name="Snapshot header">Snapshot<span class="dir"></span></th>
+ <th data-key="text" data-name="Hospital Summary header">Hospital Summary<span class="dir"></span></th>
+ <th data-key="o2" data-name="Vitals header">Vitals · Vent · Volume · Labs · Lines<span class="dir"></span></th>
  <th data-key="drips" data-name="Meds header">Meds<span class="dir"></span></th>
- <th data-key="tasks" data-name="Sit Awareness header">Tasks / Situational Awareness<span class="dir"></span></th>
+ <th data-key="tasks" data-name="Sit Awareness header">Tasks / Sit. Awareness<span class="dir"></span></th>
  <th data-name="Notes header" style="cursor:default">Notes</th>
 </tr></thead>
 {rows}
@@ -979,7 +1149,7 @@ def main(argv):
         data = parse_file(src)
     out = args[1] if len(args) > 1 else re.sub(r'\.(html?|json)$', '', src) + ' - Daily Report.html'
     with open(out, 'w', encoding='utf-8') as fh:
-        fh.write(render(data, 'portrait' if '--portrait' in argv else 'landscape'))
+        fh.write(render(data, 'portrait' if '--portrait' in argv else 'landscape', '--bw' in argv))
     print(f'{len(data["records"])} patients -> {out}')
 
 

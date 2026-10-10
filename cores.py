@@ -40,6 +40,7 @@ DEFAULTS = {
     'keep': 3,                       # capture sets kept by `cores clean`
     'open_after_run': True,          # `cores generate` opens the Daily Report in the browser
     'orientation': 'landscape',      # paper a Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
+    'black_and_white': False,        # Daily Reports start in black and white, for a black-and-white printer (its B&W box overrides)
 }
 REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)',
               '7': 'Medicine Report +VS/Meds (five columns)'}
@@ -106,6 +107,11 @@ def load_config():
     cfg['orientation'] = str(cfg['orientation']).strip().lower()
     if cfg['orientation'] not in ('landscape', 'portrait'):
         raise CoresError('"orientation" in the config must be "landscape" or "portrait"')
+    if not isinstance(cfg['black_and_white'], bool):
+        v = str(cfg['black_and_white']).strip().lower()
+        if v not in ('1', 'true', 'yes', 'on', 'y', '0', 'false', 'no', 'off', 'n', '', 'none'):
+            raise CoresError('"black_and_white" in the config must be true or false')
+        cfg['black_and_white'] = v in ('1', 'true', 'yes', 'on', 'y')
     return cfg
 
 
@@ -363,26 +369,27 @@ def do_render(src, out=None, data=None, cfg=None):
             data = parse_capture(src)
     out = Path(out) if out else derived(src, 'report')
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(data, (cfg or {}).get('orientation', 'landscape')), encoding='utf-8')
+    out.write_text(render(data, (cfg or {}).get('orientation', 'landscape'), (cfg or {}).get('black_and_white', False)), encoding='utf-8')
     return data, out
 
 
 def refresh_report(report, cfg):
-    """A Daily Report made by another version of cores_report.py, or for other paper than the "orientation" setting,
-    is re-rendered in place from its JSON (else its capture) before it is opened, printed or made into a PDF. Otherwise
+    """A Daily Report made by another version of cores_report.py, or for other paper or B&W than the "orientation" and
+    "black_and_white" settings, is re-rendered in place from its JSON (else its capture) before it is opened, printed or
+    made into a PDF. Otherwise
     it would print as it was made: one from before the Paper switch prints landscape only, and the PDF and no-dialog
     paths would ignore a changed setting. Left as it is when neither source is there."""
     from cores_report import RENDERER, renderer_meta
     report = Path(report)
-    orient = (cfg or {}).get('orientation', 'landscape')
+    orient, bw = (cfg or {}).get('orientation', 'landscape'), (cfg or {}).get('black_and_white', False)
     try:
         with open(report, encoding='utf-8', errors='replace') as fh:
             head = fh.read(4096)
     except OSError:
         return report
-    if renderer_meta(orient) in head:
+    if renderer_meta(orient, bw) in head:
         return report
-    why = ('made for other paper than the "orientation" setting' if f'content="{RENDERER} ' in head
+    why = ('made for other settings than "orientation" and "black_and_white"' if f'content="{RENDERER} ' in head
            else 'made by an older version of cores')
     for src in (derived(report, 'json'), report.with_name(stem_of(report) + '.html')):
         if src != report and src.is_file() and kind_of(src) in ('json', 'capture'):
@@ -1512,7 +1519,7 @@ def build_parser():
     sp.add_argument('file', nargs='?', metavar='FILE')
     print_opts(sp)
 
-    sp = add('pdf', cmd_pdf, 'Daily Report -> PDF with headless Edge/Chrome (letter, in the orientation the report was made with)')
+    sp = add('pdf', cmd_pdf, 'Daily Report -> PDF with headless Edge/Chrome (letter, in the orientation and black_and_white settings; a report made otherwise is re-rendered first)')
     sp.add_argument('file', nargs='?', metavar='FILE')
     sp.add_argument('-o', '--out', help='output .pdf path')
     sp.add_argument('--open', action='store_true', help='open the PDF afterwards')
