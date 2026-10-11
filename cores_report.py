@@ -76,8 +76,9 @@ MED_SECTIONS = [('infusions', 'Infusions'), ('antibiotics', 'Antibiotics'), ('sc
 SEV_CLASS = {'watcher': 'sev-watch', 'unstable': 'sev-unstable', 'stable': 'sev-stable'}
 SEV_RANK = {'unstable': 0, 'watcher': 1, 'stable': 2}
 # Location block outline and text color per unit, each at least 4.5:1 on white and on the #fafafa of every other patient.
-# Thirteen hues are about as many as stay apart at a glance; the unit's name is on the chip either way.
-UNIT_PALETTE = ['#1f4e79', '#b34700', '#00796b', '#ad1457', '#8a6d00', '#6a1b9a', '#0277bd', '#33691e', '#c92a63', '#6d4c41',
+# Thirteen hues are about as many as stay apart at a glance; the unit's name is on the chip either way. The first is UAB
+# Green, the report's own color, so the home unit's chips match the headings; the third is UAB Medicine's Healing Teal.
+UNIT_PALETTE = ['#1a5632', '#b34700', '#007580', '#ad1457', '#8a6d00', '#6a1b9a', '#0277bd', '#1f4e79', '#c92a63', '#6d4c41',
                 '#557700', '#c62828', '#7e57c2']
 # Units that always get the same color. Any other unit gets a color no other unit on the report has, starting from one
 # picked from its name; which one it ends up with depends on the other units that day.
@@ -132,32 +133,48 @@ COLPARTS = {
 CHILDREN = {c for k, v in COLPARTS.items() if not k.endswith(' column') for c in v}
 
 CSS = """
-:root{--ink:#1c1c1c;--mute:#6b6b6b;--line:#cfcfcf;--band:#f2f2f2;--accent:#1f4e79;--watch:#b8860b;--unstable:#b00020;--stable:#2e7d32}
+/* UAB Medicine brand (dpo.uab.edu/brandguide/uab-medicine): UAB Green #1a5632 (Pantone 357) is the primary color and
+   Healing Teal #007580 (7714) the secondary; Trust Teal #68c6b8 and its tints are the only accents (used with the green,
+   never alone, well under the guide's 10%), the grays are the guide's neutrals, and there is no gold. Type is Aktiv Grotesk
+   where it is installed (an Adobe font), else the guide's substitute Arial. Clinical signals keep their own colors: red
+   for an abnormal value or an allergy, amber for a Watcher, the unit palette for location chips. B&W rules at the end take
+   all of it back to black. */
+:root{--ink:#1c1c1c;--mute:#6b6b6b;--line:#d1d3d4;--band:#f1f2f2;
+ --uab-green:#1a5632;--teal:#007580;--trust:#68c6b8;--teal-30:#c0e4da;--teal-10:#e2f2ec;--lair:#033319;
+ --accent:var(--uab-green);--alert:#d00000;--watch:#e08a00;--unstable:#b00020;--stable:var(--uab-green)}
 *{box-sizing:border-box}
-body{margin:0;padding:12px 16px;font:10.5px/1.3 "Segoe UI",Arial,sans-serif;color:var(--ink);background:#fff}
-h1{font-size:16px;margin:0}
-.rpt-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid var(--accent);padding-bottom:6px;margin-bottom:8px}
-.rpt-head .meta{color:var(--mute);text-align:right;font-size:9.5px}
-.conf{font-weight:600;color:var(--unstable);letter-spacing:.3px}
-.toolbar{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;background:var(--band);border:1px solid var(--line);border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:10.5px}
+body{margin:0;padding:12px 16px;font:10.5px/1.3 "Aktiv Grotesk","Aktiv Grotesk Corp",Arial,sans-serif;color:var(--ink);background:#fff}
+h1{font-size:17px;line-height:1.2;margin:0;font-weight:600}
+/* Report header: a UAB Green band, the title in white and the team in a teal tint, a Healing Teal rule under it (printed in
+   color too; black on white in B&W); the eyebrow names the source */
+.rpt-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;background:var(--uab-green);color:#fff;border-bottom:4px solid var(--teal);border-radius:3px 3px 0 0;padding:7px 12px;margin-bottom:8px;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.rpt-head .eyebrow{font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--teal-30);margin-bottom:2px}
+.rpt-head .team{color:var(--teal-30)}
+.rpt-head .meta{color:rgba(255,255,255,.88);text-align:right;font-size:9.5px;line-height:1.4} .rpt-head .meta b{color:#fff}
+.conf{font-weight:600;color:rgba(255,255,255,.88);letter-spacing:.3px;font-size:9.5px;margin-top:2px}
+.toolbar{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;background:var(--teal-10);border:1px solid var(--teal-30);border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:10.5px}
 .toolbar label{display:flex;align-items:center;gap:4px;color:var(--mute)}
 .toolbar input[type=search]{width:220px;padding:3px 6px;border:1px solid var(--line);border-radius:3px;font:inherit}
 .toolbar select{padding:2px 4px;border:1px solid var(--line);border-radius:3px;font:inherit;background:#fff}
-.toolbar button{padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit;cursor:pointer}
+.toolbar button{padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink);font:inherit;cursor:pointer} .toolbar button:hover{border-color:var(--uab-green)}
+.toolbar #print{background:var(--uab-green);color:#fff;border-color:var(--uab-green);font-weight:600} .toolbar #print:hover{background:var(--lair)}
+.toolbar input:focus-visible,.toolbar select:focus-visible,.toolbar button:focus-visible,.secmenu summary:focus-visible{outline:2px solid var(--uab-green);outline-offset:1px}
 .toolbar .count{margin-left:auto;color:var(--mute)}
 .secmenu{position:relative} .secmenu summary{list-style:none;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;cursor:pointer;user-select:none}
 .secmenu summary::-webkit-details-marker{display:none}
 .secmenu .menu{position:fixed;left:8px;right:8px;top:60px;z-index:20;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 4px 14px rgba(0,0,0,.18);padding:8px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 14px;max-height:calc(100vh - 80px);overflow:auto;max-width:1100px;margin:0 auto}
-.secmenu .grp{margin-bottom:6px} .secmenu .grp-t{font-weight:700;color:var(--accent);margin-bottom:2px;border-bottom:1px solid var(--line)}
+.secmenu .grp{margin-bottom:6px} .secmenu .grp-t{font-weight:700;color:var(--accent);margin-bottom:2px;border-bottom:2px solid var(--teal)}
 .secmenu label{display:block;color:var(--ink);white-space:nowrap;padding:1px 0} .secmenu label.sub{padding-left:14px;color:var(--mute)} .secmenu label input{margin:0 4px 0 0;vertical-align:-1px}
 .secmenu .menu-foot{grid-column:1/-1;border-top:1px solid var(--line);padding-top:6px} .secmenu .menu-foot button{padding:2px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit;cursor:pointer}
 table.rpt{width:100%;border-collapse:collapse;table-layout:fixed}
 .rpt > thead > tr > th,.rpt > tbody > tr > td{border:1px solid var(--line);padding:4px 6px;vertical-align:top;text-align:left;overflow:hidden}
-.rpt thead th{background:var(--band);font-weight:600;position:sticky;top:0;z-index:1;user-select:none;white-space:nowrap}
-.rpt thead th[data-key]{cursor:pointer} .rpt thead th[data-key]:hover{background:#e6e6e6}
-.rpt thead th .dir{color:var(--mute);font-size:9px;margin-left:3px}
+/* column headers: a UAB Green band (repeated on every printed page), white text, the sort arrow in a teal tint */
+.rpt thead th{background:var(--uab-green);color:#fff;border-color:var(--uab-green);font-weight:600;letter-spacing:.2px;position:sticky;top:0;z-index:1;user-select:none;white-space:nowrap;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.rpt thead th + th{border-left-color:rgba(255,255,255,.35)}
+.rpt thead th[data-key]{cursor:pointer} .rpt thead th[data-key]:hover{background:var(--lair)}
+.rpt thead th .dir{color:var(--teal-30);font-size:9px;margin-left:3px}
 .rpt thead th .rz{position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:2}
-.rpt thead th .rz:hover,.rpt thead th .rz.on{background:var(--accent);opacity:.5}
+.rpt thead th .rz:hover,.rpt thead th .rz.on{background:var(--trust);opacity:.9}
 body.resizing{cursor:col-resize;user-select:none}
 .rpt > tbody.blk:nth-of-type(even) > tr > td{background:#fafafa}
 .rpt > tbody.blk > tr.main > td{border-bottom:0}
@@ -172,7 +189,7 @@ body.resizing{cursor:col-resize;user-select:none}
 .pttags{margin:3px 0 0} .pttags .sev{margin-right:4px}
 .adm div{margin:0 0 1px}
 .sev{display:inline-block;padding:1px 7px;border-radius:9px;font-weight:700;font-size:9.5px;color:#fff;background:var(--mute);margin:2px 0;print-color-adjust:exact;-webkit-print-color-adjust:exact}
-.sev-watch{background:var(--watch)} .sev-unstable{background:var(--unstable)} .sev-stable{background:var(--stable)}
+.sev-watch{background:var(--watch);color:var(--ink)} .sev-unstable{background:var(--unstable)} .sev-stable{background:var(--stable)}
 .pt .name{font-size:12px;font-weight:700}
 .kv{color:var(--mute)} .kv b{color:var(--ink);font-weight:600}
 .pt .kv{display:block} .pt .pid{display:block} .pt .pid .kv{display:inline;white-space:nowrap}
@@ -196,8 +213,8 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .tasks li{list-style:none;margin-left:-14px} .tasks li::before{content:"\\2610  ";}
 .status td{padding:0 6px 1px 0;vertical-align:top;border:0} .status td:first-child{color:var(--mute);white-space:nowrap}
 .care{border-top:1px solid var(--line);margin-top:5px;padding-top:3px} .care > div{margin:0 0 3px}
-.care .allergies{color:#e00000;font-weight:600}
-.abn{color:#d00000}
+.care .allergies{color:var(--alert);font-weight:600}
+.abn{color:var(--alert)}
 /* Isolation: a biohazard icon right of the name, the two kept together (they go under the chip together) */
 .pthead .nameiso{display:flex;align-items:center;gap:3px;min-width:0} .iso{flex:none;color:var(--unstable);border:1.5px solid currentColor;border-radius:3px;padding:1px} .iso svg{display:block}
 .lines{padding-left:12px;font-size:9.5px;color:var(--ink)} .lines li{margin:0} .lines .days{color:var(--mute);font-size:9px}
@@ -208,7 +225,7 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .lab td{text-align:center;padding:1px;border:0;white-space:nowrap}
 .lab td.cur{font-weight:700} .lab td.pri{color:var(--mute);font-style:italic;font-size:9px;line-height:1.1}
 .fishrow{display:flex;gap:4px;align-items:center;margin:1px 0} .fish{display:block;flex:none;overflow:visible;print-color-adjust:exact;-webkit-print-color-adjust:exact}  /* a value's arrow may run past the bone */
-.lft{font-size:10px;line-height:1.2;padding-left:2px} .labarr{color:#d00000;font-size:6.5px;vertical-align:2px;margin-left:1px}
+.lft{font-size:10px;line-height:1.2;padding-left:2px} .labarr{color:var(--alert);font-size:6.5px;vertical-align:2px;margin-left:1px}
 .trend{margin:2px 0 3px;font-size:10px} .trend b{color:var(--mute);font-weight:600}
 .gas{margin:2px 0 3px} .gas b{font-weight:600}
 .iowrap{margin:2px 0 3px}
@@ -217,25 +234,28 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .medbar{display:flex;gap:0 14px;align-items:flex-start}
 .medbar .medsec{min-width:130px} .medbar .medsec h4{margin-top:0}
 .medsec .meds{column-width:auto} .medbar .medsec .meds{column-width:150px}
-.prnline{line-height:1.35} .prnline .drug{font-weight:600} .prnline .det{color:var(--mute)} .prnline .hi .drug{color:var(--accent)} .prnline .ld{color:var(--watch);font-size:9px} .prnline .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px} .prnline .lbl{color:var(--accent);text-transform:uppercase;font-size:9.5px;letter-spacing:.3px} .prnline .lbl + .sep{color:var(--accent)}
+.prnline{line-height:1.35} .prnline .drug{font-weight:600} .prnline .det{color:var(--mute)} .prnline .hi .drug{color:var(--accent)} .prnline .ld{color:var(--teal);font-size:9px} .prnline .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px} .prnline .lbl{color:var(--accent);text-transform:uppercase;font-size:9.5px;letter-spacing:.3px} .prnline .lbl + .sep{color:var(--accent)}
 .prnline > span[data-name]{white-space:nowrap} .prnline .sep{color:var(--mute);margin:0 3px} .prnline .lbl{white-space:nowrap}
 .meds{margin:0;padding:0;list-style:none;column-width:150px;column-gap:12px}
 .meds li{break-inside:avoid;margin:0;padding-left:8px;text-indent:-8px;line-height:1.2}
 .meds .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px}
 .medsec h4{white-space:nowrap;letter-spacing:.3px}
-.meds .drug{font-weight:600} .meds .det{color:var(--mute)} .meds .hi .drug{color:var(--accent)} .meds .day{color:var(--mute);font-size:9px} .meds .ld{color:var(--watch);font-size:9px}
+.meds .drug{font-weight:600} .meds .det{color:var(--mute)} .meds .hi .drug{color:var(--accent)} .meds .day{color:var(--mute);font-size:9px} .meds .ld{color:var(--teal);font-size:9px}
 .empty{color:var(--mute);font-style:italic}
 body.inspect [data-name]{cursor:crosshair}
-body.inspect .insp-hl{outline:2px solid #e07a00;outline-offset:1px;background:rgba(224,122,0,.09)!important}
-#insp-tip{position:fixed;z-index:99;background:#222;color:#fff;font-size:11px;padding:3px 8px;border-radius:3px;pointer-events:none;display:none;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)}
-#insp-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;background:#1f4e79;color:#fff;font-size:12px;padding:6px 12px;border-radius:4px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+body.inspect .insp-hl{outline:2px solid var(--trust);outline-offset:1px;background:rgba(104,198,184,.22)!important}
+#insp-tip{position:fixed;z-index:99;background:var(--lair);color:#fff;font-size:11px;padding:3px 8px;border-radius:3px;pointer-events:none;display:none;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+#insp-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;background:var(--uab-green);color:#fff;font-size:12px;padding:6px 12px;border-radius:4px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .foot{color:var(--mute);font-size:9px;margin-top:8px;text-align:center}
 .toolbar .optmsg{color:var(--mute)}
 /* Black and white (toolbar B&W, or the black_and_white setting): nothing told apart by color alone. Headings, chips and
    tags go black; abnormal vitals bold and underlined, abnormal labs keep their ▲/▼ arrows (black); severity by fill
    (Unstable black, Watcher gray, Stable white); highlighted meds underlined; Volume chart intake dark, urine mid-gray,
    other output hatched */
-body.bw{--accent:#000;--watch:#000;--unstable:#000;--stable:#000}
+body.bw{--accent:#000;--watch:#000;--unstable:#000;--stable:#000;--teal:#000;--alert:#000}
+body.bw .rpt-head{background:#fff;color:#000;border-bottom:2px solid #000;border-radius:0;padding-left:0;padding-right:0}
+body.bw .rpt-head .eyebrow,body.bw .rpt-head .team,body.bw .conf{color:#000} body.bw .rpt-head .meta{color:#444} body.bw .rpt-head .meta b{color:#000}
+body.bw .rpt thead th{background:#ececec;color:#000;border-color:var(--line)} body.bw .rpt thead th[data-key]:hover{background:#ddd} body.bw .rpt thead th .dir{color:#000}
 body.bw .bedchip{border-color:#000;color:#000} body.bw .care .allergies{color:#000;font-weight:700}
 body.bw .abn{color:#000;font-weight:700;text-decoration:underline} body.bw .labarr{color:#000} body.bw tspan[class^="lab-"]{fill:#000}
 body.bw .sev{background:#fff;color:#000;border:1px solid #000;padding:0 6px} body.bw .sev-watch{background:#c8c8c8} body.bw .sev-unstable{background:#000;color:#fff}
@@ -244,7 +264,7 @@ body.bw .bar-in{fill:#3a3a3a} body.bw .bar-ur{fill:#9a9a9a} body.bw .bar-ot{fill
 /* off-screen copy used by Optimize widths: the print rules below, applied on screen so it can be measured */
 .pm{position:absolute;left:-30000px;top:0;font-size:9px;line-height:1.22;background:#fff}
 .pm .rpt thead th{position:static} .pm .rpt > thead > tr > th,.pm .rpt > tbody > tr > td{padding:3px 5px} .pm .pmw{display:flow-root}
-@media screen{body{background:#e9e9e9}.page{background:#fff;padding:14px 18px;box-shadow:0 0 6px rgba(0,0,0,.15);max-width:1800px;margin:0 auto}}
+@media screen{body{background:#e6e7e8}.page{background:#fff;padding:14px 18px;box-shadow:0 0 6px rgba(0,0,0,.15);max-width:1800px;margin:0 auto}}
 @media print{
   body{padding:0;font-size:9px;line-height:1.22}
   .page{padding:0}
@@ -634,9 +654,14 @@ def icon(name, size, color, rotate=0, x=None, y=None, extra='', stroke=2.5):
             f'stroke-linecap="round" stroke-linejoin="round"{extra}>{body}</svg>')
 
 
+# Volume chart: intake bars in UAB Green, urine in Healing Teal, other output in the lighter Trust Teal edged in Healing
+# Teal so that it still shows on white (B&W replaces all three, see the CSS)
+IO_IN, IO_OUT, IO_OTHER, IO_OTHER_EDGE = '#1a5632', '#007580', '#68c6b8', ' stroke="#007580" stroke-width=".7"'
+
+
 def io_chart(io, report_date='', total=''):
-    """Mirror columns per day, drawn at fixed pixel size so its text matches the report (10px): intake (blue)
-    rises from a baseline, output (red) hangs below it with urine solid at the baseline and other output
+    """Mirror columns per day, drawn at fixed pixel size so its text matches the report (10px): intake (UAB Green)
+    rises from a baseline, output (teal) hangs below it with urine solid at the baseline and other output
     continuing as a wash, connected; today's column is left out, only the days before it are shown. Under the bars a
     small table: In, Out and Net rows (labelled with icons), one value per day. The legend sits GAP to the right of the bars, its middle entry level with the zero line, and total
     (the net since admission) GAP to the right of the table."""
@@ -672,17 +697,17 @@ def io_chart(io, report_date='', total=''):
         svg.append(f'<g data-name="{e(c)} I&amp;O"><title>{e(tip)}</title>')
         svg.append(txt(x, y_day, c))
         if (i_ or 0) > 0:
-            svg.append(vbar(x, base, base - px(i_), BW, '#2a78d6', extra=' class="bar-in"'))
+            svg.append(vbar(x, base, base - px(i_), BW, IO_IN, extra=' class="bar-in"'))
         if (o_ or 0) > 0:
             bot = base + px(o_)
             if u_ is None or u_ >= o_:
-                svg.append(vbar(x, base, bot, BW, '#e34948', extra=' class="bar-ur"'))
+                svg.append(vbar(x, base, bot, BW, IO_OUT, extra=' class="bar-ur"'))
             elif u_ <= 0:
-                svg.append(vbar(x, base, bot, BW, '#e34948', extra=' fill-opacity=".3" class="bar-ot"'))
+                svg.append(vbar(x, base, bot, BW, IO_OTHER, extra=IO_OTHER_EDGE + ' class="bar-ot"'))
             else:
                 yu = base + px(u_)
-                svg.append(vbar(x, base, yu, BW, '#e34948', round_end=False, extra=' class="bar-ur"'))
-                svg.append(vbar(x, yu, bot, BW, '#e34948', extra=' fill-opacity=".3" class="bar-ot"'))
+                svg.append(vbar(x, base, yu, BW, IO_OUT, round_end=False, extra=' class="bar-ur"'))
+                svg.append(vbar(x, yu, bot, BW, IO_OTHER, extra=IO_OTHER_EDGE + ' class="bar-ot"'))
         svg.append(txt(x, y_in, val(i_), size=9.5, fill='#1c1c1c'))
         svg.append(txt(x, y_out, val(o_), size=9.5, fill='#1c1c1c'))
         svg.append(txt(x, y_net, val(n_, '+'), size=9.5, weight=700, fill='#1c1c1c'))
@@ -690,8 +715,8 @@ def io_chart(io, report_date='', total=''):
     svg.append(f'<line x1="0" y1="{base}" x2="{X1}" y2="{base}" stroke="#bdbdbd" stroke-width="1"/>')
     svg.append(f'<line x1="{G}" y1="{y_out + 3.5}" x2="{X1}" y2="{y_out + 3.5}" stroke="#cfcfcf" stroke-width="1"/>')
     svg.append('<g data-name="Volume legend">')
-    for dy, label, extra in ((-11, 'Intake', ' fill="#2a78d6" class="bar-in"'), (0, 'Urine', ' fill="#e34948" class="bar-ur"'),
-                             (11, 'Other out', ' fill="#e34948" fill-opacity=".3" class="bar-ot"')):
+    for dy, label, extra in ((-11, 'Intake', f' fill="{IO_IN}" class="bar-in"'), (0, 'Urine', f' fill="{IO_OUT}" class="bar-ur"'),
+                             (11, 'Other out', f' fill="{IO_OTHER}"{IO_OTHER_EDGE} class="bar-ot"')):
         svg.append(f'<rect x="{X1 + GAP}" y="{base + dy - 4}" width="8" height="8" rx="2"{extra}/>')
         svg.append(txt(X1 + GAP + 11, base + dy + 3, label, anchor='start', size=9))
     svg.append('</g>')
@@ -1097,7 +1122,7 @@ def render(data, orientation='landscape', bw=False):
 <style id="pagesz">@page{{size:letter {orient};margin:.3in}}</style></head>
 <body{' class="bw"' if bw else ''}><div class="page">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="bw-hatch" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="3" fill="#fff"/><line x1="0" y1="0" x2="0" y2="3" stroke="#444" stroke-width="1.1"/></pattern></defs></svg>
-<div class="rpt-head" data-name="Report header"><div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span style="color:var(--accent)" data-name="Current service / team">{e(team)}</span></h1>
+<div class="rpt-head" data-name="Report header"><div><div class="eyebrow">UAB Medicine &middot; CORES Daily Report</div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span class="team" data-name="Current service / team">{e(team)}</span></h1>
 <div class="conf">CONFIDENTIAL — contains PHI. Handle and dispose of properly.</div></div>
 <div class="meta">CORES data as of <b data-name="Report date">{e(h.get("report_date", ""))}</b> for <span data-name="Printed by">{e(h.get("printed_by", ""))}</span><br>{len(recs)} patients · rendered {gen}</div></div>
 <div class="toolbar" data-name="Toolbar">

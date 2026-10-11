@@ -197,7 +197,7 @@ or use `cores config --set KEY VALUE`.
 | `Make Daily Report.cmd`, `Print Daily Report.cmd` | drag-and-drop targets |
 | `capture_report.js` | pasted into the CORES window's console to capture a report |
 | `cores_parse.py`, `cores_parse_anes.py`, `cores_parse_med.py` | capture HTML -> JSON (I-PASS six-column, Anesthesia nine-column and Medicine five-column layouts) |
-| `cores_report.py` | JSON -> Daily Report HTML: search, filters, sort, Sections menu, Inspect, paper orientation, B&W, Optimize widths, print layout |
+| `cores_report.py` | JSON -> Daily Report HTML in the UAB Medicine brand (UAB Green and Healing Teal, Aktiv Grotesk or Arial): search, filters, sort, Sections menu, Inspect, paper orientation, B&W, Optimize widths, print layout |
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
 | `requirements.txt` | Python packages |

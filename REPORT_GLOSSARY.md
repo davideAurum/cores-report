@@ -161,8 +161,15 @@ entries are parts of the entry above them — Admission, Allergy / Diet block, V
 and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
 column widths are remembered by the browser), Inspect.
 
-Section headings (VITALS, VOLUME, ADMISSION, TASKS, …) are blue capitals with no rule under them; a thin rule
-divides the sections of a cell from each other.
+The report is set in the UAB Medicine brand (dpo.uab.edu/brandguide/uab-medicine): UAB Green `#1a5632` is the primary
+color, Healing Teal `#007580` the secondary, Trust Teal `#68c6b8` and its tints the only accents, no gold; Aktiv Grotesk
+where it is installed, else Arial. The **Report header** is a green band — a "UAB Medicine · CORES Daily Report" eyebrow
+and the Current service / team in a teal tint, the Source report format in white, the CONFIDENTIAL line in white, a
+Healing Teal rule under it — the column headers are a green band with white text, the toolbar a light teal tint with a
+green Print button, and each Patient block ends in a green rule. Section headings (VITALS, VOLUME, ADMISSION, TASKS, …)
+are green capitals with no rule under them; a thin rule divides the sections of a cell from each other. Clinical signals
+keep their own colors: red for an abnormal value or an allergy, amber for a Watcher, the unit palette for Location
+blocks; the time since a PRN's last dose is teal. B&W takes all of it to black on white.
 
 Each patient is a **Patient block** of two rows. Row 1: Snapshot column (header "Snapshot"; the Location block, a unit / room-bed chip
 outlined and lettered in that unit's color, then 8 px to its right the Patient name, last name and comma on the
@@ -194,8 +201,8 @@ GCS …" (°C for a temperature under 50; O2 delivery after SpO2, shortened: Roo
 flow nasal cannula HFNC, Ventilator vent, Non-rebreather mask NRB, anything else as CORES writes it), labels bold, values plain and red when out of range, units gray, only the ones CORES reported: Temperature, Heart rate, Blood
 pressure, Respiratory rate, SpO2, O2 delivery, GCS),
 Ventilation (Vent settings, Vent measurements, Blood gas; left out when there are none), Volume (the I&O; heading VOLUME; Volume chart — one mirror column per
-day, today's column left out (only the days before the report date): intake rises in blue, output hangs below in red with urine solid at the baseline and other output continuing
-as a wash, then under the bars a small table of In, Out and Net rows, one value per day (— where CORES gave no
+day, today's column left out (only the days before the report date): intake rises in UAB Green, output hangs below in teal with urine solid Healing Teal at the baseline and other output continuing
+in the lighter Trust Teal, edged in Healing Teal, then under the bars a small table of In, Out and Net rows, one value per day (— where CORES gave no
 value), a rule above Net; the rows are labelled with Lucide icons in the chart's left gutter (In row label:
 square-arrow-right-enter turned 90° clockwise; Out row label: square-arrow-right-exit turned 90°; Net row label:
 square-sigma; hover names them); the zero line starts at the table's left edge; legend (Volume legend) 8 px to the
