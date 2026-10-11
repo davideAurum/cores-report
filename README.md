@@ -15,7 +15,9 @@ command: `cores generate`.
    captures the window CORES opens as soon as the report has rendered, so it works whenever CORES's own button
    works. The report's HTML is put on the clipboard, which Citrix relays to your PC, and unless you used
    `cores capture --no-download` it is also downloaded as `CORES report 281 <date> <time>.html`. The report window
-   closes itself. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
+   closes itself. From the moment the script is armed, a small status box in the bottom-right corner of the patient
+   list follows the capture (status, elapsed time, patient rows, reloads, and the same messages as the console);
+   drag it by its title bar, collapse it with –, or hide it with ×. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
 3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the
    clipboard. It saves it into `reports\`, checks that it is complete and parses, writes

@@ -31,11 +31,144 @@
 // The report window closes itself after a capture and stays open after a failure. If the clipboard could not be
 // written automatically (the CORES page keeps the focus away from it), a banner at the top of the patient list offers
 // a "Copy to clipboard" button; one click does it. The HTML is also kept in window.coresCaptured.
+// While a capture runs, a small status box (draggable, collapsible) in the patient list shows its progress and messages.
 (function () {
   var BASE = location.origin + '/cores/uab/prod/cores.4.11.0/base/public_web/';
   var DB = 'cores-capture', STORE = 'kv';
 
-  function log(msg, ok) { console.log('%cCORES capture: ' + msg, ok === false ? 'color:#b00020;font-weight:bold' : 'color:green;font-weight:bold'); }
+  function log(msg, ok) {
+    console.log('%cCORES capture: ' + msg, ok === false ? 'color:#b00020;font-weight:bold' : 'color:green;font-weight:bold');
+    ovLog(msg, ok === false ? 'err' : 'ok');
+  }
+
+  // ---- status overlay: a small box in the patient list (bottom right; drag it by its title bar, collapse it with –)
+  // that follows the capture from arming to delivery, mirroring the console messages. Its position and collapsed state
+  // are remembered in this browser. It only ever shows the script's own messages, never report or patient text.
+  var OV_KEY = 'cores-capture-overlay';
+  var ov = null;
+  var OV_COLORS = { idle: '#6b7a8c', busy: '#c98a00', warn: '#c75b00', ok: '#2e7d32', err: '#b00020' };
+  function ovPrefs(save) {
+    try {
+      if (save) { localStorage.setItem(OV_KEY, JSON.stringify(save)); return save; }
+      return JSON.parse(localStorage.getItem(OV_KEY) || '{}') || {};
+    } catch (e) { return {}; }
+  }
+  function ovEl(tag, css, text) {
+    var el = document.createElement(tag);
+    if (css) el.style.cssText = css;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  }
+  function ovBuild() {
+    if (ov && ov.root.isConnected) return ov;
+    var old = document.getElementById('cores-capture-overlay');
+    if (old) old.remove();   // left over from an earlier paste of the script
+    var prefs = ovPrefs();
+    var root = ovEl('div', 'position:fixed;z-index:2147483646;width:340px;background:#fff;color:#1b1b1b;' +
+      'font:12px/1.4 Segoe UI,Arial,sans-serif;border:1px solid #1f4e79;border-radius:6px;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.35);overflow:hidden;user-select:none');
+    root.id = 'cores-capture-overlay';
+    var head = ovEl('div', 'display:flex;align-items:center;gap:6px;background:#1f4e79;color:#fff;padding:5px 6px 5px 8px;cursor:move');
+    var dot = ovEl('span', 'flex:none;width:9px;height:9px;border-radius:50%;background:' + OV_COLORS.idle);
+    var title = ovEl('span', 'flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600', 'CORES capture');
+    var clock = ovEl('span', 'flex:none;font-variant-numeric:tabular-nums;opacity:.85', '');
+    var btnCss = 'flex:none;width:20px;height:20px;padding:0;border:0;border-radius:3px;background:rgba(255,255,255,.15);' +
+      'color:#fff;font:bold 13px/20px Segoe UI,Arial,sans-serif;cursor:pointer';
+    var fold = ovEl('button', btnCss); fold.title = 'collapse / expand';
+    var shut = ovEl('button', btnCss, '\u00d7'); shut.title = 'hide (it comes back on the next capture)';
+    head.appendChild(dot); head.appendChild(title); head.appendChild(clock); head.appendChild(fold); head.appendChild(shut);
+    var body = ovEl('div', 'padding:6px 8px 8px');
+    var stats = ovEl('div', 'display:flex;gap:12px;margin-bottom:5px;color:#444');
+    var rowsEl = ovEl('span', '', ''), reloadEl = ovEl('span', '', ''), modeEl = ovEl('span', '', '');
+    stats.appendChild(modeEl); stats.appendChild(rowsEl); stats.appendChild(reloadEl);
+    var list = ovEl('div', 'max-height:170px;overflow-y:auto;border-top:1px solid #dde3ea;padding-top:4px;' +
+      'font:11px/1.4 Consolas,Menlo,monospace;user-select:text;cursor:text');
+    body.appendChild(stats); body.appendChild(list);
+    root.appendChild(head); root.appendChild(body);
+    document.body.appendChild(root);
+
+    ov = { root: root, head: head, dot: dot, title: title, clock: clock, fold: fold, body: body, list: list,
+           rows: rowsEl, reloads: reloadEl, mode: modeEl, started: 0, tick: null, collapsed: !!prefs.collapsed };
+
+    function place(x, y) {   // keep the title bar on screen
+      var w = root.offsetWidth, h = head.offsetHeight;
+      x = Math.max(0, Math.min(x, window.innerWidth - w));
+      y = Math.max(0, Math.min(y, window.innerHeight - h));
+      root.style.left = x + 'px'; root.style.top = y + 'px'; root.style.right = 'auto'; root.style.bottom = 'auto';
+      return { x: x, y: y };
+    }
+    function setCollapsed(c) {
+      ov.collapsed = c;
+      body.style.display = c ? 'none' : '';
+      fold.textContent = c ? '+' : '\u2013';
+    }
+    setCollapsed(ov.collapsed);
+    if (typeof prefs.x === 'number') place(prefs.x, prefs.y);
+    else { root.style.right = '16px'; root.style.bottom = '16px'; }
+
+    fold.onclick = function (e) { e.stopPropagation(); setCollapsed(!ov.collapsed); var p = ovPrefs(); p.collapsed = ov.collapsed; ovPrefs(p); };
+    shut.onclick = function (e) { e.stopPropagation(); root.style.display = 'none'; };
+    head.ondblclick = function (e) { if (e.target === head || e.target === title) fold.onclick(e); };
+
+    head.onmousedown = function (e) {
+      if (e.button !== 0 || e.target === fold || e.target === shut) return;
+      e.preventDefault();
+      var r = root.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top, last = null;
+      function move(ev) { last = place(ev.clientX - dx, ev.clientY - dy); }
+      function up() {
+        document.removeEventListener('mousemove', move, true);
+        document.removeEventListener('mouseup', up, true);
+        if (last) { var p = ovPrefs(); p.x = last.x; p.y = last.y; ovPrefs(p); }
+      }
+      document.addEventListener('mousemove', move, true);
+      document.addEventListener('mouseup', up, true);
+    };
+    window.addEventListener('resize', function () {
+      if (root.style.left) place(parseFloat(root.style.left), parseFloat(root.style.top));
+    });
+    return ov;
+  }
+  function ovClock() {
+    if (!ov || !ov.started) return;
+    var s = Math.floor((Date.now() - ov.started) / 1000);
+    ov.clock.textContent = Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+  }
+  // a new capture: clear the box, show it again, start the clock
+  function ovStart(mode, status) {
+    try {
+      ovBuild();
+      ov.root.style.display = '';
+      ov.list.innerHTML = '';
+      ov.mode.textContent = mode;
+      ov.rows.textContent = ''; ov.reloads.textContent = '';
+      ov.started = Date.now();
+      clearInterval(ov.tick); ov.tick = setInterval(ovClock, 1000); ovClock();
+      ovStatus(status, 'busy');
+    } catch (e) {}
+  }
+  // the one-line status in the title bar; ok / err (or final) end the clock
+  function ovStatus(text, kind, final) {
+    if (!ov) return;
+    ov.title.textContent = text;
+    ov.title.title = text;
+    ov.dot.style.background = OV_COLORS[kind] || OV_COLORS.idle;
+    if (final || kind === 'ok' || kind === 'err') { clearInterval(ov.tick); ov.tick = null; ovClock(); }
+  }
+  function ovStat(which, text) { if (ov && ov[which] && ov[which].textContent !== text) ov[which].textContent = text; }
+  function ovLog(msg, kind) {
+    if (!ov) return;
+    try {
+      var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      var line = ovEl('div', 'padding:1px 0;white-space:pre-wrap;word-break:break-word;color:' +
+        (kind === 'err' ? '#b00020' : kind === 'warn' ? '#a14a00' : '#1b1b1b'));
+      line.appendChild(ovEl('span', 'color:#8a96a3', pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ' '));
+      line.appendChild(document.createTextNode(msg));
+      var atEnd = ov.list.scrollHeight - ov.list.scrollTop - ov.list.clientHeight < 8;
+      ov.list.appendChild(line);
+      while (ov.list.childNodes.length > 200) ov.list.removeChild(ov.list.firstChild);
+      if (atEnd) ov.list.scrollTop = ov.list.scrollHeight;
+    } catch (e) {}
+  }
 
   // ---- a small banner at the top of the patient list, for the steps that need a click
   var banner = null;
@@ -259,12 +392,14 @@
       var name = (opts.name || ('CORES report' + (id ? ' ' + id : ''))) + ' ' + stamp + '.html';
       var rows = (html.match(/id="row_template_\d+"/g) || []).length;
       log('captured (' + how + '): ' + html.length.toLocaleString() + ' chars, ' + rows + ' patient rows -> ' + name);
+      ovStat('rows', rows + ' patient row' + (rows === 1 ? '' : 's'));
       if (rows === 0) {
         log('no rendered patient rows in it: CORES did not render the report. The capture is delivered anyway, marked in its name.', false);
         name = name.replace(/\.html$/, ' UNRENDERED.html');
-      }
+        ovStatus('Captured, but UNRENDERED', 'warn', true);
+      } else ovStatus('Captured ' + rows + ' patient rows', 'ok');
       var o = {}; for (var k in opts) o[k] = opts[k]; o.popup = popup;   // the report window is still open and focused now
-      try { deliver(html, name, o); } catch (e) { console.error('CORES capture: delivery failed', e); }
+      try { deliver(html, name, o); } catch (e) { console.error('CORES capture: delivery failed', e); ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovStatus('Delivery failed', 'err'); }
       setTimeout(function () { try { (popup.__realClose || popup.close).call(popup); } catch (e) {} }, 1500);
       return name;
     }
@@ -273,6 +408,8 @@
       if (done) return;
       stop();
       console.error('CORES capture: ' + msg + ' The report window is left open so you can look at it.');
+      ovLog(msg + ' The report window is left open so you can look at it.', 'err');
+      ovStatus('Failed - nothing captured', 'err');
       log('nothing captured. Press F5 in the CORES patient list window, open your list again, then paste the script again.', false);
     }
 
@@ -282,6 +419,8 @@
       if (reloads >= retries) return false;
       reloads++;
       log('CORES says "' + text + '" - pressing OK and Reload (attempt ' + reloads + ' of ' + retries + ')', false);
+      ovStatus('Reloading report (' + reloads + ' of ' + retries + ')', 'warn');
+      ovStat('reloads', reloads + ' reload' + (reloads === 1 ? '' : 's'));
       var ok = buttonNamed(d, 'OK');
       if (ok) { try { ok.click(); } catch (e) {} }
       reloadTimer = setTimeout(function () {
@@ -297,7 +436,15 @@
 
     timer = setInterval(function () {
       var w = popup, d;
-      if (w.closed) { stop(); if (!done) console.error('CORES capture: the report window closed before anything was captured.'); return; }
+      if (w.closed) {
+        stop();
+        if (!done) {
+          console.error('CORES capture: the report window closed before anything was captured.');
+          ovLog('the report window closed before anything was captured.', 'err');
+          ovStatus('Report window closed', 'err');
+        }
+        return;
+      }
       try { d = w.document; } catch (e) { return; }  // cross-origin (e.g. login redirect) = wait
       if (!d || !d.location || d.location.href === 'about:blank') return;
       if (!w.__coresHooked) {
@@ -306,6 +453,8 @@
         w.__coresHooked = true;   // marker lives on the inner window, so a re-navigation gets re-hooked
         dialogSeen = '';
         if (!reportId) reportId = reportIdOf(d.location.href) || null;   // for the file name (a Reload may drop it from the URL)
+        ovLog('report page loaded' + (reportId ? ' (report ' + reportId + ')' : '') + '; waiting for the patient rows');
+        ovStatus('Report loading\u2026', 'busy');
         // PDF-type reports: the app builds <form><input name=options><input name=html></form> and calls form.submit().
         // While the capture is pending that submit is taken instead; afterwards (captured, or given up) CORES's own flow
         // is let through, so its PDF still appears
@@ -314,7 +463,7 @@
           if (!done) {
             var f = this.querySelector('input[name="html"]');
             if (f && /<\w+/.test(f.value)) finish(f.value, 'form submit intercepted');
-            else console.warn('CORES capture: a form was submitted without an html field; held back', this);
+            else { console.warn('CORES capture: a form was submitted without an html field; held back', this); ovLog('a form was submitted without an html field; held back', 'warn'); }
             return;
           }
           return realSubmit.apply(this, arguments);
@@ -322,7 +471,7 @@
         // HTML-type reports: the app may call window.print() once rendered
         w.print = function () { finish(wrap(d.documentElement.innerHTML), 'window.print intercepted'); };
         w.__realClose = w.close;
-        w.close = function () { console.warn('CORES capture: report window tried to close itself; ignored'); };
+        w.close = function () { console.warn('CORES capture: report window tried to close itself; ignored'); ovLog('report window tried to close itself; ignored', 'warn'); };
       }
       ticks++;
       if (ticks % 40 === 0) {   // once a second: did CORES put up an error dialog?
@@ -335,7 +484,15 @@
       }
       // Fallback for HTML-type reports: rendered rows present and stable for 6 s with no loading mask
       var rows = renderedRows(d);
-      if (rows !== lastRows) { lastRows = rows; lastChange = Date.now(); }
+      if (rows !== lastRows) {
+        lastRows = rows; lastChange = Date.now();
+        ovStat('rows', rows + ' patient row' + (rows === 1 ? '' : 's'));
+        if (rows > 0) ovStatus('Rendering\u2026 ' + rows + ' rows', 'busy');
+      }
+      if (rows > 0 && !done && ticks % 40 === 0) {   // once a second: how long until the rows count as settled
+        var left = Math.ceil((6000 - (Date.now() - lastChange)) / 1000);
+        if (left > 0) ovStatus(rows + ' rows, settling (' + left + ' s)', 'busy');
+      }
       var masked = d.querySelector('.loadmask, .loadmask-msg');
       if (rows > 0 && !masked && Date.now() - lastChange > 6000) finish(wrap(d.documentElement.innerHTML), 'rendered and idle');
     }, 25);
@@ -365,11 +522,14 @@
         }
         var o = window.__coresArmed;
         window.__coresArmed = null;
+        ovStatus('Report window open, waiting\u2026', 'busy');
         log('CORES opened a report window' + (u ? ' (' + u.slice(0, 120) + ')' : '') + '; capturing it when it has rendered…');
         watchReport(w, o, reportIdOf(u) || null);
       }
       return w;
     };
+    ovStart('armed mode', 'Armed - open the report in CORES');
+    ovStat('rows', '');
     log('armed. Now open the report from CORES as you normally do (its own report / print button); it is captured as soon ' +
       'as it has rendered. If nothing more appears here after you open it, CORES opened it another way: use captureCores(281).');
     return 'armed…';
@@ -390,8 +550,12 @@
     var popup = (opts.open || window.__coresRealOpen || function (u, n, f) { return window.open(u, n, f); })(url, 'cores_capture_' + reportId, 'width=1400,height=900');
     if (!popup) {
       console.error('CORES capture: window.open was blocked. Allow popups for this site and try again.');
+      ovStart('direct mode, report ' + reportId, 'Popup blocked');
+      ovLog('window.open was blocked. Allow popups for this site and try again.', 'err');
+      ovStatus('Popup blocked', 'err');
       return;
     }
+    ovStart('direct mode, report ' + reportId, 'Report ' + reportId + ' opened, waiting…');
     watchReport(popup, opts, String(reportId));
     log('opened report ' + reportId + ' in a popup; waiting for it to render…');
     return 'capturing…';
