@@ -154,7 +154,10 @@ The Daily Report flags a temperature under 50 as degrees C (normal 36.1 to 37.9)
 not all marked low.
 
 ## Rendered Daily Report (names shown by the Inspect toggle)
-Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, Print, **B&W** (black and white: see
+Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, **Breakdown** (Off / By unit, and By team
+once any Patient block carries a team: the **Breakdown** line above the table, a Breakdown total, a Breakdown chip per
+unit outlined in its unit color with the count of patients shown and printed, and a dashed Breakdown blank chip; printed
+when on), **+ Blank patient**, **Print all** (puts back every patient left out with Don't print), Print, **B&W** (black and white: see
 README, Printing), Paper, Optimize widths, Reset columns, **Sections**
 (a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; indented
 entries are parts of the entry above them — Admission, Allergy / Diet block, Vitals, Ventilation, Volume, Trends, Labs —
@@ -192,8 +195,12 @@ and Status lines) · Vitals column (header "Vitals · Vent · Volume · Labs · 
 Ventilation, then Volume and Labs side by side with a rule between them — Labs goes under Volume when the column
 is too narrow, as in portrait — then Tubes / Lines / Drains; Labs, heading "LABS (today)", was a column of its own
 until 2026-10-10) · Meds column (Infusions,
-Antibiotics, Scheduled stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (Typed notes, else
-blank for handwriting). Row 2: **PRN row**, full width, PRN meds flowing into as many columns as fit. Same-name drugs are merged onto one line with doses comma-separated.
+Antibiotics, Scheduled stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (Typed notes, else blank
+for handwriting; under the Snapshot, on screen only, the **Patient controls**: Don't print button — the patient stays on
+screen, dimmed, and is left out of the printout and of Optimize widths; remembered by MRN for 30 days — and Blank below button). Row 2: **PRN row**, full width, PRN meds flowing into as many columns as fit. Same-name drugs are merged onto one line with doses comma-separated.
+A **Blank patient block** (+ Blank patient, or Blank below on a patient) has the same two rows, empty and tall enough to
+write in, with a Blank patient name to type into (optional) and a Remove blank button; it is never filtered out, stays
+after the patient it was added below whatever the sort, prints like any patient, and is kept for that report.
 Unit colors (`UNIT_PALETTE` in `cores_report.py`): MICU, MCCU, CCU, ICVU, NICU, BMT and UED always get the
 same color (`UNIT_PINNED`); any other unit gets a color no other unit on that report has, starting from one picked
 from its name, so it can differ from day to day. Past thirteen units two unpinned units share a color, never a pinned

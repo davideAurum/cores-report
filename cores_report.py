@@ -276,6 +276,26 @@ body.bw .abn{color:#000;font-weight:700;text-decoration:underline} body.bw .laba
 body.bw .sev{background:#fff;color:#000;border:1px solid #000;padding:0 6px} body.bw .sev-watch{background:#c8c8c8} body.bw .sev-unstable{background:#000;color:#fff}
 body.bw .hi .drug{text-decoration:underline}
 body.bw .bar-in{fill:#3a3a3a} body.bw .bar-ur{fill:#9a9a9a} body.bw .bar-ot{fill:url(#bw-hatch);fill-opacity:1;stroke:#444;stroke-width:.6}
+/* Breakdown above the table (toolbar Breakdown): a chip per unit (or team) outlined in its color with the count of the
+   patients shown and printed; printed when on */
+.brk{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin:0 0 6px;font-size:10px}
+.brk[hidden]{display:none}
+.brk .brk-t{font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;font-size:9.5px;margin-right:2px}
+.brk .bk{display:inline-flex;gap:4px;align-items:baseline;padding:0 7px;border:1.5px solid var(--unit,var(--mute));border-radius:9px;color:var(--unit,var(--mute));font-weight:700;white-space:nowrap}
+.brk .bk b{color:var(--ink)} .brk .bk.tot{border-color:var(--ink);color:var(--ink)} .brk .bk.bl{border-style:dashed}
+body.bw .brk .bk{border-color:#000;color:#000}
+/* per-patient controls (screen only): Don't print / Print again, + Blank below, and Remove on a blank block */
+.ptctl{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.ptctl button{padding:0 5px;font:inherit;font-size:9px;line-height:14px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--mute);cursor:pointer}
+.ptctl button:hover{border-color:var(--uab-green);color:var(--ink)}
+/* a patient left out of print: dimmed on screen, its controls not */
+.rpt > tbody.pxh > tr > td > :not(.ptctl){opacity:.32}
+.rpt > tbody.pxh .ptctl .px{border-color:var(--alert);color:var(--alert);font-weight:600}
+/* a blank patient block: empty cells with room for handwriting, an optional typed name */
+.rpt > tbody.blank > tr.main > td{height:1.15in}
+.rpt > tbody.blank > tr.medrow > td{height:18px}
+.bname{font-size:12px;font-weight:700;min-height:16px;outline:0;border-bottom:1px dotted var(--line)}
+.bname:empty::before{content:attr(data-ph);color:var(--mute);font-weight:400;font-style:italic}
 /* off-screen copy used by Optimize widths: the print rules below, applied on screen so it can be measured */
 .pm{position:absolute;left:-30000px;top:0;font-size:9px;line-height:1.22;background:#fff}
 .pm .rpt thead th{position:static} .pm .rpt > thead > tr > th,.pm .rpt > tbody > tr > td{padding:3px 5px} .pm .pmw{display:flow-root}
@@ -283,8 +303,9 @@ body.bw .bar-in{fill:#3a3a3a} body.bw .bar-ur{fill:#9a9a9a} body.bw .bar-ot{fill
 @media print{
   body{padding:0;font-size:9px;line-height:1.22}
   .page{padding:0}
-  .toolbar,#insp-tip,#insp-toast,.rz{display:none!important}
+  .toolbar,#insp-tip,#insp-toast,.rz,.noprint,.rpt > tbody.pxh{display:none!important}
   .ufin,.notein,.uf.blank{display:none!important} .ufv{display:inline} .notetxt{display:block}
+  .bname{border-bottom:0} .bname:empty::before{content:none}
   .rpt thead{display:table-header-group} .rpt thead th{position:static}
   .rpt > thead > tr > th,.rpt > tbody > tr > td{padding:3px 5px}
   /* a patient never straddles a page break; a block that will not fit moves to the next page whole */
@@ -300,18 +321,21 @@ JS = """
         o2=document.getElementById('f-o2'), tasks=document.getElementById('f-tasks'), cnt=document.getElementById('count'),
         team=document.getElementById('f-team');
   function apply(){
-    const t=q.value.trim().toLowerCase(); let n=0;
+    const t=q.value.trim().toLowerCase(); let n=0, real=0, nb=0, nx=0;
     rows.forEach(r=>{
       const d=r.dataset; let ok=true;
+      if(isBlank(r)){nb++; r.classList.remove('hide'); return;}  // a blank block is never filtered out
+      real++;
       if(t && !d.text.includes(t) && !utext(r).includes(t)) ok=false;
       if(unit.value && d.unit!==unit.value) ok=false;
       if(sev.value && d.sev!==sev.value) ok=false;
       if(o2.value && d.o2!==o2.value) ok=false;
       if(team.value && fieldVal(r,'team').trim()!==team.value.trim()) ok=false;
       if(tasks.checked && +d.tasks===0) ok=false;
-      r.classList.toggle('hide',!ok); if(ok) n++;
+      r.classList.toggle('hide',!ok); if(ok){n++; if(r.classList.contains('pxh'))nx++;}
     });
-    cnt.textContent='Showing '+n+' of '+rows.length+' patients';
+    cnt.textContent='Showing '+n+' of '+real+' patients'+(nx?' ('+nx+' not printed)':'')+(nb?' + '+nb+' blank':'');
+    drawBreakdown();
   }
   [q,unit,sev,o2,tasks,team].forEach(el=>el.addEventListener('input',apply));
   document.getElementById('reset').addEventListener('click',()=>{q.value='';unit.value='';sev.value='';o2.value='';team.value='';tasks.checked=false;apply();});
@@ -321,13 +345,14 @@ JS = """
   function sortBy(key,dir){
     const numeric=['los','age','sevrank','tasks','drips'].includes(key);
     const uf=key.startsWith('uf:'), get=r=>uf?fieldVal(r,key.slice(3)).trim().toLowerCase():r.dataset[key]||'';  // uf: a typed field
-    const sorted=[...rows].sort((a,b)=>{
+    const sorted=rows.filter(r=>!isBlank(r)).sort((a,b)=>{
       let x=get(a), y=get(b);
       if(numeric){x=+x||0;y=+y||0;return (x-y)*dir;}
       if(uf&&!x!==!y)return x?-1:1;  // patients with nothing typed go last either way, by location
       return x.localeCompare(y,undefined,{numeric:true})*dir||(uf?(a.dataset.location||'').localeCompare(b.dataset.location||'',undefined,{numeric:true}):0);
     });
     sorted.forEach(r=>table.appendChild(r));
+    placeBlanks();  // each blank block stays after the patient it was added after
     document.querySelectorAll('th[data-key]').forEach(th=>{const s=th.querySelector('.dir'); s.textContent=(th.dataset.key===key)?(dir>0?'\\u25B2':'\\u25BC'):'';});
   }
   document.querySelectorAll('th[data-key]').forEach(th=>th.addEventListener('click',()=>{
@@ -439,6 +464,99 @@ JS = """
     m.style.top=Math.round(b.bottom+4)+'px'; m.style.left=Math.round(Math.max(8,Math.min(b.left,window.innerWidth-298)))+'px'; fnew.focus();});
   document.addEventListener('click',e=>{if(fmenu.open&&!fmenu.contains(e.target))fmenu.open=false;});
   buildMenu(); buildFields(); refreshLists();
+  // Patient list: per-patient Don't print, blank patient blocks, and the Breakdown above the table. Which patients are
+  // left out of print (by MRN, kept 30 days) and the blank blocks (per report) are patient data, saved under
+  // cores-report-data-… keys; the breakdown's grouping is a preference (cores-report-breakdown-v1).
+  const isBlank=r=>r.classList.contains('blank'), KEYPX='cores-report-data-printhide-v1', KEYBL='cores-report-data-blank-v1';
+  const RID=table.dataset.report||'', unhide=document.getElementById('unhide');
+  const save=store;
+  const pxSaved=load(KEYPX,{}), blSaved=load(KEYBL,{});
+  for(const k in pxSaved)if(!(Date.now()-pxSaved[k]<30*DAYMS))delete pxSaved[k];
+  for(const k in blSaved)if(!(Date.now()-(blSaved[k].t||0)<30*DAYMS))delete blSaved[k];
+  let blanks=(blSaved[RID]&&Array.isArray(blSaved[RID].rows))?blSaved[RID].rows:[];
+  const saveBlanks=()=>{if(blanks.length)blSaved[RID]={t:Date.now(),rows:blanks}; else delete blSaved[RID]; save(KEYBL,blSaved);};
+  function setPx(r,on){
+    r.classList.toggle('pxh',on); const b=r.querySelector('.ptctl .px');
+    if(b){b.textContent=on?'Not printed \\u00b7 Restore':'Don\\u2019t print'; b.title=on?'Print this patient again':'Leave this patient out of the printout (still shown here, dimmed)';}
+  }
+  function addCtl(r){
+    const c=document.createElement('div'); c.className='ptctl noprint'; c.dataset.name='Patient controls';
+    c.innerHTML=(isBlank(r)?'<button type="button" class="pr" data-name="Remove blank button" title="Remove this blank patient block">Remove</button>'
+      :'<button type="button" class="px" data-name="Don\\u2019t print button"></button>')
+      +'<button type="button" class="pb" data-name="Blank below button" title="Add a blank patient block after this one">+ Blank below</button>';
+    r.querySelector('td').appendChild(c);
+  }
+  const COLN=[...table.querySelectorAll('thead th')].map(th=>th.dataset.name.replace(' header',' column'));
+  function blankEl(b){
+    const tb=document.createElement('tbody'); tb.className='blk blank'; tb.dataset.pid=b.id; tb.dataset.name='Blank patient block';
+    tb.innerHTML='<tr class="main">'+COLN.map((n,i)=>'<td'+(i===0?' class="pt"':n==='Notes column'?' class="notes"':'')+' data-name="'+n+'">'
+      +(i===0?'<div class="bname" contenteditable="plaintext-only" spellcheck="false" data-name="Blank patient name" data-ph="Name (optional)"></div>':'')+'</td>').join('')
+      +'</tr><tr class="medrow" data-name="PRN row"><td colspan="'+COLN.length+'"></td></tr>';
+    const nm=tb.querySelector('.bname'); nm.textContent=b.name||'';
+    nm.addEventListener('input',()=>{b.name=nm.textContent; saveBlanks();});
+    addCtl(tb); return tb;
+  }
+  function placeBlanks(){
+    // in the order they were added, each after its anchor (a patient's MRN, or another blank), else at the end
+    const last={};
+    blanks.forEach(b=>{
+      const el=rows.find(r=>r.dataset.pid===b.id); if(!el)return;
+      const at=b.after&&(last[b.after]||rows.find(r=>r.dataset.pid===b.after&&r!==el));
+      if(at)at.after(el); else table.appendChild(el);
+      if(b.after)last[b.after]=el;
+    });
+  }
+  function addBlank(after){
+    const b={id:'blank-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),after:after||'',name:''};
+    blanks.push(b); const el=blankEl(b); rows.push(el); table.appendChild(el); saveBlanks(); placeBlanks(); apply();
+    el.querySelector('.bname').focus();
+  }
+  function removeBlank(id){
+    const b=blanks.find(x=>x.id===id); if(!b)return;
+    blanks.forEach(x=>{if(x.after===id)x.after=b.after;});  // blanks added after this one take its place
+    blanks=blanks.filter(x=>x!==b); const i=rows.findIndex(r=>r.dataset.pid===id); if(i>=0){rows[i].remove(); rows.splice(i,1);}
+    saveBlanks(); placeBlanks(); apply();
+  }
+  function syncUnhide(){const n=rows.filter(r=>r.classList.contains('pxh')).length; unhide.disabled=!n; unhide.textContent='Print all'+(n?' ('+n+' left out)':'');}
+  rows.forEach(r=>{addCtl(r); setPx(r,!!pxSaved[r.dataset.pid]);});
+  blanks.forEach(b=>{const el=blankEl(b); rows.push(el); table.appendChild(el);});
+  table.addEventListener('click',e=>{
+    const btn=e.target.closest('.ptctl button'); if(!btn)return; const r=btn.closest('tbody.blk'), pid=r.dataset.pid;
+    if(btn.classList.contains('px')){const on=!r.classList.contains('pxh'); setPx(r,on); if(on)pxSaved[pid]=Date.now(); else delete pxSaved[pid]; save(KEYPX,pxSaved); syncUnhide(); apply();}
+    else if(btn.classList.contains('pb'))addBlank(pid);
+    else if(btn.classList.contains('pr'))removeBlank(pid);
+  });
+  document.getElementById('add-blank').addEventListener('click',()=>addBlank(''));
+  unhide.addEventListener('click',()=>{rows.forEach(r=>{if(r.classList.contains('pxh')){setPx(r,false); delete pxSaved[r.dataset.pid];}}); save(KEYPX,pxSaved); syncUnhide(); apply();});
+  syncUnhide();
+  // Breakdown: a count of the patients shown and printed, grouped by one of GROUPS. Each group names its option, reads a
+  // block's value and may color its chip; add one here to break down by something else. A group with avail() is offered
+  // only while some block has a value for it (Team: a data-team attribute on the block, or on an element in it).
+  const brk=document.getElementById('brk'), brkSel=document.getElementById('brk-by'), KEYBK='cores-report-breakdown-v1', UNITC=__UNITCOLORS__;
+  const teamOf=r=>isBlank(r)?'':fieldVal(r,'team').trim();  // the Team field typed on the report
+  const GROUPS={
+    unit:{label:'unit',of:r=>r.dataset.unit||'',none:'No unit',color:v=>UNITC[v]||''},
+    team:{label:'team',of:teamOf,none:'No team',color:()=>'',avail:()=>rows.some(r=>!isBlank(r)&&teamOf(r))},
+  };
+  let brkBy='';
+  try{const s=localStorage.getItem(KEYBK); if(s&&GROUPS[s])brkBy=s;}catch(e){}
+  function drawBreakdown(){
+    for(const k in GROUPS){
+      const g=GROUPS[k], ok=!g.avail||g.avail()||brkBy===k; let o=brkSel.querySelector('option[value="'+k+'"]');
+      if(ok&&!o){o=document.createElement('option'); o.value=k; o.textContent='By '+g.label; brkSel.appendChild(o);} else if(!ok&&o)o.remove();
+    }
+    brkSel.value=brkBy;
+    const g=GROUPS[brkBy]; brk.hidden=!g; if(!g){brk.innerHTML='';return;}
+    const m=new Map(); let tot=0, nb=0;
+    rows.forEach(r=>{if(r.classList.contains('hide')||r.classList.contains('pxh'))return; if(isBlank(r)){nb++;return;} const v=g.of(r); m.set(v,(m.get(v)||0)+1); tot++;});
+    const esc=s=>String(s).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';');
+    brk.innerHTML='<span class="brk-t">By '+g.label+'</span><span class="bk tot" data-name="Breakdown total">Total <b>'+tot+'</b></span>'
+      +[...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],undefined,{numeric:true})).map(([v,c])=>{const col=v&&g.color(v);
+        return '<span class="bk" data-name="Breakdown chip"'+(col?' style="--unit:'+col+'"':'')+'>'+esc(v||g.none)+' <b>'+c+'</b></span>';}).join('')
+      +(nb?'<span class="bk bl" data-name="Breakdown blank chip">Blank <b>'+nb+'</b></span>':'');
+  }
+  brkSel.addEventListener('change',()=>{brkBy=brkSel.value; try{localStorage.setItem(KEYBK,brkBy);}catch(e){} drawBreakdown();});
+  document.addEventListener('cores-rows-changed',apply);  // for other page code that changes what a block holds
   sortBy('location',1); apply();
   // column widths (drag a header boundary) and section visibility; both persist in localStorage
   // widths are kept per paper orientation; the orientation <select> starts at the default cores_report.py baked in
@@ -522,9 +640,10 @@ JS = """
     if(!idx.length){optMsg.textContent='No columns to optimize';return;}
     const pct=base.map((b,i)=>vis[i]?parseFloat(b)||0:0), pctSum=pct.reduce((a,b)=>a+b,0)||1, curPx=pct.map(x=>x/pctSum*W);
     const box=document.createElement('div'); box.className='pm'; box.style.width=W+'px';
-    const hd=document.querySelector('.rpt-head').cloneNode(true), t=table.cloneNode(true);
-    t.removeAttribute('id'); t.querySelectorAll('.rz,tbody.hide').forEach(x=>x.remove());
-    box.appendChild(hd); box.appendChild(t); document.body.appendChild(box);
+    const hd=document.querySelector('.rpt-head').cloneNode(true), t=table.cloneNode(true), bk=document.getElementById('brk');
+    t.removeAttribute('id'); t.querySelectorAll('.rz,.noprint,tbody.hide,tbody.pxh').forEach(x=>x.remove());  // as printed
+    const bkc=bk.hidden?null:bk.cloneNode(true); if(bkc)bkc.removeAttribute('id');
+    box.appendChild(hd); if(bkc)box.appendChild(bkc); box.appendChild(t); document.body.appendChild(box);
     try{
       const tcols=[...t.querySelectorAll('colgroup col')], blk=[...t.querySelectorAll('tbody.blk')], P=blk.length;
       if(!P){optMsg.textContent='No patients shown';return;}
@@ -546,7 +665,7 @@ JS = """
       const realClips=()=>{let c=0;idx.forEach((i,a)=>{for(let p=0;p<P;p++){const d=wrap[p][i];if(fitK[a][p]>=0&&d.scrollWidth>d.clientWidth+1)c++;}});return c;};
       // what the model leaves out (PRN row, borders, padding, the Notes column) is calibrated on the current layout
       setW(curPx);
-      const headH=hd.getBoundingClientRect().height+8, theadH=t.tHead.getBoundingClientRect().height;
+      const headH=hd.getBoundingClientRect().height+8+(bkc?bkc.getBoundingClientRect().height+6:0), theadH=t.tHead.getBoundingClientRect().height;
       const nowH=blk.map(b=>b.getBoundingClientRect().height), clipsBefore=realClips();
       const fixedH=wrap.map(w=>Math.max(0,...fixedCols.map(i=>w[i].offsetHeight)));
       const extra=blk.map((b,p)=>nowH[p]-Math.max(fixedH[p],...idx.map(i=>wrap[p][i].offsetHeight)));
@@ -1166,7 +1285,7 @@ def render_row(r, report_date='', unit_color=None):
         'location': r['location'], 'unit': r['unit'], 'pname': r['patient_name'], 'sev': sev.lower(),
         'sevrank': SEV_RANK.get(sev.lower(), 9), 'los': r['los_days'] or 0, 'age': age or 0, 'o2': r.get('o2_delivery', ''),
         'tasks': len(r['tasks']), 'drips': len((r.get('meds') or {}).get('infusions', [])), 'text': row_text(r),
-        'pid': r['mrn'] or f'{r["patient_name"]}|{r["dob"]}',  # key for the values typed on the report (MRN; name+DOB if none)
+        'pid': r.get('mrn') or f"{r['patient_name']}|{r.get('dob', '')}",  # key for the values typed on the report and for Don't print (MRN; name+DOB if none)
     }
     attrs = ' '.join(f'data-{k}="{e(v)}"' for k, v in data.items())
     prn = render_prn_line(r)
@@ -1206,6 +1325,11 @@ def sections_menu():
     return out
 
 
+def script_json(v):
+    """JSON safe to put inside <script>: a unit named '</script>…' cannot end the script early."""
+    return json.dumps(v).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+
+
 def options(values):
     return ''.join(f'<option value="{e(v)}">{e(v)}</option>' for v in values)
 
@@ -1223,6 +1347,7 @@ def render(data, orientation='landscape', bw=False):
     o2s = sorted({r.get('o2_delivery', '') for r in recs if r.get('o2_delivery')})
     colors = unit_colors(units)
     rows = ''.join(render_row(r, h.get('report_date', ''), colors.get(r['unit'])) for r in recs)
+    rid = hashlib.sha1(f'{data.get("source", "")}|{h.get("report_date", "")}'.encode()).hexdigest()[:12]  # keys its blank blocks
     return f'''<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">{renderer_meta(orient, bw)}<title>ICU Daily Report {e(team)} — {e(h.get("report_date", ""))}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
@@ -1241,6 +1366,9 @@ def render(data, orientation='landscape', bw=False):
  <label><input type="checkbox" id="f-tasks"> Open tasks only</label>
  <label>Sort <select id="sort"><option value="location">Location</option><option value="pname">Name</option><option value="sevrank">Severity</option><option value="los">LOS</option><option value="age">Age</option><option value="tasks">Open tasks</option><option value="drips">Drips</option></select></label>
  <button id="reset" type="button">Reset</button>
+ <label title="Count the patients shown and printed, above the table (printed too)">Breakdown <select id="brk-by"><option value="">Off</option></select></label>
+ <button id="add-blank" type="button" title="Add an empty patient block at the end, to fill in by hand">+ Blank patient</button>
+ <button id="unhide" type="button" title="Print every patient left out with Don't print">Print all</button>
  <button id="print" type="button">Print</button>
  <label title="Black and white, for a black-and-white printer: grays, hatching, bold and underlining in place of color"><input type="checkbox" id="bw"> B&amp;W</label>
  <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
@@ -1253,7 +1381,8 @@ def render(data, orientation='landscape', bw=False):
  <span class="count" id="count"></span>
 </div>
 <div id="insp-tip"></div><div id="insp-toast"></div>
-<table class="rpt" id="rpt" data-name="Report table" data-day="{e(h.get("report_date", "")[:8])}">
+<div class="brk" id="brk" data-name="Breakdown" hidden></div>
+<table class="rpt" id="rpt" data-name="Report table" data-day="{e(h.get("report_date", "")[:8])}" data-report="{rid}">
 <colgroup><col style="width:15%"><col style="width:14%"><col style="width:37%"><col style="width:14%"><col style="width:12%"><col style="width:8%"></colgroup>
 <thead data-name="Column headers"><tr>
  <th data-key="location" data-name="Snapshot header">Snapshot<span class="dir"></span></th>
@@ -1267,7 +1396,7 @@ def render(data, orientation='landscape', bw=False):
 </table>
 <div class="foot">Generated from {e(data.get("source", ""))} · {len(recs)} patients</div>
 </div>
-<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS))}</script>
+<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors))}</script>
 </body></html>'''
 
 
