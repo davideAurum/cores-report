@@ -159,7 +159,19 @@ README, Printing), Paper, Optimize widths, Reset columns, **Sections**
 (a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; indented
 entries are parts of the entry above them — Admission, Allergy / Diet block, Vitals, Ventilation, Volume, Trends, Labs —
 and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
-column widths are remembered by the browser), Inspect.
+column widths are remembered by the browser), **Fields** (the Fields menu: add a per-patient field by name — Dispo,
+Code status override, … — or remove one; Team is there to start with; Forget typed data erases every value and note this browser holds), a **Team** filter (the teams typed on this
+report, and No team; hidden when Team is removed), Inspect. Sort also lists every field; patients with nothing typed sort
+last.
+
+Typed on the report (kept in this browser only, never in the report file): **Custom fields** in the Snapshot column,
+under Code status — one line per field, "<name> field" (e.g. Team field): a box with the values already typed on this
+report as suggestions; Enter goes to the same field of the next patient shown, Shift+Enter the previous. **Typed notes**
+is a box filling the Notes column. Printed, each prints as plain text; an empty field is left out and empty Notes stay
+blank for handwriting. Which fields exist is a browser preference (`cores-report-fields-v1`); the values are patient
+data (`cores-report-data-fields-v1`, `cores-report-data-notes-v1`), keyed by MRN: field values carry over to later
+reports of the same patient, Notes only to reports of the same day. Values are dropped once their patient has not been
+on a report for 60 days (Notes 14).
 
 The report is set in the UAB Medicine brand (dpo.uab.edu/brandguide/uab-medicine): UAB Green `#1a5632` is the primary
 color, Healing Teal `#007580` the secondary, Trust Teal `#68c6b8` and its tints the only accents, no gold; Aktiv Grotesk
@@ -180,8 +192,8 @@ and Status lines) · Vitals column (header "Vitals · Vent · Volume · Labs · 
 Ventilation, then Volume and Labs side by side with a rule between them — Labs goes under Volume when the column
 is too narrow, as in portrait — then Tubes / Lines / Drains; Labs, heading "LABS (today)", was a column of its own
 until 2026-10-10) · Meds column (Infusions,
-Antibiotics, Scheduled stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (blank,
-for handwriting). Row 2: **PRN row**, full width, PRN meds flowing into as many columns as fit. Same-name drugs are merged onto one line with doses comma-separated.
+Antibiotics, Scheduled stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (Typed notes, else
+blank for handwriting). Row 2: **PRN row**, full width, PRN meds flowing into as many columns as fit. Same-name drugs are merged onto one line with doses comma-separated.
 Unit colors (`UNIT_PALETTE` in `cores_report.py`): MICU, MCCU, CCU, ICVU, NICU, BMT and UED always get the
 same color (`UNIT_PINNED`); any other unit gets a color no other unit on that report has, starting from one picked
 from its name, so it can differ from day to day. Past thirteen units two unpinned units share a color, never a pinned

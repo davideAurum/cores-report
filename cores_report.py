@@ -5,7 +5,7 @@ Usage:
   python cores_report.py data.json [out.html] [--portrait] [--bw]                                   # render from saved JSON
 --portrait starts the report on portrait paper, --bw in black and white (both can be changed in its toolbar).
 
-Each patient is a two-row block: Snapshot | Hospital Summary | Vitals · Vent · Volume · Labs · Lines | Meds | Tasks / Sit Awareness | Notes (blank, for
+Each patient is a two-row block: Snapshot | Hospital Summary | Vitals · Vent · Volume · Labs · Lines | Meds | Tasks / Sit Awareness | Notes (typed, else blank for
 handwriting), then a full-width PRN row.
 Click a column header to sort; use the toolbar to filter. Hidden patients are not printed. Designed for ~1000 px
 (letter landscape) and up. The toolbar's Paper switch prints portrait instead; Optimize widths picks the column widths
@@ -103,7 +103,7 @@ def unit_colors(units):
 # entries ending in ' column' hide a whole column (header, cells and width).
 SECTIONS = [
     ('Snapshot', ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                  'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
+                  'Custom fields', 'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
     ('Hospital Summary', ['Admission', 'Admit diagnosis', 'Admit date', 'Length of stay', 'Patient summary', 'Status lines']),
     ('Vitals', ['Vitals', 'O2 delivery', 'Ventilation', 'Vent settings', 'Vent measurements', 'Blood gas',
                 'Volume', 'Volume chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
@@ -124,7 +124,7 @@ COLPARTS = {
     'Trends': ['Glucose trend', 'Lactic acid trend'],
     'Labs': ['CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs', 'Trends'],
     'Snapshot column': ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                        'Allergy / Diet block'],
+                        'Custom fields', 'Allergy / Diet block'],
     'Hospital Summary column': ['Admission', 'Patient summary', 'Status lines'],
     'Vitals column': ['Vitals', 'Ventilation', 'Volume', 'Labs', 'Tubes / Lines / Drains'],
     'Meds column': ['Infusions', 'Antibiotics', 'Scheduled'],
@@ -248,6 +248,21 @@ body.inspect .insp-hl{outline:2px solid var(--trust);outline-offset:1px;backgrou
 #insp-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;background:var(--uab-green);color:#fff;font-size:12px;padding:6px 12px;border-radius:4px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .foot{color:var(--mute);font-size:9px;margin-top:8px;text-align:center}
 .toolbar .optmsg{color:var(--mute)}
+/* Fields typed on the report (Team and the user's own, in the Snapshot) and typed Notes. On screen each is a borderless
+   box with a dotted underline; printed (and in Optimize widths' copy) the box gives way to its text, an empty field is
+   left out and empty Notes stay blank for handwriting */
+.ufields{margin:2px 0 0} .uf{display:flex;align-items:baseline;gap:4px} .uf b{flex:none;font-weight:600}
+.ufin{flex:1 1 auto;min-width:0;width:100%;border:0;border-bottom:1px dotted var(--line);background:transparent;font:inherit;color:inherit;padding:0 1px}
+.ufin:hover{border-bottom-color:var(--mute)} .ufin:focus,.notein:focus{outline:2px solid var(--trust);outline-offset:0}
+.ufin::placeholder,.notein::placeholder{color:#b5b5b5}
+.ufv,.notetxt{display:none} .notetxt{white-space:pre-wrap;overflow-wrap:break-word}
+.notein{display:block;width:100%;min-height:42px;border:0;background:transparent;font:inherit;color:inherit;padding:0;resize:none;overflow:hidden}
+.notein:hover{background:rgba(104,198,184,.08)}
+.pm .ufin,.pm .notein,.pm .uf.blank{display:none} .pm .ufv{display:inline} .pm .notetxt{display:block}
+.fieldmenu .menu{display:block;right:auto;width:290px;max-width:calc(100vw - 16px)}
+.fieldmenu .grp-t{margin-bottom:4px} .fieldmenu .frow{display:flex;align-items:center;gap:6px;padding:2px 0}
+.fieldmenu .frow span{flex:1} .fieldmenu .frow button{padding:0 6px;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit;cursor:pointer}
+.fieldmenu .menu-foot{display:flex;gap:6px;margin-top:6px} .fieldmenu #f-new{flex:1;padding:2px 5px;border:1px solid var(--line);border-radius:3px;font:inherit}
 /* Black and white (toolbar B&W, or the black_and_white setting): nothing told apart by color alone. Headings, chips and
    tags go black; abnormal vitals bold and underlined, abnormal labs keep their ▲/▼ arrows (black); severity by fill
    (Unstable black, Watcher gray, Stable white); highlighted meds underlined; Volume chart intake dark, urine mid-gray,
@@ -269,6 +284,7 @@ body.bw .bar-in{fill:#3a3a3a} body.bw .bar-ur{fill:#9a9a9a} body.bw .bar-ot{fill
   body{padding:0;font-size:9px;line-height:1.22}
   .page{padding:0}
   .toolbar,#insp-tip,#insp-toast,.rz{display:none!important}
+  .ufin,.notein,.uf.blank{display:none!important} .ufv{display:inline} .notetxt{display:block}
   .rpt thead{display:table-header-group} .rpt thead th{position:static}
   .rpt > thead > tr > th,.rpt > tbody > tr > td{padding:3px 5px}
   /* a patient never straddles a page break; a block that will not fit moves to the next page whole */
@@ -281,31 +297,35 @@ JS = """
 (function(){
   const table=document.getElementById('rpt'), rows=[...table.querySelectorAll('tbody.blk')];
   const q=document.getElementById('q'), unit=document.getElementById('f-unit'), sev=document.getElementById('f-sev'),
-        o2=document.getElementById('f-o2'), tasks=document.getElementById('f-tasks'), cnt=document.getElementById('count');
+        o2=document.getElementById('f-o2'), tasks=document.getElementById('f-tasks'), cnt=document.getElementById('count'),
+        team=document.getElementById('f-team');
   function apply(){
     const t=q.value.trim().toLowerCase(); let n=0;
     rows.forEach(r=>{
       const d=r.dataset; let ok=true;
-      if(t && !d.text.includes(t)) ok=false;
+      if(t && !d.text.includes(t) && !utext(r).includes(t)) ok=false;
       if(unit.value && d.unit!==unit.value) ok=false;
       if(sev.value && d.sev!==sev.value) ok=false;
       if(o2.value && d.o2!==o2.value) ok=false;
+      if(team.value && fieldVal(r,'team').trim()!==team.value.trim()) ok=false;
       if(tasks.checked && +d.tasks===0) ok=false;
       r.classList.toggle('hide',!ok); if(ok) n++;
     });
     cnt.textContent='Showing '+n+' of '+rows.length+' patients';
   }
-  [q,unit,sev,o2,tasks].forEach(el=>el.addEventListener('input',apply));
-  document.getElementById('reset').addEventListener('click',()=>{q.value='';unit.value='';sev.value='';o2.value='';tasks.checked=false;apply();});
+  [q,unit,sev,o2,tasks,team].forEach(el=>el.addEventListener('input',apply));
+  document.getElementById('reset').addEventListener('click',()=>{q.value='';unit.value='';sev.value='';o2.value='';team.value='';tasks.checked=false;apply();});
   document.getElementById('print').addEventListener('click',()=>window.print());
   // sorting
   let cur={key:'location',dir:1};
   function sortBy(key,dir){
     const numeric=['los','age','sevrank','tasks','drips'].includes(key);
+    const uf=key.startsWith('uf:'), get=r=>uf?fieldVal(r,key.slice(3)).trim().toLowerCase():r.dataset[key]||'';  // uf: a typed field
     const sorted=[...rows].sort((a,b)=>{
-      let x=a.dataset[key]||'', y=b.dataset[key]||'';
+      let x=get(a), y=get(b);
       if(numeric){x=+x||0;y=+y||0;return (x-y)*dir;}
-      return x.localeCompare(y,undefined,{numeric:true})*dir;
+      if(uf&&!x!==!y)return x?-1:1;  // patients with nothing typed go last either way, by location
+      return x.localeCompare(y,undefined,{numeric:true})*dir||(uf?(a.dataset.location||'').localeCompare(b.dataset.location||'',undefined,{numeric:true}):0);
     });
     sorted.forEach(r=>table.appendChild(r));
     document.querySelectorAll('th[data-key]').forEach(th=>{const s=th.querySelector('.dir'); s.textContent=(th.dataset.key===key)?(dir>0?'\\u25B2':'\\u25BC'):'';});
@@ -334,6 +354,91 @@ JS = """
     if(navigator.clipboard)navigator.clipboard.writeText(n).catch(()=>{});
     toast.textContent='Copied: '+n; toast.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>toast.style.display='none',2000);
   },true);
+  // Fields typed on the report: Team and the user's own (Fields menu) in the Snapshot, and typed Notes. Which fields
+  // there are is a preference of this browser (cores-report-fields-v1); the values are patient data, kept apart under
+  // cores-report-data-* and keyed by MRN. A field's value follows the patient onto the next day's report; Notes belong
+  // to one day (MRN and report date), so yesterday's do not print today. A value whose patient has not been on a report
+  // for 60 days (Notes: 14) is dropped. None of it leaves this browser.
+  const KEYF='cores-report-fields-v1', KEYV='cores-report-data-fields-v1', KEYN='cores-report-data-notes-v1';
+  const DAY=table.dataset.day||'', NOW=Date.now(), DAYMS=864e5, NOTEAM=' ';  // NOTEAM: the Team filter's "No team"
+  const load=(k,d)=>{try{const s=JSON.parse(localStorage.getItem(k)||'null'); return s&&typeof s==='object'?s:d;}catch(e){return d;}};
+  const store=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+  let fields=load(KEYF,null); fields=Array.isArray(fields)?fields.filter(f=>f&&f.id&&f.name):[{id:'team',name:'Team'}];
+  const vals=load(KEYV,{}), notesV=load(KEYN,{});
+  const pts=rows.filter(r=>r.dataset.pid), nkey=r=>r.dataset.pid+'|'+DAY;
+  pts.forEach(r=>{const v=vals[r.dataset.pid], n=notesV[nkey(r)]; if(v)v.t=NOW; if(n)n.t=NOW;});
+  for(const k in vals)if(!(vals[k]&&vals[k].t>NOW-60*DAYMS))delete vals[k];
+  for(const k in notesV)if(!(notesV[k]&&notesV[k].t>NOW-14*DAYMS))delete notesV[k];
+  store(KEYV,vals); store(KEYN,notesV);
+  function fieldVal(r,id){const v=vals[r.dataset.pid]; return (v&&v.v&&v.v[id])||'';}
+  function utext(r){const v=vals[r.dataset.pid], n=notesV[nkey(r)]; return ((v?Object.values(v.v||{}).join(' '):'')+' '+(n?n.v:'')).toLowerCase();}
+  function setVal(r,id,val){const p=r.dataset.pid, x=vals[p]||(vals[p]={t:NOW,v:{}}); if(val.trim())x.v[id]=val; else delete x.v[id]; if(!Object.keys(x.v).length)delete vals[p]; store(KEYV,vals);}
+  function setNote(r,val){const k=nkey(r); if(val.trim())notesV[k]={t:NOW,v:val}; else delete notesV[k]; store(KEYN,notesV);}
+  const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'field';
+  const byText=(a,b)=>a.localeCompare(b,undefined,{numeric:true});
+  const lists=document.createElement('div'); document.body.appendChild(lists);
+  const teamSel=document.getElementById('f-team'), teamL=document.getElementById('f-team-l'), sortSel=document.getElementById('sort');
+  const opt=(v,label)=>{const o=document.createElement('option'); o.value=v; if(label!==undefined)o.textContent=label; return o;};
+  // each field's suggestions are the values already typed on this report; the Team filter and Sort list follow the fields
+  function refreshLists(){
+    lists.innerHTML='';
+    fields.forEach(f=>{const dl=document.createElement('datalist'); dl.id='dl-'+f.id;
+      [...new Set(pts.map(r=>fieldVal(r,f.id).trim()).filter(Boolean))].sort(byText).forEach(v=>dl.appendChild(opt(v))); lists.appendChild(dl);});
+    const has=fields.some(f=>f.id==='team'), was=teamSel.value, teams=[...new Set(pts.map(r=>fieldVal(r,'team').trim()).filter(Boolean))].sort(byText);
+    teamL.style.display=has?'':'none';
+    teamSel.innerHTML=''; teamSel.appendChild(opt('','All')); teams.forEach(t=>teamSel.appendChild(opt(t,t))); if(teams.length)teamSel.appendChild(opt(NOTEAM,'No team'));
+    teamSel.value=has&&(teams.includes(was)||(was===NOTEAM&&teams.length))?was:'';
+    const sv=sortSel.value; [...sortSel.options].filter(o=>o.value.startsWith('uf:')).forEach(o=>o.remove());
+    fields.forEach(f=>sortSel.appendChild(opt('uf:'+f.id,f.name))); sortSel.value=[...sortSel.options].some(o=>o.value===sv)?sv:'location';
+  }
+  function buildFields(){
+    pts.forEach(r=>{const box=r.querySelector('.ufields'); if(!box)return; box.innerHTML='';
+      fields.forEach(f=>{const v=fieldVal(r,f.id), d=document.createElement('div'), b=document.createElement('b'), i=document.createElement('input'), s=document.createElement('span');
+        d.className='uf'+(v.trim()?'':' blank'); d.dataset.name=f.name+' field'; d.dataset.fid=f.id; b.textContent=f.name;
+        i.className='ufin'; i.value=v; i.autocomplete='off'; i.setAttribute('list','dl-'+f.id); i.setAttribute('aria-label',f.name);
+        s.className='ufv'; s.textContent=v; d.append(b,i,s); box.appendChild(d);});
+    });
+  }
+  const grow=t=>{t.style.height='auto'; t.style.height=t.scrollHeight+'px';};
+  pts.forEach(r=>{const t=r.querySelector('.notein'), n=notesV[nkey(r)]; if(!t)return; if(n){t.value=n.v; t.nextElementSibling.textContent=n.v;} grow(t);});
+  if(window.ResizeObserver){const ro=new ResizeObserver(es=>es.forEach(x=>{const t=x.target.querySelector('.notein'); if(t)grow(t);})); table.querySelectorAll('td.notes').forEach(td=>ro.observe(td));}
+  table.addEventListener('input',e=>{const t=e.target, r=t.closest('tbody.blk'); if(!r||!r.dataset.pid)return;
+    if(t.classList.contains('ufin')){const d=t.parentElement; setVal(r,d.dataset.fid,t.value); d.lastChild.textContent=t.value; d.classList.toggle('blank',!t.value.trim());}
+    else if(t.classList.contains('notein')){setNote(r,t.value); t.nextElementSibling.textContent=t.value; grow(t);}
+  });
+  table.addEventListener('change',e=>{if(e.target.classList.contains('ufin')){refreshLists(); apply();}});
+  // Enter (Shift+Enter) goes to the same field of the next (previous) patient shown, for assigning a team down the list
+  table.addEventListener('keydown',e=>{const t=e.target; if(e.key!=='Enter'||!t.classList.contains('ufin'))return; e.preventDefault();
+    const all=[...table.querySelectorAll('tbody.blk:not(.hide) .uf[data-fid="'+t.parentElement.dataset.fid+'"] .ufin')], n=all[all.indexOf(t)+(e.shiftKey?-1:1)];
+    if(n){n.focus(); n.select();} else t.blur();});
+  // the Fields menu: add a field by name, remove one (its values stay, and come back if a field of that name is added again)
+  const fmenu=document.getElementById('fieldmenu'), flist=document.getElementById('f-list'), fnew=document.getElementById('f-new');
+  function buildMenu(){
+    flist.innerHTML='';
+    fields.forEach((f,i)=>{const row=document.createElement('div'), s=document.createElement('span'), x=document.createElement('button');
+      row.className='frow'; s.textContent=f.name; x.type='button'; x.textContent='Remove';
+      x.addEventListener('click',()=>{const n=pts.filter(r=>fieldVal(r,f.id).trim()).length;
+        if(n&&!confirm('Remove the '+f.name+' field? What is typed in it ('+n+' patient'+(n>1?'s':'')+' here) is kept and comes back if you add '+f.name+' again.'))return;
+        fields.splice(i,1); saveFields();});
+      row.append(s,x); flist.appendChild(row);});
+    if(!fields.length){const p=document.createElement('div'); p.className='empty'; p.textContent='No fields'; flist.appendChild(p);}
+  }
+  function saveFields(){store(KEYF,fields); buildMenu(); buildFields(); refreshLists(); apply();}
+  function addField(){const name=fnew.value.trim().replace(/\\s+/g,' '), id=slug(name); if(!name)return;
+    if(fields.some(f=>f.id===id)){fnew.select(); return;} fields.push({id,name}); fnew.value=''; saveFields();}
+  document.getElementById('f-add').addEventListener('click',addField);
+  // erases the patient data (values and notes, every patient and day); the field list itself is kept
+  document.getElementById('f-forget').addEventListener('click',()=>{
+    if(!confirm('Erase every field value and typed note saved in this browser, for all patients and reports?'))return;
+    for(const k in vals)delete vals[k]; for(const k in notesV)delete notesV[k];
+    try{localStorage.removeItem(KEYV); localStorage.removeItem(KEYN);}catch(e){}
+    pts.forEach(r=>{const t=r.querySelector('.notein'); if(t){t.value=''; t.nextElementSibling.textContent=''; grow(t);}});
+    buildFields(); refreshLists(); apply();});
+  fnew.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault(); addField();}});
+  fmenu.addEventListener('toggle',()=>{if(!fmenu.open)return; const b=fmenu.querySelector('summary').getBoundingClientRect(), m=fmenu.querySelector('.menu');
+    m.style.top=Math.round(b.bottom+4)+'px'; m.style.left=Math.round(Math.max(8,Math.min(b.left,window.innerWidth-298)))+'px'; fnew.focus();});
+  document.addEventListener('click',e=>{if(fmenu.open&&!fmenu.contains(e.target))fmenu.open=false;});
+  buildMenu(); buildFields(); refreshLists();
   sortBy('location',1); apply();
   // column widths (drag a header boundary) and section visibility; both persist in localStorage
   // widths are kept per paper orientation; the orientation <select> starts at the default cores_report.py baked in
@@ -1061,6 +1166,7 @@ def render_row(r, report_date='', unit_color=None):
         'location': r['location'], 'unit': r['unit'], 'pname': r['patient_name'], 'sev': sev.lower(),
         'sevrank': SEV_RANK.get(sev.lower(), 9), 'los': r['los_days'] or 0, 'age': age or 0, 'o2': r.get('o2_delivery', ''),
         'tasks': len(r['tasks']), 'drips': len((r.get('meds') or {}).get('infusions', [])), 'text': row_text(r),
+        'pid': r['mrn'] or f'{r["patient_name"]}|{r["dob"]}',  # key for the values typed on the report (MRN; name+DOB if none)
     }
     attrs = ' '.join(f'data-{k}="{e(v)}"' for k, v in data.items())
     prn = render_prn_line(r)
@@ -1078,13 +1184,14 @@ def render_row(r, report_date='', unit_color=None):
  <td class="pt" data-name="Snapshot column"><div class="pthead">{chip}{name}</div>
    <div class="pid"><span data-name="MRN"><b>MRN</b> {e(r["mrn"])}</span><span data-name="Date of birth"><b>DOB</b> {e(r["dob"])} <span class="kv">(<span data-name="Age">{e(r["age"])}</span> <span data-name="Sex">{e(r["sex"])}</span>)</span></span></div>
    <span class="pid" data-name="Code status"><b>Code</b> {e(r["code_status"]) or "—"}</span>
+   <div class="ufields" data-name="Custom fields"></div>
    {('<div class="pttags">' + tags + '</div>') if tags else ''}{care}</td>
  <td data-name="Hospital Summary column">{admit}<div class="sec" data-name="Patient summary">{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<div class="sec"><h4>Notes</h4>' + notes + '</div>') if notes else ''}</td>
  <td data-name="Vitals column">{render_vitals(r)}{render_ventilation(r)}{duo}{render_tld(r)}</td>
  <td data-name="Meds column">{render_meds(r, ('infusions', 'antibiotics', 'scheduled', 'other'))}</td>
  <td data-name="Sit Awareness column"><div class="sec" data-name="Tasks"><h4>Tasks</h4>{('<ul class="tasks">' + tasks + '</ul>') if tasks else '<p class="empty">None</p>'}</div>
      <div class="sec" data-name="Situational Awareness"><h4>Situational Awareness</h4>{('<ul>' + plan + '</ul>') if plan else '<p class="empty">None</p>'}</div>{handoff}</td>
- <td class="notes" data-name="Notes column"></td>
+ <td class="notes" data-name="Notes column"><textarea class="notein" rows="3" placeholder="Type or handwrite" aria-label="Notes" data-name="Typed notes"></textarea><div class="notetxt"></div></td>
 </tr>
 {prn}
 </tbody>'''
@@ -1130,6 +1237,7 @@ def render(data, orientation='landscape', bw=False):
  <label>Unit <select id="f-unit"><option value="">All</option>{options(units)}</select></label>
  <label>Severity <select id="f-sev"><option value="">All</option>{''.join(f'<option value="{e(s.lower())}">{e(s)}</option>' for s in sevs)}</select></label>
  <label>O2 <select id="f-o2"><option value="">All</option>{options(o2s)}</select></label>
+ <label id="f-team-l">Team <select id="f-team"><option value="">All</option></select></label>
  <label><input type="checkbox" id="f-tasks"> Open tasks only</label>
  <label>Sort <select id="sort"><option value="location">Location</option><option value="pname">Name</option><option value="sevrank">Severity</option><option value="los">LOS</option><option value="age">Age</option><option value="tasks">Open tasks</option><option value="drips">Drips</option></select></label>
  <button id="reset" type="button">Reset</button>
@@ -1138,13 +1246,14 @@ def render(data, orientation='landscape', bw=False):
  <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
  <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
+ <details class="secmenu fieldmenu" id="fieldmenu"><summary title="Your own per-patient fields (Team, Dispo, …), typed on the report and kept in this browser">Fields &#9662;</summary><div class="menu" data-name="Fields menu"><div class="grp-t">Fields in the Snapshot</div><div id="f-list"></div><div class="menu-foot"><input id="f-new" placeholder="New field, e.g. Dispo" maxlength="40"> <button id="f-add" type="button">Add</button></div><div class="menu-foot"><button id="f-forget" type="button" title="Erase every field value and typed note this browser holds, for all patients and reports">Forget typed data</button></div></div></details>
  <details class="secmenu" id="secmenu"><summary title="Choose which sections are shown">Sections &#9662;</summary><div class="menu">{sections_menu()}<div class="menu-foot"><button id="sec-all" type="button">Show all</button></div></div></details>
  <label title="Hover to see an element's name, click to copy it"><input type="checkbox" id="inspect"> Inspect</label>
  <span class="optmsg" id="opt-msg"></span>
  <span class="count" id="count"></span>
 </div>
 <div id="insp-tip"></div><div id="insp-toast"></div>
-<table class="rpt" id="rpt" data-name="Report table">
+<table class="rpt" id="rpt" data-name="Report table" data-day="{e(h.get("report_date", "")[:8])}">
 <colgroup><col style="width:15%"><col style="width:14%"><col style="width:37%"><col style="width:14%"><col style="width:12%"><col style="width:8%"></colgroup>
 <thead data-name="Column headers"><tr>
  <th data-key="location" data-name="Snapshot header">Snapshot<span class="dir"></span></th>
