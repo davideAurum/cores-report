@@ -166,6 +166,9 @@ h1{font-size:17px;line-height:1.2;margin:0;font-weight:600}
 .secmenu .grp{margin-bottom:6px} .secmenu .grp-t{font-weight:700;color:var(--accent);margin-bottom:2px;border-bottom:2px solid var(--teal)}
 .secmenu label{display:block;color:var(--ink);white-space:nowrap;padding:1px 0} .secmenu label.sub{padding-left:14px;color:var(--mute)} .secmenu label input{margin:0 4px 0 0;vertical-align:-1px}
 .secmenu .menu-foot{grid-column:1/-1;border-top:1px solid var(--line);padding-top:6px} .secmenu .menu-foot button{padding:2px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit;cursor:pointer}
+/* saved views: a profile <select>, Save, and a small menu with the rest */
+.secmenu .pmenu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 4px 14px rgba(0,0,0,.18);padding:6px 8px;display:flex;flex-direction:column;gap:4px;width:220px}
+.secmenu .pmenu button{text-align:left} .secmenu .pmenu .note{color:var(--mute);border-top:1px solid var(--line);padding-top:4px;white-space:normal}
 table.rpt{width:100%;border-collapse:collapse;table-layout:fixed}
 .rpt > thead > tr > th,.rpt > tbody > tr > td{border:1px solid var(--line);padding:4px 6px;vertical-align:top;text-align:left;overflow:hidden}
 /* column headers: a UAB Green band (repeated on every printed page), white text, the sort arrow in a teal tint */
@@ -719,6 +722,52 @@ JS = """
   document.addEventListener('click',e=>{const m=document.getElementById('secmenu'); if(m.open&&!m.contains(e.target))m.open=false;});
   document.getElementById('secmenu').addEventListener('toggle',e=>{const m=e.target; if(m.open){const b=m.querySelector('summary').getBoundingClientRect(); m.querySelector('.menu').style.top=Math.round(b.bottom+4)+'px';}});
   render();
+  // saved views ("profiles", e.g. MICU, Consults): a profile is a copy of every display setting this page keeps in
+  // localStorage, i.e. every cores-report-* key except the per-patient values (cores-report-data-*) and the profiles
+  // themselves, so a setting added later is saved with it too. Applying one replaces all of those settings and reloads.
+  const KEYP='cores-report-profiles-v1', KEYPA='cores-report-profile-active-v1';
+  const isPref=k=>k.startsWith('cores-report-')&&!k.startsWith('cores-report-data-')&&!k.startsWith('cores-report-profile');
+  const profSel=document.getElementById('prof'), profMenu=document.getElementById('profmenu'), profFile=document.getElementById('prof-file');
+  const snap=()=>{const o={};try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(isPref(k))o[k]=localStorage.getItem(k);}}catch(e){}return o;};
+  const same=(a,b)=>{const ka=Object.keys(a),kb=Object.keys(b);return ka.length===kb.length&&ka.every(k=>a[k]===b[k]);};
+  let profs={}, active='';
+  try{const s=JSON.parse(localStorage.getItem(KEYP)||'null'); if(s&&typeof s==='object')profs=s; active=localStorage.getItem(KEYPA)||'';}catch(e){}
+  if(!profs[active])active='';
+  const saveP=()=>{try{localStorage.setItem(KEYP,JSON.stringify(profs));localStorage.setItem(KEYPA,active);return true;}catch(e){alert('Could not save profiles: '+e.message);return false;}};
+  function listP(){  // the active profile is marked when the view has been changed since it was saved or applied
+    const changed=active&&!same(profs[active],snap());
+    profSel.innerHTML='<option value="">(unsaved)</option>'+Object.keys(profs).sort((a,b)=>a.localeCompare(b)).map(n=>{
+      const o=document.createElement('option'); o.value=n; o.textContent=n+(n===active&&changed?' (changed)':''); return o.outerHTML;}).join('');
+    profSel.value=active;
+  }
+  listP(); setInterval(()=>{if(document.activeElement!==profSel)listP();},2000);  // widths, Optimize and the rest change settings without telling us
+  const askName=(msg,def)=>{const n=(prompt(msg,def||'')||'').trim(); if(!n)return ''; if(profs[n]&&n!==def&&!confirm('Replace the profile "'+n+'"?'))return ''; return n;};
+  function saveAs(){const n=askName('Name for this view (e.g. MICU, Consults):'); if(!n)return; profs[n]=snap(); active=n; saveP(); listP();}
+  function applyP(n){
+    try{Object.keys(snap()).forEach(k=>localStorage.removeItem(k)); for(const k in profs[n])if(isPref(k))localStorage.setItem(k,profs[n][k]); localStorage.setItem(KEYPA,n);}
+    catch(e){alert('Could not apply the profile: '+e.message);return;}
+    location.reload();
+  }
+  profSel.addEventListener('change',()=>{const n=profSel.value; if(n)return applyP(n); active=''; saveP(); listP();});
+  document.getElementById('prof-revert').addEventListener('click',()=>{profMenu.open=false; if(!active)return alert('Choose a profile first.'); applyP(active);});
+  document.getElementById('prof-save').addEventListener('click',()=>{if(!active)return saveAs(); profs[active]=snap(); saveP(); listP();});
+  document.getElementById('prof-saveas').addEventListener('click',()=>{profMenu.open=false; saveAs();});
+  document.getElementById('prof-rename').addEventListener('click',()=>{profMenu.open=false; if(!active)return alert('Choose a profile first.');
+    const n=askName('New name for "'+active+'":',active); if(!n||n===active)return; profs[n]=profs[active]; delete profs[active]; active=n; saveP(); listP();});
+  document.getElementById('prof-del').addEventListener('click',()=>{profMenu.open=false; if(!active)return alert('Choose a profile first.');
+    if(!confirm('Delete the profile "'+active+'"? The current view stays as it is.'))return; delete profs[active]; active=''; saveP(); listP();});
+  document.getElementById('prof-export').addEventListener('click',()=>{profMenu.open=false; if(!Object.keys(profs).length)return alert('No profiles saved yet.');
+    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify({'cores-report-profiles':1,profiles:profs},null,1)],{type:'application/json'}));
+    a.download='Cores Report profiles.json'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
+  document.getElementById('prof-import').addEventListener('click',()=>{profMenu.open=false; profFile.value=''; profFile.click();});
+  profFile.addEventListener('change',()=>{const f=profFile.files[0]; if(!f)return; f.text().then(txt=>{
+    const d=JSON.parse(txt), ps=d&&d['cores-report-profiles']&&d.profiles; if(!ps||typeof ps!=='object')throw new Error('not a Cores Report profiles file');
+    const got={}; for(const n in ps){const p=ps[n]; if(!n.trim()||!p||typeof p!=='object')continue; const c={}; for(const k in p)if(isPref(k)&&typeof p[k]==='string')c[k]=p[k]; got[n.trim()]=c;}
+    const names=Object.keys(got), clash=names.filter(n=>profs[n]); if(!names.length)throw new Error('it holds no profiles');
+    if(clash.length&&!confirm('Replace '+clash.length+' existing profile'+(clash.length>1?'s':'')+' ('+clash.join(', ')+')?'))return;
+    Object.assign(profs,got); saveP(); listP(); alert('Imported '+names.length+' profile'+(names.length>1?'s':'')+': '+names.join(', '));
+  }).catch(e=>alert('Could not import: '+e.message));});
+  document.addEventListener('click',e=>{if(profMenu.open&&!profMenu.contains(e.target))profMenu.open=false;});
   // `cores print`: a URL ending in #print opens the print dialog as soon as the page is ready; #print-close also
   // closes the window after printing (Edge/Chrome --kiosk-printing then sends it straight to the default printer)
   const h=(location.hash||'').replace(/^#/,''), qp=new URLSearchParams(location.search).get('print');  // not `q`: that is the search box above
@@ -1375,6 +1424,12 @@ def render(data, orientation='landscape', bw=False):
  <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
  <details class="secmenu fieldmenu" id="fieldmenu"><summary title="Your own per-patient fields (Team, Dispo, …), typed on the report and kept in this browser">Fields &#9662;</summary><div class="menu" data-name="Fields menu"><div class="grp-t">Fields in the Snapshot</div><div id="f-list"></div><div class="menu-foot"><input id="f-new" placeholder="New field, e.g. Dispo" maxlength="40"> <button id="f-add" type="button">Add</button></div><div class="menu-foot"><button id="f-forget" type="button" title="Erase every field value and typed note this browser holds, for all patients and reports">Forget typed data</button></div></div></details>
+ <label title="A saved view: column widths, paper, B&amp;W, sections and the other display settings, restored in one click">View <select id="prof"><option value="">(unsaved)</option></select></label>
+ <button id="prof-save" type="button" title="Save the current view into the selected profile">Save</button>
+ <details class="secmenu" id="profmenu"><summary title="More profile actions">&#8943;</summary><div class="pmenu">
+  <button id="prof-saveas" type="button">Save as new profile…</button><button id="prof-revert" type="button">Undo changes since saved</button><button id="prof-rename" type="button">Rename…</button><button id="prof-del" type="button">Delete profile</button>
+  <button id="prof-export" type="button">Export profiles to a file…</button><button id="prof-import" type="button">Import profiles from a file…</button><input type="file" id="prof-file" accept=".json,application/json" hidden>
+  <div class="note">Profiles are kept in this browser only. Export them to carry them to another computer or browser.</div></div></details>
  <details class="secmenu" id="secmenu"><summary title="Choose which sections are shown">Sections &#9662;</summary><div class="menu">{sections_menu()}<div class="menu-foot"><button id="sec-all" type="button">Show all</button></div></div></details>
  <label title="Hover to see an element's name, click to copy it"><input type="checkbox" id="inspect"> Inspect</label>
  <span class="optmsg" id="opt-msg"></span>
