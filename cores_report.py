@@ -427,6 +427,13 @@ JS = """
   function addField(){const name=fnew.value.trim().replace(/\\s+/g,' '), id=slug(name); if(!name)return;
     if(fields.some(f=>f.id===id)){fnew.select(); return;} fields.push({id,name}); fnew.value=''; saveFields();}
   document.getElementById('f-add').addEventListener('click',addField);
+  // erases the patient data (values and notes, every patient and day); the field list itself is kept
+  document.getElementById('f-forget').addEventListener('click',()=>{
+    if(!confirm('Erase every field value and typed note saved in this browser, for all patients and reports?'))return;
+    for(const k in vals)delete vals[k]; for(const k in notesV)delete notesV[k];
+    try{localStorage.removeItem(KEYV); localStorage.removeItem(KEYN);}catch(e){}
+    pts.forEach(r=>{const t=r.querySelector('.notein'); if(t){t.value=''; t.nextElementSibling.textContent=''; grow(t);}});
+    buildFields(); refreshLists(); apply();});
   fnew.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault(); addField();}});
   fmenu.addEventListener('toggle',()=>{if(!fmenu.open)return; const b=fmenu.querySelector('summary').getBoundingClientRect(), m=fmenu.querySelector('.menu');
     m.style.top=Math.round(b.bottom+4)+'px'; m.style.left=Math.round(Math.max(8,Math.min(b.left,window.innerWidth-298)))+'px'; fnew.focus();});
@@ -1239,7 +1246,7 @@ def render(data, orientation='landscape', bw=False):
  <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
  <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
- <details class="secmenu fieldmenu" id="fieldmenu"><summary title="Your own per-patient fields (Team, Dispo, …), typed on the report and kept in this browser">Fields &#9662;</summary><div class="menu" data-name="Fields menu"><div class="grp-t">Fields in the Snapshot</div><div id="f-list"></div><div class="menu-foot"><input id="f-new" placeholder="New field, e.g. Dispo" maxlength="40"> <button id="f-add" type="button">Add</button></div></div></details>
+ <details class="secmenu fieldmenu" id="fieldmenu"><summary title="Your own per-patient fields (Team, Dispo, …), typed on the report and kept in this browser">Fields &#9662;</summary><div class="menu" data-name="Fields menu"><div class="grp-t">Fields in the Snapshot</div><div id="f-list"></div><div class="menu-foot"><input id="f-new" placeholder="New field, e.g. Dispo" maxlength="40"> <button id="f-add" type="button">Add</button></div><div class="menu-foot"><button id="f-forget" type="button" title="Erase every field value and typed note this browser holds, for all patients and reports">Forget typed data</button></div></div></details>
  <details class="secmenu" id="secmenu"><summary title="Choose which sections are shown">Sections &#9662;</summary><div class="menu">{sections_menu()}<div class="menu-foot"><button id="sec-all" type="button">Show all</button></div></div></details>
  <label title="Hover to see an element's name, click to copy it"><input type="checkbox" id="inspect"> Inspect</label>
  <span class="optmsg" id="opt-msg"></span>

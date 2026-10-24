@@ -160,7 +160,7 @@ README, Printing), Paper, Optimize widths, Reset columns, **Sections**
 entries are parts of the entry above them — Admission, Allergy / Diet block, Vitals, Ventilation, Volume, Trends, Labs —
 and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
 column widths are remembered by the browser), **Fields** (the Fields menu: add a per-patient field by name — Dispo,
-Code status override, … — or remove one; Team is there to start with), a **Team** filter (the teams typed on this
+Code status override, … — or remove one; Team is there to start with; Forget typed data erases every value and note this browser holds), a **Team** filter (the teams typed on this
 report, and No team; hidden when Team is removed), Inspect. Sort also lists every field; patients with nothing typed sort
 last.
 
