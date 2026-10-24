@@ -1221,6 +1221,11 @@ def sections_menu():
     return out
 
 
+def script_json(v):
+    """JSON safe to put inside <script>: a unit named '</script>…' cannot end the script early."""
+    return json.dumps(v).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+
+
 def options(values):
     return ''.join(f'<option value="{e(v)}">{e(v)}</option>' for v in values)
 
@@ -1285,7 +1290,7 @@ def render(data, orientation='landscape', bw=False):
 </table>
 <div class="foot">Generated from {e(data.get("source", ""))} · {len(recs)} patients</div>
 </div>
-<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', json.dumps(colors))}</script>
+<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors))}</script>
 </body></html>'''
 
 
