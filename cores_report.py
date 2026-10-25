@@ -155,6 +155,7 @@ h1{font-size:17px;line-height:1.2;margin:0;font-weight:600}
 .toolbar{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;background:var(--teal-10);border:1px solid var(--teal-30);border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:10.5px}
 .toolbar label{display:flex;align-items:center;gap:4px;color:var(--mute)}
 .toolbar input[type=search]{width:220px;padding:3px 6px;border:1px solid var(--line);border-radius:3px;font:inherit}
+.toolbar input[type=number]{width:46px;padding:2px 4px;border:1px solid var(--line);border-radius:3px;font:inherit}
 .toolbar select{padding:2px 4px;border:1px solid var(--line);border-radius:3px;font:inherit;background:#fff}
 .toolbar button{padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink);font:inherit;cursor:pointer} .toolbar button:hover{border-color:var(--uab-green)}
 .toolbar #print{background:var(--uab-green);color:#fff;border-color:var(--uab-green);font-weight:600} .toolbar #print:hover{background:var(--lair)}
@@ -408,14 +409,20 @@ JS = """
   // as its tallest cell, blocks never split across pages and the column headers repeat on every page, so the page
   // count of any split of the width follows from those tables. A local search (moving width between pairs of
   // columns, from the current widths and from 40 random splits) then looks for the split with the fewest pages and,
-  // among those, the least total height. The Notes column keeps its width (it is for handwriting); hidden columns and
-  // filtered-out patients are left out. The result is laid out once more to check it, and kept only if it is better.
+  // among those, the least total height. The Notes column (empty, for handwriting) takes part with its own minimum
+  // (the toolbar's Notes box) and afterwards takes every step the other columns can give up without adding a page or
+  // cutting anything off. The random starts differ on every run. Hidden columns and filtered-out patients are left out.
+  // The result is laid out once more to check it, and kept only if it is better.
   const PAGE={landscape:[998.4,758.4],portrait:[758.4,998.4]};  // letter less the .3in margins, in CSS px (96 per inch)
-  const STEP=5, KMIN=8, optBtn=document.getElementById('optimize');
+  const STEP=5, KMIN=8, optBtn=document.getElementById('optimize'), notesMin=document.getElementById('notes-min'), KEYN='cores-report-notes-min-v1';
+  try{const s=localStorage.getItem(KEYN); if(s!==null&&s!==''&&isFinite(+s))notesMin.value=s;}catch(e){}
+  notesMin.addEventListener('change',()=>{try{localStorage.setItem(KEYN,notesMin.value);}catch(e){}});
   const tick=()=>new Promise(r=>setTimeout(r,0));
   async function optimize(){
     const [W,PH]=PAGE[orient], eff=effHidden(), n=cols.length, notes=COLNAME.indexOf('Notes column');
-    const vis=COLNAME.map(c=>!eff.has(c)), idx=[...Array(n).keys()].filter(i=>vis[i]&&i!==notes);
+    const vis=COLNAME.map(c=>!eff.has(c)), idx=[...Array(n).keys()].filter(i=>vis[i]), ni=idx.indexOf(notes);
+    // narrowest each may get, in steps: Notes its minimum (inches on paper, 96 px each), the rest KMIN
+    const mins=idx.map(i=>i===notes?Math.max(KMIN,Math.ceil((parseFloat(notesMin.value)||0)*96/STEP)):KMIN), minSum=mins.reduce((a,b)=>a+b,0);
     const fixedCols=[...Array(n).keys()].filter(i=>vis[i]&&!idx.includes(i));
     if(!idx.length){optMsg.textContent='No columns to optimize';return;}
     const pct=base.map((b,i)=>vis[i]?parseFloat(b)||0:0), pctSum=pct.reduce((a,b)=>a+b,0)||1, curPx=pct.map(x=>x/pctSum*W);
@@ -437,7 +444,7 @@ JS = """
       }
       // each column gets 1 px beyond its measured width, so that rounding when printing never tips a line into wrapping
       const avail=W-fixedCols.reduce((s,i)=>s+curPx[i],0), U=Math.floor((avail-idx.length)/STEP);
-      if(idx.length*KMIN>U){optMsg.textContent='The Notes column leaves no room; narrow it first';return;}
+      if(minSum>U){optMsg.textContent='The Notes minimum leaves no room; lower it';return;}
       // how much is cut off at the right edge at these widths, summed over cells (a cell that clips even at the widest
       // is not counted: it always does); squeezing one column hard costs more than trimming several a little
       const clipped=g=>{let c=0;for(let a=0;a<idx.length;a++)for(let p=0;p<P;p++)if(fitK[a][p]>g[a])c+=fitK[a][p]-g[a];return c;};
@@ -453,9 +460,9 @@ JS = """
       const heights=g=>blk.map((b,p)=>{let m=fixedH[p];for(let a=0;a<idx.length;a++){const v=H[a][p][Math.min(g[a],KMAX)];if(v>m)m=v;}return m+extra[p];});
       // least cut off first, then fewest pages, then least total height
       const cost=g=>{const hs=heights(g);return clipped(g)*1e9+pages(hs)*1e7+hs.reduce((a,b)=>a+b,0);};
-      const fix=g=>{  // bring a split to exactly U steps, none narrower than KMIN
+      const fix=g=>{  // bring a split to exactly U steps, none narrower than its minimum
         let d=U-g.reduce((a,b)=>a+b,0);
-        for(let a=0;d!==0;a=(a+1)%g.length){if(d>0){g[a]++;d--;}else if(g[a]>KMIN){g[a]--;d++;}}
+        for(let a=0;d!==0;a=(a+1)%g.length){if(d>0){g[a]++;d--;}else if(g[a]>mins[a]){g[a]--;d++;}}
         return g;
       };
       const search=g=>{
@@ -463,7 +470,7 @@ JS = """
         for(let better=true;better;){
           better=false; let bestC=c,best=null;
           for(let a=0;a<g.length;a++)for(let b=0;b<g.length;b++)if(a!==b)for(const k of [1,2,4,8,16,32]){
-            if(g[a]-k<KMIN)break;
+            if(g[a]-k<mins[a])break;
             g[a]-=k;g[b]+=k; const v=cost(g); if(v<bestC-1e-6){bestC=v;best=[a,b,k];} g[a]+=k;g[b]-=k;
           }
           if(best){g[best[0]]-=best[2];g[best[1]]+=best[2];c=bestC;better=true;}
@@ -471,25 +478,33 @@ JS = """
         return [c,g];
       };
       optMsg.textContent='Searching…'; await tick();
-      let [bestC,bestG]=search(fix(idx.map(i=>Math.max(KMIN,Math.floor(curPx[i]/STEP))))), seed=12345;
-      const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647, free=U-idx.length*KMIN;
+      let [bestC,bestG]=search(fix(idx.map((i,a)=>Math.max(mins[a],Math.floor(curPx[i]/STEP))))), seed=1+Math.floor(Math.random()*2147483646);
+      const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647, free=U-minSum;
       for(let s=0;s<40;s++){
         const w=idx.map(()=>-Math.log(rnd()+1e-9)), ws=w.reduce((a,b)=>a+b,0);
-        const [c,g]=search(fix(w.map(x=>KMIN+Math.floor(free*x/ws))));
+        const [c,g]=search(fix(w.map((x,a)=>mins[a]+Math.floor(free*x/ws))));
         if(c<bestC){bestC=c;bestG=g;}
       }
+      // Notes takes whatever the others can spare: a step at a time from each, while pages and clipping stay the same
+      if(ni>=0){
+        const keep=Math.floor(cost(bestG)/1e7);  // cut-off and page terms only
+        for(let moved=true;moved;){moved=false;
+          for(let a=0;a<bestG.length;a++)if(a!==ni&&bestG[a]>mins[a]){bestG[a]--;bestG[ni]++; if(Math.floor(cost(bestG)/1e7)===keep)moved=true; else{bestG[a]++;bestG[ni]--;}}}
+      }
       const px=curPx.slice(); idx.forEach((i,a)=>px[i]=bestG[a]*STEP+1);
-      const big=idx.reduce((m,i)=>px[i]>px[m]?i:m,idx[0]); px[big]+=avail-idx.reduce((s,i)=>s+px[i],0);
+      const big=ni>=0?notes:idx.reduce((m,i)=>px[i]>px[m]?i:m,idx[0]); px[big]+=avail-idx.reduce((s,i)=>s+px[i],0);  // the last few px
       // check against a real layout of the new widths
       const before=pages(nowH), totBefore=nowH.reduce((a,b)=>a+b,0);
       setW(px); const newH=blk.map(b=>b.getBoundingClientRect().height), after=pages(newH), totAfter=newH.reduce((a,b)=>a+b,0), clipsAfter=realClips();
       const cutBefore=clipped(idx.map(i=>curPx[i]/STEP)), cutAfter=clipped(bestG);
       const pl=x=>'~'+x+' page'+(x>1?'s':''), cl=x=>x?'; '+x+' cell'+(x>1?'s':'')+' still cut off at the right edge (hide a section to make room)':'';
-      if(!(cutAfter<cutBefore-0.5||(cutAfter<cutBefore+0.5&&(after<before||(after===before&&totAfter<totBefore*0.995))))){optMsg.textContent='Already as tight as it gets: '+pl(before)+' '+orient+cl(clipsBefore);return;}
+      const wider=ni>=0&&px[notes]>curPx[notes]+STEP, inch=x=>(x/96).toFixed(2).replace(/0$/,'')+' in';  // same pages, more room to write
+      const under=ni>=0&&curPx[notes]<mins[ni]*STEP-1;  // the current Notes is below the minimum: the new widths are taken regardless
+      if(!under&&!(cutAfter<cutBefore-0.5||(cutAfter<cutBefore+0.5&&(after<before||(after===before&&(totAfter<totBefore*0.995||wider)))))){optMsg.textContent='Already as tight as it gets: '+pl(before)+' '+orient+cl(clipsBefore);return;}
       cols.forEach((c,i)=>{if(vis[i])base[i]=(px[i]/W*100).toFixed(3)+'%';});
       render(); saveW();
       optMsg.textContent='Optimized for '+orient+': '+pl(before)+' \\u2192 '+pl(after)+', '+Math.abs(Math.round(100*(1-totAfter/totBefore)))+(totAfter<=totBefore?'% shorter':'% taller')
-        +(clipsBefore>clipsAfter?', '+(clipsBefore-clipsAfter)+' fewer cells cut off':'')+cl(clipsAfter);
+        +(clipsBefore>clipsAfter?', '+(clipsBefore-clipsAfter)+' fewer cells cut off':'')+(ni>=0?', Notes '+inch(curPx[notes])+' \\u2192 '+inch(px[notes]):'')+cl(clipsAfter);
     }finally{box.remove();}
   }
   optBtn.addEventListener('click',async()=>{optBtn.disabled=true;try{await optimize();}catch(err){optMsg.textContent='Optimize failed: '+err.message;}finally{optBtn.disabled=false;}});
@@ -1186,6 +1201,7 @@ def render(data, orientation='landscape', bw=False):
  <label title="Black and white, for a black-and-white printer: grays, hatching, bold and underlining in place of color"><input type="checkbox" id="bw"> B&amp;W</label>
  <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
  <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
+ <label title="The narrowest Optimize widths may make the Notes column (for handwriting), in inches on paper; any width the other columns do not need goes to Notes">Notes &ge; <input type="number" id="notes-min" min="0" max="6" step="0.1" value="0.75"> in</label>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
  <label title="A saved view: column widths, paper, B&amp;W, sections and the other display settings, restored in one click">View <select id="prof"><option value="">(unsaved)</option></select></label>
  <button id="prof-save" type="button" title="Save the current view into the selected profile">Save</button>
