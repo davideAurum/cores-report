@@ -637,9 +637,9 @@ JS = """
   // cutting anything off. The random starts differ on every run. Hidden columns and filtered-out patients are left out.
   // The result is laid out once more to check it, and kept only if it is better.
   const PAGE={landscape:[998.4,758.4],portrait:[758.4,998.4]};  // letter less the .3in margins, in CSS px (96 per inch)
-  const STEP=5, KMIN=8, optBtn=document.getElementById('optimize'), notesMin=document.getElementById('notes-min'), KEYN='cores-report-notes-min-v1';
-  try{const s=localStorage.getItem(KEYN); if(s!==null&&s!==''&&isFinite(+s))notesMin.value=s;}catch(e){}
-  notesMin.addEventListener('change',()=>{try{localStorage.setItem(KEYN,notesMin.value);}catch(e){}});
+  const STEP=5, KMIN=8, optBtn=document.getElementById('optimize'), notesMin=document.getElementById('notes-min'), KEYNM='cores-report-notes-min-v1';
+  try{const s=localStorage.getItem(KEYNM); if(s!==null&&s!==''&&isFinite(+s))notesMin.value=s;}catch(e){}
+  notesMin.addEventListener('change',()=>{try{localStorage.setItem(KEYNM,notesMin.value);}catch(e){}});
   const tick=()=>new Promise(r=>setTimeout(r,0));
   async function optimize(){
     const [W,PH]=PAGE[orient], eff=effHidden(), n=cols.length, notes=COLNAME.indexOf('Notes column');
