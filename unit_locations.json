@@ -1,0 +1,17 @@
+{
+  "_about": [
+    "Where each CORES unit is, shown in the Daily Report's Snapshot as 'Loc ...', in the Location block's tooltip, in the Unit filter and as Breakdown > By location.",
+    "Key = the unit exactly as CORES prints it (case does not matter). location = free text, kept short because it prints on every patient, e.g. 'North Pavilion 7'.",
+    "verified = false prints the location with a '?' after it; set it to true once you have confirmed it. A unit with an empty location shows nothing.",
+    "cores generate names any unit on the report that has no location here yet. Unit names are not PHI; never put patient details in this file."
+  ],
+  "units": {
+    "MICU": {"location": "", "verified": false},
+    "MCCU": {"location": "", "verified": false},
+    "CCU":  {"location": "", "verified": false},
+    "ICVU": {"location": "", "verified": false},
+    "NICU": {"location": "", "verified": false},
+    "BMT":  {"location": "", "verified": false},
+    "UED":  {"location": "North Pavilion 1", "verified": false, "source": "Wikipedia's UAB Hospital article puts the Emergency Department on the North Pavilion's first floor; not confirmed on a UAB page"}
+  }
+}
