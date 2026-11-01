@@ -6,11 +6,11 @@
     "cores generate names any unit on the report that has no location here yet. Unit names are not PHI; never put patient details in this file."
   ],
   "units": {
-    "MICU": {"location": "", "verified": false},
-    "MCCU": {"location": "", "verified": false},
-    "CCU":  {"location": "", "verified": false},
-    "ICVU": {"location": "", "verified": false},
-    "NICU": {"location": "", "verified": false},
+    "MICU": {"location": "West Pavilion 6", "verified": true},
+    "MCCU": {"location": "West Pavilion 3", "verified": true},
+    "CCU":  {"location": "West Pavilion 6", "verified": true},
+    "ICVU": {"location": "Spain Wallace 7", "verified": true},
+    "NICU": {"location": "North Pavilion 8", "verified": true},
     "BMT":  {"location": "", "verified": false},
     "UED":  {"location": "North Pavilion 1", "verified": false, "source": "Wikipedia's UAB Hospital article puts the Emergency Department on the North Pavilion's first floor; not confirmed on a UAB page"}
   }
