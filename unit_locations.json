@@ -12,6 +12,6 @@
     "ICVU": {"location": "Spain Wallace 7", "verified": true},
     "NICU": {"location": "North Pavilion 8", "verified": true},
     "BMT":  {"location": "Women & Infants 8", "verified": true},
-    "UED":  {"location": "North Pavilion 1", "verified": false, "source": "Wikipedia's UAB Hospital article puts the Emergency Department on the North Pavilion's first floor; not confirmed on a UAB page"}
+    "UED":  {"location": "North Pavilion 1", "verified": true}
   }
 }
