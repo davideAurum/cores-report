@@ -1,14 +1,15 @@
 """Render parsed CORES data (from cores_parse.py) as a filterable, sortable, printable HTML table.
 
 Usage:
-  python cores_report.py "CORES report 281 2026-09-16 0715.html" [out.html] [--portrait] [--bw]   # parse + render in one step
-  python cores_report.py data.json [out.html] [--portrait] [--bw]                                   # render from saved JSON
---portrait starts the report on portrait paper, --bw in black and white (both can be changed in its toolbar).
+  python cores_report.py "CORES report 281 2026-09-16 0715.html" [out.html] [--letter|--legal] [--portrait] [--bw]   # parse + render
+  python cores_report.py data.json [out.html] [--letter|--legal] [--portrait] [--bw]                                   # from saved JSON
+--letter / --legal start the report on that paper (legal unless told), --portrait in portrait, --bw in black and white
+(all can be changed in its toolbar). Units listed in unit_locations.json get their location in the Snapshot.
 
 Each patient is a two-row block: Snapshot | Hospital Summary | Vitals · Vent · Volume · Labs · Lines | Meds | Tasks / Sit Awareness | Notes (typed, else blank for
 handwriting), then a full-width PRN row.
 Click a column header to sort; use the toolbar to filter. Hidden patients are not printed. Designed for ~1000 px
-(letter landscape) and up. The toolbar's Paper switch prints portrait instead; Optimize widths picks the column widths
+(letter landscape) and up. The toolbar's Paper switches pick letter or legal, landscape or portrait; Optimize widths picks the column widths
 that fit the shown patients on the fewest pages.
 The "Inspect" toggle shows the glossary name of any element on hover (names per REPORT_GLOSSARY.md).
 Opening the result with #print on the end of its URL brings up the print dialog at once (cores.py uses this).
@@ -17,6 +18,7 @@ import datetime
 import hashlib
 import html
 import json
+import os
 import re
 import sys
 import zlib
@@ -25,12 +27,51 @@ import zlib
 # cores.py re-renders a report made by any other version, or for other paper or B&W than its "orientation" and
 # "black_and_white" settings, before it opens, prints or PDFs it, so an old report gets what was added since (the Paper
 # switch, say) and a changed setting applies to it too.
-with open(__file__, 'rb') as _fh:
-    RENDERER = hashlib.sha1(_fh.read().replace(b'\r\n', b'\n')).hexdigest()[:12]
+# The unit locations file is part of the version too, so a report re-renders when a location is added or corrected.
+UNIT_LOCATIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'unit_locations.json')
 
 
-def renderer_meta(orient, bw=False):
-    return f'<meta name="cores-renderer" content="{RENDERER} {orient}{" bw" if bw else ""}">'
+def _read(path):
+    try:
+        with open(path, 'rb') as fh:
+            return fh.read().replace(b'\r\n', b'\n')
+    except OSError:
+        return b''
+
+
+RENDERER = hashlib.sha1(_read(__file__) + _read(UNIT_LOCATIONS_FILE)).hexdigest()[:12]
+
+# Paper a Daily Report prints on: (width, height) in inches, portrait. Each has its own saved column widths.
+PAPERS = {'letter': (8.5, 11), 'legal': (8.5, 14)}
+DEFAULT_PAPER = 'legal'
+
+
+def renderer_meta(orient, bw=False, paper=DEFAULT_PAPER):
+    return f'<meta name="cores-renderer" content="{RENDERER} {paper} {orient}{" bw" if bw else ""}">'
+
+
+def load_unit_locations(path=UNIT_LOCATIONS_FILE):
+    """{UNIT: (location, verified)} from unit_locations.json, unit names upper-cased; entries with no location are left
+    out. A missing file means no locations; a broken one raises ValueError naming the file."""
+    raw = _read(path)
+    if not raw:
+        return {}
+    try:
+        units = json.loads(raw.decode('utf-8-sig')).get('units', {})
+    except (ValueError, AttributeError) as ex:
+        raise ValueError(f'{os.path.basename(path)} is not valid: {ex}')
+    out = {}
+    for unit, v in units.items():
+        loc, ok = (v.get('location', ''), v.get('verified', False)) if isinstance(v, dict) else (v, True)
+        if str(loc or '').strip():
+            out[unit.strip().upper()] = (str(loc).strip(), bool(ok))
+    return out
+
+
+def unit_location(locs, unit):
+    """The location text for a unit, with ' ?' after one not yet confirmed; '' when unknown."""
+    loc, ok = locs.get((unit or '').strip().upper(), ('', True))
+    return loc + ('' if ok or not loc else ' ?')
 
 
 # Lab panels in fishbone order; each renders as analyte header row, current row, prior row.
@@ -103,7 +144,7 @@ def unit_colors(units):
 # entries ending in ' column' hide a whole column (header, cells and width).
 SECTIONS = [
     ('Snapshot', ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                  'Custom fields', 'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
+                  'Unit location', 'Custom fields', 'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
     ('Hospital Summary', ['Admission', 'Admit diagnosis', 'Admit date', 'Length of stay', 'Patient summary', 'Status lines']),
     ('Vitals', ['Vitals', 'O2 delivery', 'Ventilation', 'Vent settings', 'Vent measurements', 'Blood gas',
                 'Volume', 'Volume chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
@@ -124,7 +165,7 @@ COLPARTS = {
     'Trends': ['Glucose trend', 'Lactic acid trend'],
     'Labs': ['CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs', 'Trends'],
     'Snapshot column': ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                        'Custom fields', 'Allergy / Diet block'],
+                        'Unit location', 'Custom fields', 'Allergy / Diet block'],
     'Hospital Summary column': ['Admission', 'Patient summary', 'Status lines'],
     'Vitals column': ['Vitals', 'Ventilation', 'Volume', 'Labs', 'Tubes / Lines / Drains'],
     'Meds column': ['Infusions', 'Antibiotics', 'Scheduled'],
@@ -540,6 +581,7 @@ JS = """
   const teamOf=r=>isBlank(r)?'':fieldVal(r,'team').trim();  // the Team field typed on the report
   const GROUPS={
     unit:{label:'unit',of:r=>r.dataset.unit||'',none:'No unit',color:v=>UNITC[v]||''},
+    loc:{label:'location',of:r=>r.dataset.uloc||'',none:'No location',color:()=>'',avail:()=>rows.some(r=>!isBlank(r)&&r.dataset.uloc)},
     team:{label:'team',of:teamOf,none:'No team',color:()=>'',avail:()=>rows.some(r=>!isBlank(r)&&teamOf(r))},
   };
   let brkBy='';
@@ -563,10 +605,14 @@ JS = """
   document.addEventListener('cores-rows-changed',apply);  // for other page code that changes what a block holds
   sortBy('location',1); apply();
   // column widths (drag a header boundary) and section visibility; both persist in localStorage
-  // widths are kept per paper orientation; the orientation <select> starts at the default cores_report.py baked in
+  // widths are kept per paper size and orientation; the paper and orientation <select>s start at the defaults
+  // cores_report.py baked in. Letter keeps the keys it had before legal paper was added, so its saved widths stay.
   const cols=[...table.querySelectorAll('colgroup col')], ths=[...table.querySelectorAll('thead th')];
-  const defaults=cols.map(c=>c.style.width), KEYS='cores-report-hidden-v1', KEYO='cores-report-orient-v1';
-  const keyW=o=>o==='portrait'?'cores-report-cols-portrait-v1':'cores-report-cols-v1';
+  const defaults=cols.map(c=>c.style.width), KEYS='cores-report-hidden-v1', KEYO='cores-report-orient-v1', KEYPS='cores-report-paper-v1';
+  const PAPERS=__PAPERS__, paperSel=document.getElementById('paper');
+  let paper=paperSel.value;
+  try{const s=localStorage.getItem(KEYPS); if(s&&PAPERS[s])paper=s;}catch(e){}
+  const keyW=o=>paper==='letter'?(o==='portrait'?'cores-report-cols-portrait-v1':'cores-report-cols-v1'):'cores-report-cols-'+paper+'-'+o+'-v1';
   const COLNAME=ths.map(th=>th.dataset.name.replace(' header',' column'));
   const orientSel=document.getElementById('orient'), pageSz=document.getElementById('pagesz'), optMsg=document.getElementById('opt-msg');
   let orient=orientSel.value, hidden=new Set();
@@ -606,7 +652,7 @@ JS = """
     document.querySelectorAll('.rpt .sec').forEach(s=>{let p=s.previousElementSibling; while(p&&!(p.classList.contains('sec')&&shown(p)))p=p.previousElementSibling; s.classList.toggle('lead',!p);});
     document.querySelectorAll('.rpt .vitl,.rpt .pt .pid').forEach(c=>{const it=[...c.children].filter(x=>x.matches('.vi,[data-name="MRN"],[data-name="Date of birth"]')&&shown(x)); it.forEach((x,i)=>x.classList.toggle('endvis',i===it.length-1));});
     document.querySelectorAll('[data-sec]').forEach(cb=>{cb.checked=!hidden.has(cb.dataset.sec);});
-    pageSz.textContent='@page{size:letter '+orient+';margin:.3in}'; orientSel.value=orient;
+    pageSz.textContent='@page{size:'+paper+' '+orient+';margin:.3in}'; orientSel.value=orient; paperSel.value=paper;
   }
   function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify({d:defaults.join(),w:base}));}catch(e){}}
   function saveS(){try{localStorage.setItem(KEYS,JSON.stringify([...hidden]));}catch(e){}}
@@ -626,6 +672,7 @@ JS = """
   });
   document.getElementById('cols').addEventListener('click',()=>{base=defaults.slice();optMsg.textContent='';render();try{localStorage.removeItem(keyW(orient));}catch(e){}});
   orientSel.addEventListener('change',()=>{orient=orientSel.value;base=loadW(orient);optMsg.textContent='';render();try{localStorage.setItem(KEYO,orient);}catch(e){}});
+  paperSel.addEventListener('change',()=>{paper=paperSel.value;base=loadW(orient);optMsg.textContent='';render();try{localStorage.setItem(KEYPS,paper);}catch(e){}});
   // Optimize widths. An off-screen copy of the table, laid out as it prints (page width, print font and padding), is
   // measured with every column at every width from 40 px up in 5 px steps: that gives each patient's cell height as a
   // function of its column's width, and the narrowest width at which nothing is clipped. A patient block is as tall
@@ -636,13 +683,14 @@ JS = """
   // (the toolbar's Notes box) and afterwards takes every step the other columns can give up without adding a page or
   // cutting anything off. The random starts differ on every run. Hidden columns and filtered-out patients are left out.
   // The result is laid out once more to check it, and kept only if it is better.
-  const PAGE={landscape:[998.4,758.4],portrait:[758.4,998.4]};  // letter less the .3in margins, in CSS px (96 per inch)
+  // the printable area: the paper less the .3in margins, in CSS px (96 per inch), [width, height] for the orientation
+  const page=()=>{const [w,h]=PAPERS[paper].map(x=>(x-.6)*96); return orient==='portrait'?[w,h]:[h,w];};
   const STEP=5, KMIN=8, optBtn=document.getElementById('optimize'), notesMin=document.getElementById('notes-min'), KEYNM='cores-report-notes-min-v1';
   try{const s=localStorage.getItem(KEYNM); if(s!==null&&s!==''&&isFinite(+s))notesMin.value=s;}catch(e){}
   notesMin.addEventListener('change',()=>{try{localStorage.setItem(KEYNM,notesMin.value);}catch(e){}});
   const tick=()=>new Promise(r=>setTimeout(r,0));
   async function optimize(){
-    const [W,PH]=PAGE[orient], eff=effHidden(), n=cols.length, notes=COLNAME.indexOf('Notes column');
+    const [W,PH]=page(), eff=effHidden(), n=cols.length, notes=COLNAME.indexOf('Notes column');
     const vis=COLNAME.map(c=>!eff.has(c)), idx=[...Array(n).keys()].filter(i=>vis[i]), ni=idx.indexOf(notes);
     // narrowest each may get, in steps: Notes its minimum (inches on paper, 96 px each), the rest KMIN
     const mins=idx.map(i=>i===notes?Math.max(KMIN,Math.ceil((parseFloat(notesMin.value)||0)*96/STEP)):KMIN), minSum=mins.reduce((a,b)=>a+b,0);
@@ -724,10 +772,10 @@ JS = """
       const pl=x=>'~'+x+' page'+(x>1?'s':''), cl=x=>x?'; '+x+' cell'+(x>1?'s':'')+' still cut off at the right edge (hide a section to make room)':'';
       const wider=ni>=0&&px[notes]>curPx[notes]+STEP, inch=x=>(x/96).toFixed(2).replace(/0$/,'')+' in';  // same pages, more room to write
       const under=ni>=0&&curPx[notes]<mins[ni]*STEP-1;  // the current Notes is below the minimum: the new widths are taken regardless
-      if(!under&&!(cutAfter<cutBefore-0.5||(cutAfter<cutBefore+0.5&&(after<before||(after===before&&(totAfter<totBefore*0.995||wider)))))){optMsg.textContent='Already as tight as it gets: '+pl(before)+' '+orient+cl(clipsBefore);return;}
+      if(!under&&!(cutAfter<cutBefore-0.5||(cutAfter<cutBefore+0.5&&(after<before||(after===before&&(totAfter<totBefore*0.995||wider)))))){optMsg.textContent='Already as tight as it gets: '+pl(before)+' '+paper+' '+orient+cl(clipsBefore);return;}
       cols.forEach((c,i)=>{if(vis[i])base[i]=(px[i]/W*100).toFixed(3)+'%';});
       render(); saveW();
-      optMsg.textContent='Optimized for '+orient+': '+pl(before)+' \\u2192 '+pl(after)+', '+Math.abs(Math.round(100*(1-totAfter/totBefore)))+(totAfter<=totBefore?'% shorter':'% taller')
+      optMsg.textContent='Optimized for '+paper+' '+orient+': '+pl(before)+' \\u2192 '+pl(after)+', '+Math.abs(Math.round(100*(1-totAfter/totBefore)))+(totAfter<=totBefore?'% shorter':'% taller')
         +(clipsBefore>clipsAfter?', '+(clipsBefore-clipsAfter)+' fewer cells cut off':'')+(ni>=0?', Notes '+inch(curPx[notes])+' \\u2192 '+inch(px[notes]):'')+cl(clipsAfter);
     }finally{box.remove();}
   }
@@ -1264,9 +1312,9 @@ def admit_date(report_date, los):
     return d.strftime('%m/%d/%y')
 
 
-def row_text(r):
+def row_text(r, uloc=''):
     """All searchable text for a patient, lowercased."""
-    parts = [r['location'], r['unit'], r.get('severity', ''), r['patient_name'], r['mrn'], r['dob'], r['code_status'], r['allergies'],
+    parts = [r['location'], r['unit'], uloc, r.get('severity', ''), r['patient_name'], r['mrn'], r['dob'], r['code_status'], r['allergies'],
              allergy_text(r['allergies']),
              r['diet'], r.get('o2_delivery', ''), r.get('admit_diagnosis', ''), r.get('isolation', ''), r.get('tube_feeds', ''),
              r.get('restraints', ''), r.get('admit_attending', ''), r.get('admit_service', ''),
@@ -1316,7 +1364,7 @@ def render_name(name):
     return f'<span class="name" data-name="Patient name">{inner}</span>'
 
 
-def render_row(r, report_date='', unit_color=None):
+def render_row(r, report_date='', unit_color=None, uloc=''):
     s = r['summary']
     narrative = ''.join(f'<p>{e(p)}</p>' for p in s['narrative'])
     status = ''.join(f'<tr data-name="{e(k)} line"><td>{e(k)}</td><td>{e(v)}</td></tr>' for k, v in s['status'].items())
@@ -1348,7 +1396,7 @@ def render_row(r, report_date='', unit_color=None):
     data = {
         'location': r['location'], 'unit': r['unit'], 'pname': r['patient_name'], 'sev': sev.lower(),
         'sevrank': SEV_RANK.get(sev.lower(), 9), 'los': r['los_days'] or 0, 'age': age or 0, 'o2': r.get('o2_delivery', ''),
-        'tasks': len(r['tasks']), 'drips': len((r.get('meds') or {}).get('infusions', [])), 'text': row_text(r),
+        'tasks': len(r['tasks']), 'drips': len((r.get('meds') or {}).get('infusions', [])), 'text': row_text(r, uloc), 'uloc': uloc,
         'pid': r.get('mrn') or f"{r['patient_name']}|{r.get('dob', '')}",  # key for the values typed on the report and for Don't print (MRN; name+DOB if none)
     }
     attrs = ' '.join(f'data-{k}="{e(v)}"' for k, v in data.items())
@@ -1358,7 +1406,10 @@ def render_row(r, report_date='', unit_color=None):
     duo = f'<div class="sec duo">{io}{labs}</div>' if io and labs else io + labs   # Volume and Labs side by side
     roombed = e(r['room']) + (f'-<span data-name="Bed">{e(r["bed"])}</span>' if r['bed'] else '')
     tint = f' style="--unit:{unit_color}"' if unit_color else ''
-    chip = (f'<div class="bedchip" data-name="Location block" title="{e(r["location"])}"{tint}><span class="u" data-name="Unit">{e(r["unit"])}</span>'
+    where = f'{r["location"]} · {uloc}' if uloc else r['location']
+    unsure = ' title="Not confirmed yet: correct it in unit_locations.json"' if uloc.endswith(' ?') else ''
+    loc_line = f'<span class="pid uloc" data-name="Unit location"{unsure}><b>Loc</b> {e(uloc)}</span>' if uloc else ''
+    chip = (f'<div class="bedchip" data-name="Location block" title="{e(where)}"{tint}><span class="u" data-name="Unit">{e(r["unit"])}</span>'
             + (f'<span class="rb" data-name="Room">{roombed}</span>' if r['room'] else '') + '</div>')
     tags = sev_chip(sev)
     return f'''
@@ -1367,6 +1418,7 @@ def render_row(r, report_date='', unit_color=None):
  <td class="pt" data-name="Snapshot column"><div class="pthead">{chip}{name}</div>
    <div class="pid"><span data-name="MRN"><b>MRN</b> {e(r["mrn"])}</span><span data-name="Date of birth"><b>DOB</b> {e(r["dob"])} <span class="kv">(<span data-name="Age">{e(r["age"])}</span> <span data-name="Sex">{e(r["sex"])}</span>)</span></span></div>
    <span class="pid" data-name="Code status"><b>Code</b> {e(r["code_status"]) or "—"}</span>
+   {loc_line}
    <div class="ufields" data-name="Custom fields"></div>
    {('<div class="pttags">' + tags + '</div>') if tags else ''}{care}</td>
  <td data-name="Hospital Summary column">{admit}<div class="sec" data-name="Patient summary">{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<div class="sec"><h4>Notes</h4>' + notes + '</div>') if notes else ''}</td>
@@ -1398,10 +1450,13 @@ def options(values):
     return ''.join(f'<option value="{e(v)}">{e(v)}</option>' for v in values)
 
 
-def render(data, orientation='landscape', bw=False):
-    """The Daily Report page. orientation is the paper it prints on until the toolbar's Paper switch is changed; bw=True
-    starts it in black and white until the toolbar's B&W box is changed."""
+def render(data, orientation='landscape', bw=False, paper=DEFAULT_PAPER, unit_locations=None):
+    """The Daily Report page. paper ('letter' or 'legal') and orientation are what it prints on until the toolbar's
+    Paper switches are changed; bw=True starts it in black and white until the toolbar's B&W box is changed.
+    unit_locations is {UNIT: (location, verified)}; by default it is read from unit_locations.json."""
     orient = 'portrait' if orientation == 'portrait' else 'landscape'
+    paper = paper if paper in PAPERS else DEFAULT_PAPER
+    locs = load_unit_locations() if unit_locations is None else unit_locations
     h = data.get('header', {})
     team = ' / '.join(x for x in (h.get('service', ''), h.get('team', '')) if x)  # the Medicine report has a team only
     recs = data['records']
@@ -1410,12 +1465,14 @@ def render(data, orientation='landscape', bw=False):
     sevs = sorted({r.get('severity', '') for r in recs if r.get('severity')}, key=lambda s: SEV_RANK.get(s.lower(), 9))
     o2s = sorted({r.get('o2_delivery', '') for r in recs if r.get('o2_delivery')})
     colors = unit_colors(units)
-    rows = ''.join(render_row(r, h.get('report_date', ''), colors.get(r['unit'])) for r in recs)
+    rows = ''.join(render_row(r, h.get('report_date', ''), colors.get(r['unit']), unit_location(locs, r['unit'])) for r in recs)
+    unit_opts = ''.join(f'<option value="{e(u)}">{e(u)}' + (f' · {e(unit_location(locs, u))}' if unit_location(locs, u) else '')
+                        + '</option>' for u in units)
     rid = hashlib.sha1(f'{data.get("source", "")}|{h.get("report_date", "")}'.encode()).hexdigest()[:12]  # keys its blank blocks
     return f'''<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">{renderer_meta(orient, bw)}<title>ICU Daily Report {e(team)} — {e(h.get("report_date", ""))}</title>
+<html lang="en"><head><meta charset="utf-8">{renderer_meta(orient, bw, paper)}<title>ICU Daily Report {e(team)} — {e(h.get("report_date", ""))}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
-<style id="pagesz">@page{{size:letter {orient};margin:.3in}}</style></head>
+<style id="pagesz">@page{{size:{paper} {orient};margin:.3in}}</style></head>
 <body{' class="bw"' if bw else ''}><div class="page">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="bw-hatch" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="3" fill="#fff"/><line x1="0" y1="0" x2="0" y2="3" stroke="#444" stroke-width="1.1"/></pattern></defs></svg>
 <div class="rpt-head" data-name="Report header"><div><div class="eyebrow">UAB Medicine &middot; CORES Daily Report</div><h1 data-name="Source report format">{e(h.get("report_format", "ICU Daily Report"))} &nbsp;<span class="team" data-name="Current service / team">{e(team)}</span></h1>
@@ -1423,7 +1480,7 @@ def render(data, orientation='landscape', bw=False):
 <div class="meta">CORES data as of <b data-name="Report date">{e(h.get("report_date", ""))}</b> for <span data-name="Printed by">{e(h.get("printed_by", ""))}</span><br>{len(recs)} patients · rendered {gen}</div></div>
 <div class="toolbar" data-name="Toolbar">
  <input type="search" id="q" placeholder="Search anything (name, MRN, drug, diagnosis…)">
- <label>Unit <select id="f-unit"><option value="">All</option>{options(units)}</select></label>
+ <label>Unit <select id="f-unit"><option value="">All</option>{unit_opts}</select></label>
  <label>Severity <select id="f-sev"><option value="">All</option>{''.join(f'<option value="{e(s.lower())}">{e(s)}</option>' for s in sevs)}</select></label>
  <label>O2 <select id="f-o2"><option value="">All</option>{options(o2s)}</select></label>
  <label id="f-team-l">Team <select id="f-team"><option value="">All</option></select></label>
@@ -1435,7 +1492,8 @@ def render(data, orientation='landscape', bw=False):
  <button id="unhide" type="button" title="Print every patient left out with Don't print">Print all</button>
  <button id="print" type="button">Print</button>
  <label title="Black and white, for a black-and-white printer: grays, hatching, bold and underlining in place of color"><input type="checkbox" id="bw"> B&amp;W</label>
- <label title="Paper orientation for printing; column widths are kept separately for each">Paper <select id="orient">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
+ <label title="Paper size and orientation for printing; column widths are kept separately for each">Paper <select id="paper">{''.join(f'<option value="{p}"{" selected" if p == paper else ""}>{p.title()}</option>' for p in PAPERS)}</select>
+  <select id="orient" aria-label="Orientation">{''.join(f'<option value="{o}"{" selected" if o == orient else ""}>{o.title()}</option>' for o in ('landscape', 'portrait'))}</select></label>
  <button id="optimize" type="button" title="Choose the column widths that fit the shown patients on the fewest printed pages">Optimize widths</button>
  <label title="The narrowest Optimize widths may make the Notes column (for handwriting), in inches on paper; any width the other columns do not need goes to Notes">Notes &ge; <input type="number" id="notes-min" min="0" max="6" step="0.1" value="0.75"> in</label>
  <button id="cols" type="button" title="Restore the default column widths">Reset columns</button>
@@ -1467,7 +1525,7 @@ def render(data, orientation='landscape', bw=False):
 </table>
 <div class="foot">Generated from {e(data.get("source", ""))} · {len(recs)} patients</div>
 </div>
-<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors))}</script>
+<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors)).replace('__PAPERS__', json.dumps(PAPERS))}</script>
 </body></html>'''
 
 
@@ -1483,7 +1541,8 @@ def main(argv):
         data = parse_file(src)
     out = args[1] if len(args) > 1 else re.sub(r'\.(html?|json)$', '', src) + ' - Daily Report.html'
     with open(out, 'w', encoding='utf-8') as fh:
-        fh.write(render(data, 'portrait' if '--portrait' in argv else 'landscape', '--bw' in argv))
+        fh.write(render(data, 'portrait' if '--portrait' in argv else 'landscape', '--bw' in argv,
+                        'letter' if '--letter' in argv else 'legal' if '--legal' in argv else DEFAULT_PAPER))
     print(f'{len(data["records"])} patients -> {out}')
 
 

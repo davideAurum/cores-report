@@ -154,11 +154,11 @@ The Daily Report flags a temperature under 50 as degrees C (normal 36.1 to 37.9)
 not all marked low.
 
 ## Rendered Daily Report (names shown by the Inspect toggle)
-Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, **Breakdown** (Off / By unit, and By team
-once any Patient block carries a team: the **Breakdown** line above the table, a Breakdown total, a Breakdown chip per
+Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, **Breakdown** (Off / By unit, By location once any unit
+has one in `unit_locations.json`, and By team once any Patient block carries a team: the **Breakdown** line above the table, a Breakdown total, a Breakdown chip per
 unit outlined in its unit color with the count of patients shown and printed, and a dashed Breakdown blank chip; printed
 when on), **+ Blank patient**, **Print all** (puts back every patient left out with Don't print), Print, **B&W** (black and white: see
-README, Printing), Paper, Optimize widths, Reset columns, **Sections**
+README, Printing), Paper (Legal or Letter, then Landscape or Portrait; legal landscape unless set), Optimize widths, Reset columns, **Sections**
 (a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; indented
 entries are parts of the entry above them — Admission, Allergy / Diet block, Vitals, Ventilation, Volume, Trends, Labs —
 and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
@@ -208,7 +208,8 @@ unit's. A chip with no unit is gray. In a Snapshot column too narrow
 for the chip and the name side by side, the name moves under the chip.
 Inside them: Location block (Unit, Room, Bed), Severity chip, Isolation tag (boxed biohazard icon), Patient name (Last name, First name
 and MI), MRN and Date of birth on one line ("MRN … | DOB …", labels bold, values plain),
-Age, Sex, Code status, Admission ("Dx: …", the Admit diagnosis with the `ADMIT:` prefix stripped; "Date: MM/DD/YY (LOS n days)", the Admit date
+Age, Sex, Code status, **Unit location** ("Loc North Pavilion 7", the unit's location from `unit_locations.json`, with
+" ?" after one not yet confirmed; only when the unit has one), Admission ("Dx: …", the Admit diagnosis with the `ADMIT:` prefix stripped; "Date: MM/DD/YY (LOS n days)", the Admit date
 and Length of stay; only the labels bold),
 Patient summary, Status lines, Allergy / Diet block (Allergies — "No Known Medication Allergies" or "No Known Drug
 Allergies" shown as NKDA, alone or in a list ("NKA, NKDA"); search finds either form — Diet — each diet order up to its
