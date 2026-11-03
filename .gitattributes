@@ -1,0 +1,7 @@
+# Batch and PowerShell files must reach Windows with CRLF whatever the machine that made the release zip uses.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Kept out of release zips (`git archive`): release.py is for whoever publishes releases, not for the people using them.
+release.py export-ignore
+.gitattributes export-ignore

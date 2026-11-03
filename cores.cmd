@@ -23,5 +23,6 @@ if not defined PY (
     echo nothing installed^), or install Python 3.10+ from python.org.
     exit /b 1
 )
-%PY% "%HERE%cores.py" %*
-exit /b %ERRORLEVEL%
+rem One line, so that nothing after it is read: cmd reads a batch file as it goes, and `cores update` may have
+rem replaced this file by the time Python returns. `call` makes the exit code the one Python just set.
+%PY% "%HERE%cores.py" %* & call exit /b %%ERRORLEVEL%%

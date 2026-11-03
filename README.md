@@ -102,6 +102,54 @@ you rebuild it.
 
 Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints without a dialog.
 
+## Updates
+
+`cores update` installs the newest release from
+[GitHub Releases](https://github.com/davideAurum/cores-report/releases) into this folder. It shows what changed and asks
+first. `reports\`, `python\` and `cores.config.json` are never touched. The download is checked against the checksum
+the release publishes, every Python file is compiled before anything is replaced, and the files are swapped all at
+once: if one cannot be replaced (an editor has it open), everything is put back as it was.
+
+`cores generate` and `cores capture` end with a one-line note when a newer release is out. They ask GitHub at most
+once a day, in the background, and say nothing when there is no internet. `cores doctor` checks too; turn the note off
+with `cores config --set check_updates false`.
+
+| | |
+|---|---|
+| `cores update` | install the newest release (`-y`: without asking) |
+| `cores update --check` | only say whether there is a newer one, and what changed |
+| `cores update --version 1.2.0` | install that release, also to go back to an older one |
+| `cores update --from cores-report-1.2.0.zip` | install a release zip downloaded by hand, with no internet |
+| `cores --version` | the version installed |
+
+A release that needs different Python packages says so after updating (run `cores setup`, or `.\bundle` if the folder
+has `python\`). A folder that is a git checkout is updated with `git pull` instead; `cores update` refuses to overwrite
+tracked files.
+
+**First install.** Download `cores-report-X.Y.Z.zip` from the Releases page, unzip it anywhere, and carry on at
+*Setup* step 2. A folder copied from before releases existed has no `cores update`: install the zip over it once
+(copying the files in is fine; `reports\` and your settings stay), and from then on `cores update` works.
+
+### Making a release
+
+On the development copy (a git checkout with the GitHub CLI `gh` logged in), on `main` with everything committed and
+pushed:
+
+```
+py release.py patch      # fixes:        1.4.2 -> 1.4.3
+py release.py minor      # new features: 1.4.2 -> 1.5.0
+py release.py major      # 1.4.2 -> 2.0.0, or give a version: py release.py 2.0.0
+```
+
+It sets `VERSION` in `cores.py`, commits *Release X.Y.Z*, tags `vX.Y.Z`, builds `dist\cores-report-X.Y.Z.zip` from
+the tag with `git archive`, unpacks it and checks it the way `cores update` will, then asks before pushing and
+publishing the release with the zip and its `.sha256` attached. The release notes are the commit subjects since the
+previous release; `--notes "..."` replaces them, and they can be edited on GitHub afterwards.
+`py release.py minor --dry-run` builds and checks the zip without committing, tagging or pushing anything; try it on a
+copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
+`release.py` itself is not in the zip (`.gitattributes` leaves it out), and `.gitattributes` makes the `.cmd` and
+`.ps1` files CRLF in the zip whatever the building machine uses.
+
 ## Commands
 
 `FILE` is optional everywhere: the newest matching file is used.
@@ -125,6 +173,7 @@ Microsoft Edge (present on every Windows PC) is still what makes PDFs and prints
 | `cores config [--init] [--set KEY VALUE]` | show settings; write `cores.config.json`; change one setting |
 | `cores help [COMMAND]` | this list, or one command's options (`cores help generate`) |
 | `cores bundle [--dry-run] [--force] [--version X.Y.Z]` | put a private Python plus packages in `python\` so the folder needs no installed Python |
+| `cores update [--check] [--version X.Y.Z] [--from ZIP] [-y]` | install the newest release from GitHub, or the one given (see *Updates*) |
 | `.\bundle` (not a `cores` command) | the same thing on a PC with no Python at all -- see [No Python on the computer?](#no-python-on-the-computer) |
 
 `cores` on its own (or `cores -h`, `-help`, `/?`, `cores help`) lists only `capture` and `generate`; every command
@@ -189,6 +238,7 @@ or use `cores config --set KEY VALUE`.
 | `open_after_run` | `true` | `cores generate` opens the Daily Report |
 | `orientation` | `landscape` | paper Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
 | `black_and_white` | `false` | Daily Reports start in black and white, for a black-and-white printer; the report's B&W box overrides it in your browser |
+| `check_updates` | `true` | `generate` and `capture` say when a newer release is out (asks GitHub at most once a day) |
 
 ## Files
 
@@ -203,6 +253,8 @@ or use `cores config --set KEY VALUE`.
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
 | `requirements.txt` | Python packages |
+| `release.py` | publishes a release (development copy only; not in the release zip) |
+| `.cores-update.json` | made by `cores update`: when GitHub was last asked, and the files the installed release put here |
 | `cores.config.json` | optional settings |
 | `python\` | optional, made by `.\bundle`: a private Python so nothing needs installing |
 | `reports\` | created on first run: captures, JSON, Daily Reports, PDFs (PHI) |

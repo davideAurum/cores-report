@@ -18,3 +18,10 @@ python/
 __pycache__/
 *.pyc
 .venv/
+
+# --- release.py output ---
+dist/
+# cores update: last check and installed files; its staging folder while it runs
+.cores-update.json
+.cores-update.json.tmp
+.cores-update-*/

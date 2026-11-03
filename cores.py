@@ -2,7 +2,7 @@
 """cores -- CORES ICU Daily Report: `cores capture`, then `cores generate`.
 
 `cores` on its own lists only those two. Also available: watch, open, print, pdf, clean, doctor, setup, config,
-bundle, parse, render, latest, annotate, har; `cores help COMMAND` shows one, README.md describes them all.
+bundle, update, parse, render, latest, annotate, har; `cores help COMMAND` shows one, README.md describes them all.
 """
 import argparse
 import contextlib
@@ -18,10 +18,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+
+VERSION = '0.0.0'  # set by release.py when it tags a release; `cores update` compares it with the newest one
+REPO = 'davideAurum/cores-report'  # where release.py publishes and `cores update` looks (GitHub Releases)
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -41,6 +46,7 @@ DEFAULTS = {
     'open_after_run': True,          # `cores generate` opens the Daily Report in the browser
     'orientation': 'landscape',      # paper a Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
     'black_and_white': False,        # Daily Reports start in black and white, for a black-and-white printer (its B&W box overrides)
+    'check_updates': True,           # `generate` and `capture` say when a newer release is out (asks GitHub at most once a day)
 }
 REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)',
               '7': 'Medicine Report +VS/Meds (five columns)'}
@@ -1203,6 +1209,13 @@ def cmd_doctor(a, cfg):
         say(f'  [{mark}] {label}' + (f': {detail}' if detail else ''))
 
     say(f'cores doctor  ({HERE})')
+    try:
+        latest = github_release(timeout=10)['version']
+        save_update_state(checked_at=time.time(), latest=latest)
+        newer = parse_version(latest) > parse_version(VERSION)
+        line(not newer, f'cores {VERSION}', f'{latest} is available; `cores update` installs it' if newer else 'the newest release', required=False)
+    except CoresError as ex:
+        line(False, f'cores {VERSION}', f'could not check for a newer release: {ex}', required=False)
     line(sys.version_info >= (3, 10), 'Python 3.10+', f'{platform.python_version()} at {sys.executable}')
     for mod, pkg in (('bs4', 'beautifulsoup4'), ('lxml', 'lxml')):
         try:
@@ -1406,6 +1419,247 @@ def cmd_bundle(a, cfg):
     return 0
 
 
+# ---------------------------------------------------------------- update
+
+UPDATE_STATE = HERE / '.cores-update.json'  # when GitHub was last asked, what it said, and the files the update installed
+# What an update never writes or deletes, even if a release zip had it: the user's data, settings and private Python.
+UPDATE_KEEP_OUT = ('reports/', 'python/', '.venv/', 'core pdf dump/')
+
+
+def parse_version(v):
+    """'1.2.3' or 'v1.2.3' -> (1, 2, 3); anything else -> None."""
+    m = re.fullmatch(r'v?(\d+)\.(\d+)\.(\d+)', str(v or '').strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def update_state():
+    try:
+        s = json.loads(UPDATE_STATE.read_text(encoding='utf-8'))
+        return s if isinstance(s, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_update_state(**changes):
+    """Merge `changes` into .cores-update.json. Written aside and swapped in: the background check can be cut off by the
+    process exiting, and a half-written file would lose the list of installed files."""
+    s = update_state()
+    s.update(changes)
+    tmp = UPDATE_STATE.with_name(UPDATE_STATE.name + '.tmp')
+    try:
+        tmp.write_text(json.dumps(s, indent=2) + '\n', encoding='utf-8')
+        os.replace(tmp, UPDATE_STATE)
+    except OSError:
+        pass  # a read-only folder: no cache, so the next run asks again
+
+
+def github_release(version=None, timeout=30):
+    """The newest release on GitHub, or the one tagged v<version>: {'version', 'notes', 'page', 'zip': (name, url, sha256)}.
+    sha256 comes from the asset's digest (GitHub computes it on upload) or the .sha256 file release.py uploads beside it."""
+    api = f'https://api.github.com/repos/{REPO}/releases/' + (f'tags/v{version}' if version else 'latest')
+    try:
+        with urllib.request.urlopen(http_request(api), timeout=timeout) as r:
+            info = json.loads(r.read())
+    except urllib.error.HTTPError as ex:
+        if ex.code == 404:
+            raise CoresError(f'GitHub has no release v{version} of cores' if version else
+                             f'GitHub has no published release of cores yet (https://github.com/{REPO}/releases)')
+        raise CoresError(f'GitHub answered {ex.code} {ex.reason} for {api}')
+    except (OSError, ValueError) as ex:
+        raise CoresError(f'could not reach GitHub ({ex}); check the internet connection, or install a downloaded '
+                         'release zip with `cores update --from FILE`')
+    ver = (info.get('tag_name') or '').lstrip('v')
+    if not parse_version(ver):
+        raise CoresError(f'the release tagged "{info.get("tag_name")}" does not have a version number like v1.2.3')
+    assets = {x.get('name'): x for x in info.get('assets') or []}
+    name = f'cores-report-{ver}.zip'
+    if name not in assets:
+        raise CoresError(f'release {ver} has no {name} attached; see {info.get("html_url")}')
+    sha = (assets[name].get('digest') or '').removeprefix('sha256:') or None
+    if not sha and name + '.sha256' in assets:
+        sha = (http_get(assets[name + '.sha256']['browser_download_url'], timeout=timeout).decode('ascii', 'replace').split() or [''])[0]
+    return {'version': ver, 'notes': (info.get('body') or '').strip(), 'page': info.get('html_url', ''),
+            'zip': (name, assets[name]['browser_download_url'], (sha or '').lower() or None)}
+
+
+def open_release_zip(data, label):
+    """Check a release zip (one top folder, safe paths, a cores.py with a VERSION) -> (ZipFile, {path: ZipInfo}, version)."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise CoresError(f'{label} is not a zip file')
+    entries = [i for i in z.infolist() if not i.is_dir()]
+    tops = {i.filename.split('/', 1)[0] for i in entries}
+    if len(tops) != 1:
+        raise CoresError(f'{label} is not a cores release zip (expected everything in one cores-report-X.Y.Z folder)')
+    prefix = tops.pop() + '/'
+    files = {}
+    for i in entries:
+        p = i.filename[len(prefix):]
+        if not p or p.startswith('/') or '\\' in p or ':' in p or '..' in p.split('/'):
+            raise CoresError(f'{label} contains an unsafe path ({i.filename}); not installing it')
+        files[p] = i
+    if 'cores.py' not in files:
+        raise CoresError(f'{label} has no cores.py; it is not a cores release')
+    m = re.search(r"^VERSION = '([^']*)'", z.read(files['cores.py']).decode('utf-8', 'replace'), re.M)
+    ver = m.group(1) if m else ''
+    if not parse_version(ver):
+        raise CoresError(f'{label}: its cores.py has no release version (VERSION = "{ver}")')
+    return z, files, ver
+
+
+def update_protected(p):
+    return p.startswith(UPDATE_KEEP_OUT) or p in (CONFIG_FILE.name, UPDATE_STATE.name)
+
+
+def install_release(z, files, ver):
+    """Replace this folder's program files with the release's, all or nothing.
+
+    The new files are unpacked into a staging folder inside this one (same drive, so every move below is a rename),
+    every .py is compiled to catch a broken download, and only then is each old file moved aside and the new one moved
+    in. Any failure part-way moves everything back. Files the previous update installed that this release no longer has
+    are removed too; nothing else in the folder (reports\\, python\\, cores.config.json, ...) is touched.
+    Returns the paths whose content changed."""
+    files = {p: i for p, i in files.items() if not update_protected(p)}
+    prev = [p for p in update_state().get('files') or [] if isinstance(p, str)]
+    stale = [p for p in prev if p not in files and not update_protected(p) and (HERE / p).is_file()]
+    stage = Path(tempfile.mkdtemp(prefix='.cores-update-', dir=HERE))
+    new, old = stage / 'new', stage / 'old'
+    try:
+        for p, info in files.items():
+            (new / p).parent.mkdir(parents=True, exist_ok=True)
+            (new / p).write_bytes(z.read(info))
+        for p in files:
+            if p.endswith('.py'):
+                try:
+                    compile((new / p).read_bytes(), p, 'exec')
+                except (SyntaxError, ValueError) as ex:
+                    raise CoresError(f'{p} in release {ver} does not compile ({ex}); nothing was changed')
+        changed = [p for p in files if not (HERE / p).is_file() or (HERE / p).read_bytes() != (new / p).read_bytes()]
+        done = []  # (path, moved_old_aside, moved_new_in), for putting things back
+        try:
+            for p in changed + stale:
+                cur, step = HERE / p, [p, False, False]
+                done.append(step)
+                if cur.exists():
+                    (old / p).parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(cur, old / p)
+                    step[1] = True
+                if p in files:
+                    cur.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(new / p, cur)
+                    step[2] = True
+        except OSError as ex:
+            for p, aside, moved_in in reversed(done):
+                with contextlib.suppress(OSError):
+                    if moved_in:
+                        os.replace(HERE / p, new / p)
+                    if aside:
+                        os.replace(old / p, HERE / p)
+            raise CoresError(f'could not replace {done[-1][0]} ({ex.strerror or ex}); everything was put back as it was. '
+                             'Close anything that has the file open (an editor, `cores watch`) and run `cores update` again.')
+        save_update_state(files=sorted(files), version=ver, installed_at=dt.datetime.now().isoformat(timespec='seconds'))
+        return changed, stale
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
+def start_update_check(cfg):
+    """Ask GitHub in the background, at most once a day, whether there is a newer release; show_update_notice() reports it."""
+    if not cfg.get('check_updates') or time.time() - float(update_state().get('checked_at') or 0) < 86400:
+        return None
+
+    def check():
+        try:
+            save_update_state(checked_at=time.time(), latest=github_release(timeout=5)['version'])
+        except Exception:  # offline, GitHub down, rate-limited: try again tomorrow, quietly
+            save_update_state(checked_at=time.time())
+
+    t = threading.Thread(target=check, daemon=True)
+    t.start()
+    return t
+
+
+def show_update_notice(cfg, thread):
+    if not cfg.get('check_updates'):
+        return
+    if thread:
+        thread.join(2)  # never hold up the command for long; an unfinished check just reports next time
+    latest = update_state().get('latest')
+    if parse_version(latest) and parse_version(latest) > parse_version(VERSION):
+        how = '`git pull`' if (HERE / '.git').exists() else '`cores update`'
+        say(f'\ncores {latest} is available (this is {VERSION}); {how} installs it.')
+
+
+def cmd_update(a, cfg):
+    if a.version and not parse_version(a.version):
+        raise CoresError(f'--version must look like 1.2.3 (got "{a.version}")')
+    want = a.version.lstrip('v') if a.version else None
+    if a.from_zip:
+        src = Path(a.from_zip).expanduser()
+        if not src.is_file():
+            raise CoresError(f'no such file: {src}')
+        z, files, ver = open_release_zip(src.read_bytes(), src.name)
+        if want and ver != want:
+            raise CoresError(f'{src.name} is cores {ver}, not {want}')
+        rel_info = {'version': ver, 'notes': '', 'page': str(src)}
+    else:
+        rel_info = github_release(want)
+        ver = rel_info['version']
+        if not want:
+            save_update_state(checked_at=time.time(), latest=ver)
+    say(f'Installed: cores {VERSION}  ({HERE})')
+    say(f'{"Requested" if want or a.from_zip else "Newest"}:    cores {ver}  ({rel_info["page"]})')
+    newer = parse_version(ver) > parse_version(VERSION)
+    if a.check or (not newer and not want and not a.from_zip and not a.force):
+        if newer and rel_info['notes']:
+            say('\n' + rel_info['notes'])
+        say('\n' + (f'`cores update` installs {ver}.' if newer else 'Up to date.'))
+        return 0
+    if ver == VERSION and not a.force:
+        say(f'\ncores {ver} is already installed; `--force` installs it again.')
+        return 0
+    if (HERE / '.git').exists():
+        raise CoresError('this folder is a git checkout; update it with `git pull` (cores update would overwrite tracked files)')
+    if parse_version(ver) < parse_version(VERSION):
+        say(f'note: {ver} is older than the installed {VERSION}; installing it anyway, as asked.')
+    if rel_info['notes']:
+        say('\n' + rel_info['notes'])
+    if not a.yes:
+        if not (sys.stdin and sys.stdin.isatty()):
+            raise CoresError('add -y to install without being asked')
+        try:
+            answer = input(f'\nInstall cores {ver} into {HERE}? [Y/n] ').strip().lower()
+        except EOFError:
+            answer = 'n'
+        if answer not in ('', 'y', 'yes'):
+            say('Nothing changed.')
+            return 1
+    if not a.from_zip:
+        name, url, sha = rel_info['zip']
+        if not sha:
+            raise CoresError(f'release {ver} publishes no checksum for {name}, so the download cannot be verified; '
+                             'download it by hand and use `cores update --from FILE`')
+        say(f'Downloading {name} ...')
+        data = http_get(url)
+        if hashlib.sha256(data).hexdigest() != sha:
+            raise CoresError(f'{name}: the download did not match the checksum the release publishes; try again')
+        z, files, zver = open_release_zip(data, name)
+        if zver != ver:
+            raise CoresError(f'{name} contains cores {zver}, not {ver}; not installing it')
+    changed, removed = install_release(z, files, ver)
+    say(f'\n{"Reinstalled" if ver == VERSION else "Updated"} cores {VERSION} -> {ver}: {len(changed)} file(s) replaced' + (f', {len(removed)} removed' if removed else '') + '.')
+    for p in changed:
+        say(f'  {p}')
+    for p in removed:
+        say(f'  {p} (removed)')
+    if 'requirements.txt' in changed:
+        say('\nThis release needs different Python packages: run ' +
+            ('`.\\bundle` to rebuild python\\.' if (HERE / 'python').exists() else '`cores setup`.'))
+    say('Restart `cores watch` if it is running in another window.')
+    return 0
+
+
 def cmd_help(a, cfg):
     p = build_parser()
     if a.topic:
@@ -1459,7 +1713,8 @@ def cmd_config(a, cfg):
 # ---------------------------------------------------------------- main
 
 def build_parser():
-    p = argparse.ArgumentParser(prog='cores', description='CORES ICU Daily Report')
+    p = argparse.ArgumentParser(prog='cores', description=f'CORES ICU Daily Report {VERSION}')
+    p.add_argument('-V', '--version', action='version', version=f'cores {VERSION}')
     sub = p.add_subparsers(dest='cmd', metavar='command')
 
     def add(name, fn, help, listed=None, **kw):
@@ -1568,6 +1823,14 @@ def build_parser():
     sp.add_argument('--dry-run', action='store_true', help='only show what would be downloaded and how big it is')
     sp.add_argument('--force', action='store_true', help='replace an existing python\\ folder')
 
+    sp = add('update', cmd_update, f'install the newest release of cores from GitHub ({REPO}) into this folder, after showing what '
+                                   'changed. reports\\, python\\ and cores.config.json are left alone.')
+    sp.add_argument('--check', action='store_true', help='only say whether a newer release is out')
+    sp.add_argument('--version', metavar='X.Y.Z', help='install this release instead of the newest (also to go back to an older one)')
+    sp.add_argument('--from', dest='from_zip', metavar='ZIP', help='install a release zip downloaded by hand (cores-report-X.Y.Z.zip), with no internet')
+    sp.add_argument('--force', action='store_true', help='install even if that version is already installed')
+    sp.add_argument('-y', '--yes', action='store_true', help='do not ask for confirmation')
+
     sp = add('help', cmd_help, 'show this help, or the options of one command: cores help generate')
     sp.add_argument('topic', nargs='?', metavar='COMMAND')
     p.sub = sub
@@ -1576,6 +1839,7 @@ def build_parser():
 
 HELP_ALIASES = {'-help', '-?', '/?', '/help'}  # what Windows users tend to type; all mean --help
 NEEDS_PACKAGES = {'generate', 'capture', 'parse', 'watch'}  # the commands that import cores_parse (bs4 + lxml)
+UPDATE_NOTICE = {'generate', 'capture'}  # the everyday commands, which end by saying when a newer release is out
 
 
 def missing_packages():
@@ -1630,7 +1894,11 @@ def main(argv=None):
             return 0
         if a.cmd in NEEDS_PACKAGES:
             check_dependencies(cfg)
-        return a.fn(a, cfg) or 0
+        notice = a.cmd in UPDATE_NOTICE and start_update_check(cfg)
+        code = a.fn(a, cfg) or 0
+        if a.cmd in UPDATE_NOTICE:
+            show_update_notice(cfg, notice)
+        return code
     except (CoresError, PermissionError) as ex:
         say(f'cores: {ex}')
         return 1
