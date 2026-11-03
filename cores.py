@@ -25,7 +25,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = '0.0.0'  # set by release.py when it tags a release; `cores update` compares it with the newest one
+VERSION = '1.0.0'  # set by release.py when it tags a release; `cores update` compares it with the newest one
 REPO = 'davideAurum/cores-report'  # where release.py publishes and `cores update` looks (GitHub Releases)
 
 HERE = Path(__file__).resolve().parent
