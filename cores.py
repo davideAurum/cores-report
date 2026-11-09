@@ -44,6 +44,7 @@ DEFAULTS = {
     'acrobat': '',                   # Acrobat.exe / AcroRd32.exe used for printing to a named printer; '' = auto
     'keep': 3,                       # capture sets kept by `cores clean`
     'open_after_run': True,          # `cores generate` opens the Daily Report in the browser
+    'paper': 'legal',                # paper size a Daily Report prints on: 'legal' or 'letter' (its Paper switch overrides)
     'orientation': 'landscape',      # paper a Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
     'black_and_white': False,        # Daily Reports start in black and white, for a black-and-white printer (its B&W box overrides)
     'check_updates': True,           # `generate` and `capture` say when a newer release is out (asks GitHub at most once a day)
@@ -110,6 +111,9 @@ def load_config():
         raise CoresError('"keep" in the config must be a whole number')
     if cfg['import_mode'] not in ('move', 'copy'):
         raise CoresError('"import_mode" in the config must be "move" or "copy"')
+    cfg['paper'] = str(cfg['paper']).strip().lower()
+    if cfg['paper'] not in ('legal', 'letter'):
+        raise CoresError('"paper" in the config must be "legal" or "letter"')
     cfg['orientation'] = str(cfg['orientation']).strip().lower()
     if cfg['orientation'] not in ('landscape', 'portrait'):
         raise CoresError('"orientation" in the config must be "landscape" or "portrait"')
@@ -364,7 +368,7 @@ def do_parse(capture, out=None, data=None):
 
 
 def do_render(src, out=None, data=None, cfg=None):
-    from cores_report import render
+    from cores_report import render, load_unit_locations
     src = Path(src)
     if data is None:
         if src.suffix.lower() == '.json':
@@ -375,28 +379,38 @@ def do_render(src, out=None, data=None, cfg=None):
             data = parse_capture(src)
     out = Path(out) if out else derived(src, 'report')
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(data, (cfg or {}).get('orientation', 'landscape'), (cfg or {}).get('black_and_white', False)), encoding='utf-8')
+    try:
+        locs = load_unit_locations()
+    except ValueError as ex:
+        raise CoresError(f'{ex}; fix it or delete it')
+    cfg = cfg or {}
+    out.write_text(render(data, cfg.get('orientation', 'landscape'), cfg.get('black_and_white', False), cfg.get('paper', 'legal'), locs),
+                   encoding='utf-8')
+    missing = sorted({r['unit'] for r in data.get('records', []) if r.get('unit') and r['unit'].strip().upper() not in locs})
+    if missing:
+        say(f'Note:     no location yet for {", ".join(missing)}; add {"it" if len(missing) == 1 else "them"} to unit_locations.json')
     return data, out
 
 
 def refresh_report(report, cfg):
-    """A Daily Report made by another version of cores_report.py, or for other paper or B&W than the "orientation" and
-    "black_and_white" settings, is re-rendered in place from its JSON (else its capture) before it is opened, printed or
+    """A Daily Report made by another version of cores_report.py (or unit_locations.json), or for other paper or B&W
+    than the "paper", "orientation" and "black_and_white" settings, is re-rendered in place from its JSON (else its capture) before it is opened, printed or
     made into a PDF. Otherwise
     it would print as it was made: one from before the Paper switch prints landscape only, and the PDF and no-dialog
     paths would ignore a changed setting. Left as it is when neither source is there."""
     from cores_report import RENDERER, renderer_meta
     report = Path(report)
     orient, bw = (cfg or {}).get('orientation', 'landscape'), (cfg or {}).get('black_and_white', False)
+    paper = (cfg or {}).get('paper', 'legal')
     try:
         with open(report, encoding='utf-8', errors='replace') as fh:
             head = fh.read(4096)
     except OSError:
         return report
-    if renderer_meta(orient, bw) in head:
+    if renderer_meta(orient, bw, paper) in head:
         return report
-    why = ('made for other settings than "orientation" and "black_and_white"' if f'content="{RENDERER} ' in head
-           else 'made by an older version of cores')
+    why = ('made for other settings than "paper", "orientation" and "black_and_white"' if f'content="{RENDERER} ' in head
+           else 'made by an older version of cores or of unit_locations.json')
     for src in (derived(report, 'json'), report.with_name(stem_of(report) + '.html')):
         if src != report and src.is_file() and kind_of(src) in ('json', 'capture'):
             try:
@@ -609,7 +623,7 @@ def remove_dir(d):
 
 
 def make_pdf(report, cfg, out=None):
-    """Daily Report -> PDF with headless Edge/Chrome, honouring the report's @page CSS (letter, landscape or portrait).
+    """Daily Report -> PDF with headless Edge/Chrome, honouring the report's @page CSS (legal or letter, landscape or portrait).
     The PDF is written under a temporary name and swapped into place; if the old PDF is open elsewhere (Acrobat keeps a printed
     PDF open) the new one gets a " (2)" name instead of failing."""
     exe = chromium_exe(cfg)
@@ -1226,6 +1240,14 @@ def cmd_doctor(a, cfg):
     for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_parse_med.py', 'cores_report.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
         line((HERE / f).exists(), f, '' if (HERE / f).exists() else 'missing')
     try:
+        from cores_report import load_unit_locations
+        n = len(load_unit_locations())
+        line(True, 'unit_locations.json', f'{n} unit{"" if n == 1 else "s"} with a location', required=False)
+    except ValueError as ex:
+        line(False, 'unit_locations.json', str(ex), required=False)
+    except ImportError:
+        pass
+    try:
         b = chromium_exe(cfg)
         line(bool(b), 'Edge / Chrome for PDF and printing', str(b) if b else 'not found (PDF, --kiosk and named-printer printing unavailable)', required=False)
     except CoresError as ex:
@@ -1774,7 +1796,7 @@ def build_parser():
     sp.add_argument('file', nargs='?', metavar='FILE')
     print_opts(sp)
 
-    sp = add('pdf', cmd_pdf, 'Daily Report -> PDF with headless Edge/Chrome (letter, in the orientation and black_and_white settings; a report made otherwise is re-rendered first)')
+    sp = add('pdf', cmd_pdf, 'Daily Report -> PDF with headless Edge/Chrome (in the paper, orientation and black_and_white settings; a report made otherwise is re-rendered first)')
     sp.add_argument('file', nargs='?', metavar='FILE')
     sp.add_argument('-o', '--out', help='output .pdf path')
     sp.add_argument('--open', action='store_true', help='open the PDF afterwards')

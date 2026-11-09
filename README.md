@@ -161,7 +161,7 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores print [FILE] [--to PRINTER \| --kiosk \| --dialog]` | print a Daily Report (see *Printing*) |
-| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, letter, in the `orientation` setting's paper and the `black_and_white` setting's colors |
+| `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, on the `paper` setting's size (legal unless set), in the `orientation` setting's direction and the `black_and_white` setting's colors |
 | `cores parse FILE [-o X.json] [--copy]` | capture -> JSON only (a capture in Downloads or next to the scripts is moved into `reports\` first) |
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
 | `cores latest` | newest capture / JSON / Daily Report / PDF, and what `generate` would use |
@@ -183,21 +183,24 @@ work on their own too:
 
 ## Printing
 
-The Daily Report prints on letter paper, landscape unless you choose portrait; a patient block never straddles a page
-break.
+The Daily Report prints on legal paper (8.5 x 14 in), landscape, unless you choose letter or portrait; a patient block
+never straddles a page break. Legal landscape gives every column about a third more width than letter, so most patients
+take fewer lines and more of them fit on a page.
 
-- **Paper** (toolbar): Landscape or Portrait. The report sets the paper itself, so the browser's own Layout choice is
-  greyed out in the print dialog. Use this switch instead. Your choice is remembered, and column widths are kept
-  separately for each orientation. `cores pdf`, `--to` and `--kiosk` print in a browser that has not seen this switch,
-  so they use the `orientation` setting (`cores config --set orientation portrait`).
+- **Paper** (toolbar): Legal or Letter, then Landscape or Portrait. The report sets the paper itself, so the browser's
+  own Paper size and Layout choices are greyed out or ignored in the print dialog; use these switches instead, and load
+  legal paper in the printer's tray. Your choices are remembered, and column widths are kept separately for each paper
+  and orientation (the letter widths you had saved before legal was added are kept). `cores pdf`, `--to` and `--kiosk`
+  print in a browser that has not seen these switches, so they use the `paper` and `orientation` settings
+  (`cores config --set paper letter`, `cores config --set orientation portrait`).
 - **B&W** (toolbar): black and white, for a black-and-white printer. Nothing is told apart by color alone: headings,
   unit chips and the isolation icon turn black, abnormal vital signs are bold and underlined, abnormal labs keep their
   ▲/▼ arrows (now black), severity shows as a fill (Unstable black, Watcher gray, Stable white), highlighted meds are
   underlined, and the Volume chart's intake, urine and other output are dark gray, mid-gray and hatched. Your choice is remembered; `cores pdf`,
   `--to` and `--kiosk` use the `black_and_white` setting (`cores config --set black_and_white true`).
-- **Older reports**: a Daily Report made by an older version of cores (one from before the Paper switch can only
-  print landscape), or for other paper or B&W than the `orientation` and `black_and_white` settings, is re-rendered
-  from its JSON when
+- **Older reports**: a Daily Report made by an older version of cores or of `unit_locations.json` (one from before the
+  Paper switch can only print landscape), or for other paper or B&W than the `paper`, `orientation` and
+  `black_and_white` settings, is re-rendered from its JSON when
   `cores open`, `cores print` or `cores pdf` uses it. Double-clicking the file shows it as it was made; open it with
   `cores open` instead.
 - **Optimize widths** (toolbar): picks column widths for the patients and sections currently shown. It lays the
@@ -221,6 +224,21 @@ break.
 - On `generate` and `watch`, `--to`, `--kiosk` and `--dialog` imply `--print`.
 - **`cores pdf`** writes `reports\<capture> - Daily Report.pdf` to keep, email, or print later.
 
+## Unit locations
+
+`unit_locations.json` maps each unit, exactly as CORES prints it (`MICU`, `MCCU`, `UED` …), to where it is, in a few
+words such as `North Pavilion 7`. A unit with a location gets a **Loc** line in each patient's Snapshot (it can be hidden
+in *Sections*), its location in the Location block's tooltip and in the Unit filter, and the toolbar's Breakdown gains
+*By location*, which counts patients per location. Search finds patients by location too.
+
+```json
+"MICU": {"location": "North Pavilion 7", "verified": true}
+```
+
+`"verified": false` prints the location with a `?` after it until you confirm it. `cores generate` names every unit on
+the report that has no location yet, so the file fills in from real reports. A report re-renders on `cores open`,
+`print` or `pdf` after the file changes. Unit names are not PHI; keep patient details out of this file.
+
 ## Settings
 
 Defaults work as they are. `cores config --init` writes `cores.config.json` next to `cores.py`; edit it in any editor
@@ -236,6 +254,7 @@ or use `cores config --set KEY VALUE`.
 | `acrobat` | auto | path to `Acrobat.exe` / `AcroRd32.exe` |
 | `keep` | `3` | capture sets kept by `cores clean` and `generate --clean` |
 | `open_after_run` | `true` | `cores generate` opens the Daily Report |
+| `paper` | `legal` | paper size Daily Reports print on, `legal` or `letter`; the report's Paper switch overrides it in your browser |
 | `orientation` | `landscape` | paper Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
 | `black_and_white` | `false` | Daily Reports start in black and white, for a black-and-white printer; the report's B&W box overrides it in your browser |
 | `check_updates` | `true` | `generate` and `capture` say when a newer release is out (asks GitHub at most once a day) |
@@ -252,6 +271,8 @@ or use `cores config --set KEY VALUE`.
 | `cores_report.py` | JSON -> Daily Report HTML in the UAB Medicine brand (UAB Green and Healing Teal, Aktiv Grotesk or Arial): search, filters, sort, Sections menu, Inspect, paper orientation, B&W, Optimize widths, print layout |
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
+| `unit_locations.json` | where each unit is (see *Unit locations*); edit it in any editor |
+| `make_synthetic.py` | writes a made-up report (`reports\SYNTHETIC test report.json`, no real patients) for trying layout and printing |
 | `requirements.txt` | Python packages |
 | `release.py` | publishes a release (development copy only; not in the release zip) |
 | `.cores-update.json` | made by `cores update`: when GitHub was last asked, and the files the installed release put here |
