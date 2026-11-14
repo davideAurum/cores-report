@@ -1,0 +1,1417 @@
+[
+ {
+  "person_id": 99900001,
+  "encntr_id": 99800001,
+  "mrn": "9990001",
+  "fin": "99900000001",
+  "mrn_mrn": "9990001",
+  "patient_name": "ZZTEST, ALPHA",
+  "patient_name_last": "ZZTEST",
+  "birth_date": "01-JAN-1951",
+  "age": "75 Years",
+  "gender": "F",
+  "unit": "ZZICU",
+  "location": "ZZICU Z11-01",
+  "room": "Z11",
+  "bed": "01",
+  "status": "ICU",
+  "facility": "ZZMAIN",
+  "encntr_type": "Inpatient",
+  "admit_dt_tm": "01-NOV-2026 10:00",
+  "admitdate": "01-NOV-2026",
+  "admit_day": 13,
+  "service": "ZZ Pulmonary",
+  "team": "Consult",
+  "team_id": 11,
+  "sub_team": "None",
+  "sub_team_id": 0,
+  "primary_team_name": "ZZ Pulmonary - Consult",
+  "list_type": "INPATIENT",
+  "consult": 1,
+  "one_liner": "ADMIT: MADE-UP DIAGNOSIS 1 (invented for testing)",
+  "code_status": [
+   {
+    "order_disp": "Full Code",
+    "order_as": "Full Code",
+    "order_detail": "",
+    "dnar": 0
+   }
+  ],
+  "roles": [
+   {
+    "role": "Team Attending",
+    "assign_name": "ZZDOCTOR, TEST",
+    "assign_username": "zzdoctor",
+    "pager": ""
+   }
+  ],
+  "handoff_fields": [
+   {
+    "element_label": "Patient Summary",
+    "element_name": "PT_SUMMARY",
+    "element_type": "TEXTBOX",
+    "value": "Invented summary for test patient 1.",
+    "tasks": [],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   },
+   {
+    "element_label": "Action List",
+    "element_name": "ACTION_LIST",
+    "element_type": "TASKLIST",
+    "value": "",
+    "tasks": [
+     {
+      "descr": "Invented task",
+      "due_dt_tm": "",
+      "complete_ind": 0,
+      "overdue_ind": 0
+     }
+    ],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   }
+  ],
+  "result_list": {
+   "col": [
+    {
+     "event_set": "Heart Rate",
+     "since": "ADMIT",
+     "since_dt_tm": "01-NOV-2026 10:00",
+     "list": [
+      {
+       "event_display": "Heart Rate",
+       "result_val": "80",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000100,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "81",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000101,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "82",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000102,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "83",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000103,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "84",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000104,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "80",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000105,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    },
+    {
+     "event_set": "Sodium",
+     "since": "72",
+     "since_dt_tm": "11-NOV-2026 00:00",
+     "list": [
+      {
+       "event_display": "Sodium",
+       "result_val": "136",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000100,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "137",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000101,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "138",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000102,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "139",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000103,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "140",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000104,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "136",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000105,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    }
+   ],
+   "list": [
+    {
+     "last_label": "Heart Rate",
+     "last_value": "80",
+     "last_units": "bpm",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    },
+    {
+     "last_label": "Sodium",
+     "last_value": "136",
+     "last_units": "mMol/L",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    }
+   ]
+  },
+  "med_list": {
+   "col": [
+    {
+     "list": [
+      {
+       "name": "Madeupcillin",
+       "order_mnemonic": "madeupcillin",
+       "order_details": "1 g, IV, q8h",
+       "route": "IV",
+       "freq": "q8h",
+       "class": "SCH",
+       "order_status": "Ordered",
+       "abx": 1,
+       "abx_day": 1
+      }
+     ]
+    }
+   ]
+  },
+  "pending_results": {
+   "list": [
+    {
+     "catalog_desc": "Blood Cultures",
+     "order_id": 99700001
+    }
+   ]
+  },
+  "custom_fields": [
+   {
+    "type": "IO_NET",
+    "value": "<span>+100 mL</span>"
+   },
+   {
+    "type": "CUST_DIET",
+    "value": "<span>NPO</span>"
+   }
+  ],
+  "rendered": true,
+  "sElmtId": "pt_row_1"
+ },
+ {
+  "person_id": 99900002,
+  "encntr_id": 99800002,
+  "mrn": "9990002",
+  "fin": "99900000002",
+  "mrn_mrn": "9990002",
+  "patient_name": "ZZTEST, BRAVO",
+  "patient_name_last": "ZZTEST",
+  "birth_date": "01-JAN-1952",
+  "age": "74 Years",
+  "gender": "M",
+  "unit": "ZZICU",
+  "location": "ZZICU Z12-01",
+  "room": "Z12",
+  "bed": "01",
+  "status": "ICU",
+  "facility": "ZZMAIN",
+  "encntr_type": "Inpatient",
+  "admit_dt_tm": "02-NOV-2026 10:00",
+  "admitdate": "02-NOV-2026",
+  "admit_day": 12,
+  "service": "ZZ Pulmonary",
+  "team": "Consult",
+  "team_id": 11,
+  "sub_team": "None",
+  "sub_team_id": 0,
+  "primary_team_name": "ZZ Pulmonary - Consult",
+  "list_type": "INPATIENT",
+  "consult": 1,
+  "one_liner": "ADMIT: MADE-UP DIAGNOSIS 2 (invented for testing)",
+  "code_status": [
+   {
+    "order_disp": "Full Code",
+    "order_as": "Full Code",
+    "order_detail": "",
+    "dnar": 0
+   }
+  ],
+  "roles": [
+   {
+    "role": "Team Attending",
+    "assign_name": "ZZDOCTOR, TEST",
+    "assign_username": "zzdoctor",
+    "pager": ""
+   }
+  ],
+  "handoff_fields": [
+   {
+    "element_label": "Patient Summary",
+    "element_name": "PT_SUMMARY",
+    "element_type": "TEXTBOX",
+    "value": "Invented summary for test patient 2.",
+    "tasks": [],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   },
+   {
+    "element_label": "Action List",
+    "element_name": "ACTION_LIST",
+    "element_type": "TASKLIST",
+    "value": "",
+    "tasks": [
+     {
+      "descr": "Invented task",
+      "due_dt_tm": "",
+      "complete_ind": 0,
+      "overdue_ind": 0
+     }
+    ],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   }
+  ],
+  "result_list": {
+   "col": [
+    {
+     "event_set": "Heart Rate",
+     "since": "ADMIT",
+     "since_dt_tm": "02-NOV-2026 10:00",
+     "list": [
+      {
+       "event_display": "Heart Rate",
+       "result_val": "81",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000200,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "82",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000201,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "83",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000202,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "84",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000203,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "80",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000204,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "81",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000205,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    },
+    {
+     "event_set": "Sodium",
+     "since": "72",
+     "since_dt_tm": "11-NOV-2026 00:00",
+     "list": [
+      {
+       "event_display": "Sodium",
+       "result_val": "137",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000200,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "138",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000201,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "139",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000202,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "140",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000203,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "136",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000204,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "137",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000205,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    }
+   ],
+   "list": [
+    {
+     "last_label": "Heart Rate",
+     "last_value": "81",
+     "last_units": "bpm",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    },
+    {
+     "last_label": "Sodium",
+     "last_value": "137",
+     "last_units": "mMol/L",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    }
+   ]
+  },
+  "med_list": {
+   "col": [
+    {
+     "list": [
+      {
+       "name": "Madeupcillin",
+       "order_mnemonic": "madeupcillin",
+       "order_details": "1 g, IV, q8h",
+       "route": "IV",
+       "freq": "q8h",
+       "class": "SCH",
+       "order_status": "Ordered",
+       "abx": 1,
+       "abx_day": 2
+      }
+     ]
+    }
+   ]
+  },
+  "pending_results": {
+   "list": [
+    {
+     "catalog_desc": "Blood Cultures",
+     "order_id": 99700002
+    }
+   ]
+  },
+  "custom_fields": [
+   {
+    "type": "IO_NET",
+    "value": "<span>+100 mL</span>"
+   },
+   {
+    "type": "CUST_DIET",
+    "value": "<span>NPO</span>"
+   }
+  ],
+  "rendered": true,
+  "sElmtId": "pt_row_2"
+ },
+ {
+  "person_id": 99900003,
+  "encntr_id": 99800003,
+  "mrn": "9990003",
+  "fin": "99900000003",
+  "mrn_mrn": "9990003",
+  "patient_name": "ZZTEST, CHARLIE",
+  "patient_name_last": "ZZTEST",
+  "birth_date": "01-JAN-1953",
+  "age": "73 Years",
+  "gender": "F",
+  "unit": "ZZICU",
+  "location": "ZZICU Z13-01",
+  "room": "Z13",
+  "bed": "01",
+  "status": "ICU",
+  "facility": "ZZMAIN",
+  "encntr_type": "Inpatient",
+  "admit_dt_tm": "03-NOV-2026 10:00",
+  "admitdate": "03-NOV-2026",
+  "admit_day": 11,
+  "service": "ZZ Pulmonary",
+  "team": "Consult",
+  "team_id": 11,
+  "sub_team": "None",
+  "sub_team_id": 0,
+  "primary_team_name": "ZZ Pulmonary - Consult",
+  "list_type": "INPATIENT",
+  "consult": 1,
+  "one_liner": "ADMIT: MADE-UP DIAGNOSIS 3 (invented for testing)",
+  "code_status": [
+   {
+    "order_disp": "Full Code",
+    "order_as": "Full Code",
+    "order_detail": "",
+    "dnar": 0
+   }
+  ],
+  "roles": [
+   {
+    "role": "Team Attending",
+    "assign_name": "ZZDOCTOR, TEST",
+    "assign_username": "zzdoctor",
+    "pager": ""
+   }
+  ],
+  "handoff_fields": [
+   {
+    "element_label": "Patient Summary",
+    "element_name": "PT_SUMMARY",
+    "element_type": "TEXTBOX",
+    "value": "Invented summary for test patient 3.",
+    "tasks": [],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   },
+   {
+    "element_label": "Action List",
+    "element_name": "ACTION_LIST",
+    "element_type": "TASKLIST",
+    "value": "",
+    "tasks": [
+     {
+      "descr": "Invented task",
+      "due_dt_tm": "",
+      "complete_ind": 0,
+      "overdue_ind": 0
+     }
+    ],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   }
+  ],
+  "result_list": {
+   "col": [
+    {
+     "event_set": "Heart Rate",
+     "since": "ADMIT",
+     "since_dt_tm": "03-NOV-2026 10:00",
+     "list": [
+      {
+       "event_display": "Heart Rate",
+       "result_val": "82",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000300,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "83",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000301,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "84",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000302,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "80",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000303,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "81",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000304,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "82",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000305,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    },
+    {
+     "event_set": "Sodium",
+     "since": "72",
+     "since_dt_tm": "11-NOV-2026 00:00",
+     "list": [
+      {
+       "event_display": "Sodium",
+       "result_val": "138",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000300,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "139",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000301,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "140",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000302,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "136",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000303,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "137",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000304,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "138",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000305,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    }
+   ],
+   "list": [
+    {
+     "last_label": "Heart Rate",
+     "last_value": "82",
+     "last_units": "bpm",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    },
+    {
+     "last_label": "Sodium",
+     "last_value": "138",
+     "last_units": "mMol/L",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    }
+   ]
+  },
+  "med_list": {
+   "col": [
+    {
+     "list": [
+      {
+       "name": "Madeupcillin",
+       "order_mnemonic": "madeupcillin",
+       "order_details": "1 g, IV, q8h",
+       "route": "IV",
+       "freq": "q8h",
+       "class": "SCH",
+       "order_status": "Ordered",
+       "abx": 1,
+       "abx_day": 3
+      }
+     ]
+    }
+   ]
+  },
+  "pending_results": {
+   "list": [
+    {
+     "catalog_desc": "Blood Cultures",
+     "order_id": 99700003
+    }
+   ]
+  },
+  "custom_fields": [
+   {
+    "type": "IO_NET",
+    "value": "<span>+100 mL</span>"
+   },
+   {
+    "type": "CUST_DIET",
+    "value": "<span>NPO</span>"
+   }
+  ],
+  "rendered": true,
+  "sElmtId": "pt_row_3"
+ },
+ {
+  "person_id": 99900004,
+  "encntr_id": 99800004,
+  "mrn": "9990004",
+  "fin": "99900000004",
+  "mrn_mrn": "9990004",
+  "patient_name": "ZZTEST, DELTA",
+  "patient_name_last": "ZZTEST",
+  "birth_date": "01-JAN-1954",
+  "age": "72 Years",
+  "gender": "M",
+  "unit": "ZZFLOOR",
+  "location": "ZZFLOOR Z14-01",
+  "room": "Z14",
+  "bed": "01",
+  "status": "Floor",
+  "facility": "ZZMAIN",
+  "encntr_type": "Inpatient",
+  "admit_dt_tm": "04-NOV-2026 10:00",
+  "admitdate": "04-NOV-2026",
+  "admit_day": 10,
+  "service": "ZZ Pulmonary IP",
+  "team": "IP",
+  "team_id": 12,
+  "sub_team": "None",
+  "sub_team_id": 0,
+  "primary_team_name": "ZZ Pulmonary IP - IP",
+  "list_type": "INPATIENT",
+  "consult": 0,
+  "one_liner": "ADMIT: MADE-UP DIAGNOSIS 4 (invented for testing)",
+  "code_status": [
+   {
+    "order_disp": "Full Code",
+    "order_as": "Full Code",
+    "order_detail": "",
+    "dnar": 0
+   }
+  ],
+  "roles": [
+   {
+    "role": "Team Attending",
+    "assign_name": "ZZDOCTOR, TEST",
+    "assign_username": "zzdoctor",
+    "pager": ""
+   }
+  ],
+  "handoff_fields": [
+   {
+    "element_label": "Patient Summary",
+    "element_name": "PT_SUMMARY",
+    "element_type": "TEXTBOX",
+    "value": "Invented summary for test patient 4.",
+    "tasks": [],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   },
+   {
+    "element_label": "Action List",
+    "element_name": "ACTION_LIST",
+    "element_type": "TASKLIST",
+    "value": "",
+    "tasks": [
+     {
+      "descr": "Invented task",
+      "due_dt_tm": "",
+      "complete_ind": 0,
+      "overdue_ind": 0
+     }
+    ],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   }
+  ],
+  "result_list": {
+   "col": [
+    {
+     "event_set": "Heart Rate",
+     "since": "ADMIT",
+     "since_dt_tm": "04-NOV-2026 10:00",
+     "list": [
+      {
+       "event_display": "Heart Rate",
+       "result_val": "83",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000400,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "84",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000401,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "80",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000402,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "81",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000403,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "82",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000404,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "83",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000405,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    },
+    {
+     "event_set": "Sodium",
+     "since": "72",
+     "since_dt_tm": "11-NOV-2026 00:00",
+     "list": [
+      {
+       "event_display": "Sodium",
+       "result_val": "139",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000400,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "140",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000401,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "136",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000402,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "137",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000403,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "138",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000404,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "139",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000405,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    }
+   ],
+   "list": [
+    {
+     "last_label": "Heart Rate",
+     "last_value": "83",
+     "last_units": "bpm",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    },
+    {
+     "last_label": "Sodium",
+     "last_value": "139",
+     "last_units": "mMol/L",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    }
+   ]
+  },
+  "med_list": {
+   "col": [
+    {
+     "list": [
+      {
+       "name": "Madeupcillin",
+       "order_mnemonic": "madeupcillin",
+       "order_details": "1 g, IV, q8h",
+       "route": "IV",
+       "freq": "q8h",
+       "class": "SCH",
+       "order_status": "Ordered",
+       "abx": 1,
+       "abx_day": 4
+      }
+     ]
+    }
+   ]
+  },
+  "pending_results": {
+   "list": [
+    {
+     "catalog_desc": "Blood Cultures",
+     "order_id": 99700004
+    }
+   ]
+  },
+  "custom_fields": [
+   {
+    "type": "IO_NET",
+    "value": "<span>+100 mL</span>"
+   },
+   {
+    "type": "CUST_DIET",
+    "value": "<span>NPO</span>"
+   }
+  ],
+  "rendered": true,
+  "sElmtId": "pt_row_4"
+ },
+ {
+  "person_id": 99900005,
+  "encntr_id": 99800005,
+  "mrn": "9990005",
+  "fin": "99900000005",
+  "mrn_mrn": "9990005",
+  "patient_name": "ZZTEST, ECHO",
+  "patient_name_last": "ZZTEST",
+  "birth_date": "01-JAN-1955",
+  "age": "71 Years",
+  "gender": "F",
+  "unit": "ZZFLOOR",
+  "location": "ZZFLOOR Z15-01",
+  "room": "Z15",
+  "bed": "01",
+  "status": "Floor",
+  "facility": "ZZMAIN",
+  "encntr_type": "Inpatient",
+  "admit_dt_tm": "05-NOV-2026 10:00",
+  "admitdate": "05-NOV-2026",
+  "admit_day": 9,
+  "service": "ZZ Pulmonary IP",
+  "team": "IP",
+  "team_id": 12,
+  "sub_team": "None",
+  "sub_team_id": 0,
+  "primary_team_name": "ZZ Pulmonary IP - IP",
+  "list_type": "INPATIENT",
+  "consult": 0,
+  "one_liner": "ADMIT: MADE-UP DIAGNOSIS 5 (invented for testing)",
+  "code_status": [
+   {
+    "order_disp": "Full Code",
+    "order_as": "Full Code",
+    "order_detail": "",
+    "dnar": 0
+   }
+  ],
+  "roles": [
+   {
+    "role": "Team Attending",
+    "assign_name": "ZZDOCTOR, TEST",
+    "assign_username": "zzdoctor",
+    "pager": ""
+   }
+  ],
+  "handoff_fields": [
+   {
+    "element_label": "Patient Summary",
+    "element_name": "PT_SUMMARY",
+    "element_type": "TEXTBOX",
+    "value": "Invented summary for test patient 5.",
+    "tasks": [],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   },
+   {
+    "element_label": "Action List",
+    "element_name": "ACTION_LIST",
+    "element_type": "TASKLIST",
+    "value": "",
+    "tasks": [
+     {
+      "descr": "Invented task",
+      "due_dt_tm": "",
+      "complete_ind": 0,
+      "overdue_ind": 0
+     }
+    ],
+    "updt_prsnl_name": "ZZDOCTOR, TEST"
+   }
+  ],
+  "result_list": {
+   "col": [
+    {
+     "event_set": "Heart Rate",
+     "since": "ADMIT",
+     "since_dt_tm": "05-NOV-2026 10:00",
+     "list": [
+      {
+       "event_display": "Heart Rate",
+       "result_val": "84",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000500,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "80",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000501,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "81",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000502,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "82",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000503,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "83",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000504,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Heart Rate",
+       "result_val": "84",
+       "result_status": "Auth (Verified)",
+       "result_units": "bpm",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000505,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    },
+    {
+     "event_set": "Sodium",
+     "since": "72",
+     "since_dt_tm": "11-NOV-2026 00:00",
+     "list": [
+      {
+       "event_display": "Sodium",
+       "result_val": "140",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 00:00",
+       "event_id": 99000500,
+       "updt_dt_tm": "14-NOV-2026 00:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "136",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 01:00",
+       "event_id": 99000501,
+       "updt_dt_tm": "14-NOV-2026 01:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "137",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 02:00",
+       "event_id": 99000502,
+       "updt_dt_tm": "14-NOV-2026 02:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "138",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 03:00",
+       "event_id": 99000503,
+       "updt_dt_tm": "14-NOV-2026 03:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "139",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 04:00",
+       "event_id": 99000504,
+       "updt_dt_tm": "14-NOV-2026 04:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      },
+      {
+       "event_display": "Sodium",
+       "result_val": "140",
+       "result_status": "Auth (Verified)",
+       "result_units": "mMol/L",
+       "event_end_dt_tm": "14-NOV-2026 05:00",
+       "event_id": 99000505,
+       "updt_dt_tm": "14-NOV-2026 05:05",
+       "abnormal_ind": 0,
+       "critical_ind": 0
+      }
+     ]
+    }
+   ],
+   "list": [
+    {
+     "last_label": "Heart Rate",
+     "last_value": "84",
+     "last_units": "bpm",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    },
+    {
+     "last_label": "Sodium",
+     "last_value": "140",
+     "last_units": "mMol/L",
+     "last_date": "14-NOV-2026 05:00",
+     "last_event_class": "NUM",
+     "count": 6,
+     "abnormal_ind": 0,
+     "critical_ind": 0
+    }
+   ]
+  },
+  "med_list": {
+   "col": [
+    {
+     "list": [
+      {
+       "name": "Madeupcillin",
+       "order_mnemonic": "madeupcillin",
+       "order_details": "1 g, IV, q8h",
+       "route": "IV",
+       "freq": "q8h",
+       "class": "SCH",
+       "order_status": "Ordered",
+       "abx": 1,
+       "abx_day": 5
+      }
+     ]
+    }
+   ]
+  },
+  "pending_results": {
+   "list": [
+    {
+     "catalog_desc": "Blood Cultures",
+     "order_id": 99700005
+    }
+   ]
+  },
+  "custom_fields": [
+   {
+    "type": "IO_NET",
+    "value": "<span>+100 mL</span>"
+   },
+   {
+    "type": "CUST_DIET",
+    "value": "<span>NPO</span>"
+   }
+  ],
+  "rendered": true,
+  "sElmtId": "pt_row_5"
+ }
+]

@@ -1,0 +1,96 @@
+<!doctype html>
+<!--
+  FAKE CORES report window, opened by test/fake_cores.html (see the top of that file for how to serve it and what
+  the fk_ switches mean). Invented patients only.
+
+  Like CORES's report 281 window it loads its own data, renders one tr.row_template per patient (ids row_template_1,
+  row_template_2 ...; the empty template row has no id), then builds a form with an "html" field and submits it to
+  generate_pdf_2.php for a PDF. captureCores() takes that form instead; without it the fake "PDF" page shows.
+  The rows use the I-PASS Detailed layout's six columns, so cores_parse.py can read a capture of this window.
+
+  With fk_mode=opener (the default) this window also writes the patient records into the window that opened it:
+  window.opener.global_constant_row_info.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>FAKE CORES report (invented patients)</title>
+<style>
+  body { font: 12px/1.35 Arial, sans-serif; margin: 10px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { border: 1px solid #999; padding: 3px 5px; vertical-align: top; }
+  .page_header_template td { border: 0; font-weight: bold; }
+</style>
+</head>
+<body>
+<table class="page_header_template"><tr>
+  <td>FAKE I-PASS Detailed (invented patients)</td>
+  <td><span field="service">[Multiple Services Selected]</span> <span field="team">[Multiple Teams Selected]</span></td>
+  <td><span field="print_date">11/14/26 07:00</span> <span field="name">ZZUSER, TEST</span> <span field="username">zzuser</span></td>
+</tr></table>
+<table class="report_table"><tbody id="report_rows">
+  <tr class="row_template" style="display:none"><td></td></tr>
+</tbody></table>
+
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var MODE = q.get('fk_mode') || 'opener', FILL = q.get('fk_fill') || 'assign';
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function field(s) { return '<span class="t4m_report_field">' + esc(s) + '</span>'; }
+
+  function fake_render(rows) {
+    var html = '';
+    rows.forEach(function (r, i) {
+      html += '<tr class="row_template" id="row_template_' + (i + 1) + '">' +
+        '<td column_name="Illness Severity"><span class="report_signout_acuity">Stable</span> ' +
+          [r.status, r.patient_name, r.mrn, '01/01/19' + (51 + i), r.age.replace(/ Years/, 'y'), r.gender, r.unit, r.room, r.bed, String(r.admit_day)].map(field).join(' ') +
+          ' LOS: ' + r.admit_day + ' Allergy: NKA Code: Full Code Diet: NPO</td>' +
+        '<td column_name="Patient Summary">' + field(r.handoff_fields[0].value) + '</td>' +
+        '<td column_name="Action List"><span class="section" section_name="Action List">' + field('[ ] Invented task') + '</span>' +
+          '<span class="section" section_name="Situational Awareness">' + field('- Invented contingency') + '</span></td>' +
+        '<td column_name="Situational Awareness (Vitals/Labs)"><span class="t4m_report_color_black">T: 37.0 ( 36.5 - 37.5 ) HR: ' + (80 + i) +
+          ' ( 70 - 90 ) RR: 16 ( 12 - 20 ) SpO2: 97 ( 94 - 99 ) SBP: 120 ( 100 - 130 ) DBP: 70 ( 60 - 80 ) O2: Room air</span></td>' +
+        '<td column_name="Situational Awareness (Meds)"><span class="section" title="Scheduled Meds"><span class="column_section_header">Scheduled Meds</span><br>' +
+          'Madeupcillin <span>1 g IV q8h</span><br></span></td>' +
+        '<td column_name="Notes"></td></tr>';
+    });
+    document.getElementById('report_rows').insertAdjacentHTML('beforeend', html);
+  }
+
+  // fk_mode=opener: the report window hands the patient records to the list that opened it
+  function fake_fill_opener(rows) {
+    var op = window.opener; if (!op) return;
+    if (FILL === 'push') {
+      op.global_constant_row_info = [];
+      rows.forEach(function fake_push_one(r) { op.global_constant_row_info.push(r); });
+    } else if (FILL === 'strict') {
+      (function () { 'use strict'; op.global_constant_row_info = rows; })();
+    } else op.global_constant_row_info = rows;
+    try { op.fakeCores.asyncColumns(); } catch (e) {}
+  }
+
+  // like CORES's PDF-type reports: <form><input name=options><input name=html></form>, then form.submit()
+  function fake_submit_pdf() {
+    var f = document.createElement('form');
+    f.method = 'post'; f.action = 'generate_pdf_2.php';
+    var o = document.createElement('input'); o.type = 'hidden'; o.name = 'options'; o.value = 'orientation:landscape';
+    var h = document.createElement('input'); h.type = 'hidden'; h.name = 'html'; h.value = '<html>' + document.documentElement.innerHTML + '</html>';
+    f.appendChild(o); f.appendChild(h); document.body.appendChild(f);
+    f.submit();
+  }
+
+  var x = new XMLHttpRequest();
+  x.open('GET', 'fake_rows.json?prg_name=univ_wa_rnd_report_data&options=report_id:281&person_ids=99900001,99900002', true);
+  x.onload = function fake_report_data_loaded() {
+    var rows = JSON.parse(x.responseText);
+    fake_render(rows);
+    if (MODE === 'opener') setTimeout(function fake_after_render() { fake_fill_opener(rows); }, 200);
+    setTimeout(fake_submit_pdf, 1200);   // late enough for a capture's 25 ms watch to be in place, even on a slowed timer
+    if (q.get('fk_autoclose')) setTimeout(function () { window.close(); }, parseInt(q.get('fk_autoclose'), 10) || 1500);
+  };
+  x.send();
+})();
+</script>
+</body>
+</html>

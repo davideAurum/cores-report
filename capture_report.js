@@ -11,6 +11,8 @@
 //                             captureCores({folder: true})     also write the file into a folder you pick once
 //                             captureCores({timeout: 180})     seconds to wait for the report (default 120)
 //                             captureCores({retries: 4})       Reload presses when CORES says it cannot load the list (default 2)
+//                             captureCores({data: false})      leave CORES's clinical data (<!-- CORES data -->) out of the capture
+//                             captureCores({log: false})       leave the HUD's event log (<!-- CORES log -->) out of the capture
 //                             captureCores(281, {download: false})   direct mode with options
 //
 // (`cores capture` on your PC puts this file on the clipboard with the captureCores(...) line already added.)
@@ -32,6 +34,8 @@
 // written automatically (the CORES page keeps the focus away from it), a banner at the top of the patient list offers
 // a "Copy to clipboard" button; one click does it. The HTML is also kept in window.coresCaptured.
 // While a capture runs, a small status box (draggable, collapsible) in the patient list shows its progress and messages.
+// Its magnifier opens the tools that look at the CORES page without showing patient data: Find, Describe, Columns, Map
+// and Trace (traceCores(): what loads CORES's patient records; see CORES_PAGE_NOTES.md).
 (function () {
   var BASE = location.origin + '/cores/uab/prod/cores.4.11.0/base/public_web/';
   var DB = 'cores-capture', STORE = 'kv';
@@ -100,8 +104,8 @@
     var clock = ovEl('span', 'flex:none;font-variant-numeric:tabular-nums;color:' + OV_C.mute, '');
     bar.appendChild(mark); bar.appendChild(status); bar.appendChild(clock);
     var stats = ovEl('div', 'flex:none;display:flex;gap:12px;padding:3px 9px;color:#5b6773;font-size:11px;border-bottom:1px solid #eef1f4');
-    var modeEl = ovEl('span'), rowsEl = ovEl('span'), reloadEl = ovEl('span');
-    stats.appendChild(modeEl); stats.appendChild(rowsEl); stats.appendChild(reloadEl);
+    var modeEl = ovEl('span'), rowsEl = ovEl('span'), reloadEl = ovEl('span'), traceEl = ovEl('span', 'margin-left:auto;color:#b00020;font-weight:600');
+    stats.appendChild(modeEl); stats.appendChild(rowsEl); stats.appendChild(reloadEl); stats.appendChild(traceEl);
 
     // Find bar (shown by the magnifying glass)
     var findBar = ovEl('div', 'flex:none;display:none;gap:4px;padding:6px 8px;border-bottom:1px solid #e3e8ee;background:#eef4fa');
@@ -114,7 +118,10 @@
     fcols.title = 'With CORES\'s column picker open: every column name it offers. (Or type the XPath of its list first.)';
     var fmap = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Map');
     fmap.title = 'The whole shape of CORES\'s patient data, the values shared by 3+ patients, and the list\'s columns. Patient identifiers are redacted; nothing unique to a patient is shown.';
-    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc); findBar.appendChild(fcols); findBar.appendChild(fmap);
+    var ftrace = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Trace');
+    ftrace.title = 'What loads CORES\'s patient records: press it BEFORE opening the report (in a fresh CORES session), open the report as usual, then press it again to stop. It only watches; names, counts and timings, no patient data.';
+    findBar.style.flexWrap = 'wrap'; fin.style.flex = '1 1 110px';
+    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc); findBar.appendChild(fcols); findBar.appendChild(fmap); findBar.appendChild(ftrace);
 
     // the console: the script's messages, Find results, and the live spinner line at the bottom
     var list = ovEl('div', 'flex:1;min-height:0;overflow-y:auto;padding:5px 9px 7px;font:11px/1.45 ' + MONO + ';user-select:text;cursor:text');
@@ -124,7 +131,7 @@
     document.body.appendChild(root);
 
     ov = { root: root, head: head, mark: mark, status: status, clock: clock, list: list, live: null, find: findBar, input: fin,
-           rows: rowsEl, reloads: reloadEl, mode: modeEl, started: 0, tick: null, spin: null, spinKind: '', frame: 0,
+           rows: rowsEl, reloads: reloadEl, mode: modeEl, trace: traceEl, traceBtn: ftrace, started: 0, tick: null, spin: null, spinKind: '', frame: 0,
            collapsed: !!prefs.collapsed, warns: 0, errs: 0, helpOpen: prefs.helpOpen === true };
 
     function place(x, y) {   // keep the title bar on screen
@@ -210,6 +217,23 @@
         catch (err) { console.error('CORES capture: Describe failed', err); ovLog('Describe failed: ' + (err && (err.name + ': ' + err.message) || err) + '. Copy this line for Claude.', 'err'); }
       }, 30);
     }, true);
+    // a result's Copy for Claude button (showResult gives it its action)
+    window.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t || typeof t.__coresClick !== 'function' || !root.contains(t)) return;
+      e.stopPropagation();
+      try { t.__coresClick(); } catch (err) { console.error('CORES capture: Copy failed', err); }
+    }, true);
+    // Trace: arm it, or stop it and show what it saw
+    window.addEventListener('click', function (e) {
+      if (e.target !== ftrace) return;
+      e.stopPropagation();
+      setTimeout(function () {
+        try { traceCores({ hud: true }); }
+        catch (err) { console.error('CORES capture: Trace failed', err); ovLog('Trace failed: ' + (err && (err.name + ': ' + err.message) || err) + '. Copy this line for Claude.', 'err'); }
+      }, 30);
+    }, true);
+    trButton();   // a Trace armed before the HUD was rebuilt shows as armed
     window.addEventListener('keydown', function (e) {
       if (e.target !== fin) return;
       e.stopPropagation();
@@ -306,7 +330,7 @@
       ov.root.style.display = 'flex';
       ov.mode.textContent = mode;
       ov.rows.textContent = ''; ov.reloads.textContent = '';
-      ov.warns = 0; ov.errs = 0;
+      ov.warns = 0; ov.errs = 0; ov.capRows = undefined;
       if (ov.list.childNodes.length) ovLog('──── new capture ────', 'mute');
       ov.list.scrollTop = ov.list.scrollHeight;
       ov.started = Date.now();
@@ -368,6 +392,8 @@
     line.textContent = head + ': ' + text;
     ovAppend(line);
     ov.list.scrollTop = ov.list.scrollHeight;   // always in view
+    hudEvent('verdict', kind === 'ok' ? 'success' : kind === 'warn' ? 'problems' : 'failed', ov.capRows, ov.started ? Date.now() - ov.started : undefined);
+    try { trAfterCapture(); } catch (e) {}   // a Trace armed for this capture stops by itself now
   }
   function ovStat(which, text) { if (ov && ov[which] && ov[which].textContent !== text) ov[which].textContent = text; }
   // add a line to the console, above the live spinner line, keeping the view at the bottom if it was there
@@ -392,6 +418,79 @@
       line.appendChild(document.createTextNode(icon + msg));
       ovAppend(line);
     } catch (e) {}
+  }
+
+  // ---- the HUD's event log: what the HUD did, step by step, kept across sessions in this browser (localStorage, the
+  // newest 300) and carried by every capture in a comment of its own, so the PC side (cores log) can show both ends of
+  // a run. Just before the capture's closing </html>, after the CORES data comment, escaped the same way:
+  //     <!-- CORES log {"v":1,"events":[{"id":"k3f9a2-17","t":"2026-11-14T07:01:02.345Z","ev":"verdict","k":"success","n":57,"ms":8123}]} -->
+  //   id   unique per event: this session's random prefix + a counter ([a-z0-9-], 3-40 long); the PC side drops repeats by it
+  //   t    when, ISO 8601 UTC
+  //   ev   what happened, from the fixed list below
+  //   k    optional: which kind, from that event's fixed list
+  //   n    optional: a count (a non-negative whole number);  ms  optional: a duration in milliseconds
+  // Nothing else, and NEVER free text: no dialog text, no search words, no names, no addresses. An event that is not
+  // in the list, or carries anything else, is dropped, both when it is written and when the stored ones are read back.
+  // A capture carries the events up to its own delivery: how its copy, download and verdict went travels in the next
+  // capture. captureCores({log: false}) leaves the comment out.
+  var LOG_EV = {                               // ev: [the k values it may carry]
+    armed: ['window', 'direct'],               // captureCores(): waiting for CORES's own report window / opening the report itself
+    blocked: [],                               // direct mode: the browser blocked the popup
+    report_opened: ['window', 'direct'],       // a report window is in hand (opened by CORES / by the script)
+    other_window: [],                          // armed: CORES opened a window that is not a report
+    report_loaded: [],                         // the report page loaded in it (ms: since the window was in hand)
+    dialog: ['cant_load'],                     // CORES's "Can't Load Patient List" came up
+    reload: [],                                // OK and Reload pressed for it (n: which attempt)
+    rendered: ['form_submit', 'print', 'idle', 'timeout'],   // the report's HTML taken, and how (n: patient rows, ms: since the window was in hand)
+    unrendered: [],                            // ... with no patient rows in it
+    teams: ['found', 'none'],                  // each patient's team read from the list (n: patients)
+    clinical: ['found', 'none', 'off', 'error'],   // CORES's clinical data read from the list (n: patients)
+    copied: ['devtools', 'popup', 'window', 'exec', 'button'],   // on the clipboard, and which way (n: which attempt)
+    copy_failed: [],                           // not copied automatically: the banner's button is offered (n: attempts)
+    downloaded: [], download_failed: [],
+    folder_saved: [], folder_failed: [],
+    window_closed: [],                         // the report window closed before anything was captured
+    failed: ['dialog', 'timeout'],             // nothing captured, and why
+    verdict: ['success', 'problems', 'failed'],    // the capture's verdict line (n: patient rows, ms: on the HUD's clock)
+    tool: ['find', 'describe', 'columns', 'map'],  // a HUD tool's result was shown
+    trace_started: [],
+    trace_done: ['report_window', 'list_page', 'unknown', 'not_seen', 'already_there']   // who wrote the records (n: records, ms: how long it was armed)
+  };
+  var LOG_KEY = 'cores-capture-log', LOG_MAX = 300;
+  var logSession = (Math.random().toString(36).slice(2) + '000000').replace(/[^a-z0-9]/g, '').slice(0, 6), logSeq = 0, logMem = [];
+  function logWhole(x) { return typeof x === 'number' && isFinite(x) && x >= 0 && Math.floor(x) === x; }
+  function logClean(e) {   // an event rebuilt from the keys it may have, or null when anything about it is off
+    try {
+      if (!e || typeof e !== 'object') return null;
+      if (typeof e.id !== 'string' || !/^[a-z0-9-]{3,40}$/.test(e.id)) return null;
+      if (typeof e.t !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,3})?Z$/.test(e.t)) return null;
+      if (typeof e.ev !== 'string' || !Object.prototype.hasOwnProperty.call(LOG_EV, e.ev)) return null;
+      for (var key in e) if (key !== 'id' && key !== 't' && key !== 'ev' && key !== 'k' && key !== 'n' && key !== 'ms') return null;
+      var o = { id: e.id, t: e.t, ev: e.ev };
+      if (e.k !== undefined) { if (typeof e.k !== 'string' || LOG_EV[e.ev].indexOf(e.k) < 0) return null; o.k = e.k; }
+      if (e.n !== undefined) { if (!logWhole(e.n)) return null; o.n = e.n; }
+      if (e.ms !== undefined) { if (!logWhole(e.ms)) return null; o.ms = e.ms; }
+      return o;
+    } catch (x) { return null; }
+  }
+  function hudEvents() {   // the newest 300: what this browser has stored plus this session's, oldest first, each one checked
+    var all = [], seen = {}, out = [];
+    try { var st = JSON.parse(localStorage.getItem(LOG_KEY) || 'null'); if (st && st.v === 1 && Array.isArray(st.events)) all = st.events.slice(-2 * LOG_MAX); } catch (e) {}
+    all.concat(logMem).forEach(function (e) { var c = logClean(e); if (c && !seen[c.id]) { seen[c.id] = 1; out.push(c); } });
+    out.sort(function (a, b) { return a.t < b.t ? -1 : a.t > b.t ? 1 : 0; });
+    return out.length > LOG_MAX ? out.slice(-LOG_MAX) : out;
+  }
+  function hudEvent(ev, k, n, ms) {   // never throws, never stops the step it reports
+    try {
+      var e = { id: logSession + '-' + (++logSeq), t: new Date().toISOString(), ev: ev };
+      if (k !== undefined && k !== null && k !== '') e.k = String(k);
+      if (typeof n === 'number' && isFinite(n) && n >= 0) e.n = Math.floor(n);
+      if (typeof ms === 'number' && isFinite(ms) && ms >= 0) e.ms = Math.floor(ms);
+      e = logClean(e); if (!e) return;
+      logMem.push(e); if (logMem.length > LOG_MAX) logMem = logMem.slice(-LOG_MAX);
+      var all = hudEvents();   // with what another CORES window may have stored meanwhile
+      try { localStorage.setItem(LOG_KEY, JSON.stringify({ v: 1, events: all })); } catch (x) {}
+    } catch (x) {}
   }
 
   // ---- a small banner at the top of the patient list, for the steps that need a click
@@ -460,7 +559,7 @@
     var done = 'report HTML is on the clipboard (' + text.length.toLocaleString() + ' chars); on your PC run   cores generate';
     var why = [];
     if (devtoolsCopy) {
-      try { devtoolsCopy(text); log(done + ' (DevTools copy)', 'ok'); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }
+      try { devtoolsCopy(text); log(done + ' (DevTools copy)', 'ok'); hudEvent('copied', 'devtools', attempt); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }
     } else why.push('no DevTools copy() helper (the page has its own "copy")');
     // the report window is the focused one right after the capture (it was just opened by your click), and the clipboard
     // API only writes from a focused document: try from there first, then from this window
@@ -478,7 +577,7 @@
       if (!(navigator.clipboard && navigator.clipboard.writeText)) throw new Error('no clipboard API on this page');
       return navigator.clipboard.writeText(text).then(function () { return 'this window'; });
     });
-    return p.then(function (via) { log(done + ' (via ' + via + ')', 'ok'); return true; }, function (e) {
+    return p.then(function (via) { log(done + ' (via ' + via + ')', 'ok'); hudEvent('copied', via === 'this window' ? 'window' : 'popup', attempt); return true; }, function (e) {
       why.push('clipboard API: ' + (e && e.message || e));
       var ok = false;
       try {
@@ -487,16 +586,17 @@
         document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove();
         if (!ok) why.push('execCommand copy refused');
       } catch (e2) { why.push('execCommand: ' + (e2 && e2.message || e2)); }
-      if (ok) { log(done, 'ok'); return true; }
+      if (ok) { log(done, 'ok'); hudEvent('copied', 'exec', attempt); return true; }
       if (attempt < 4) {   // the report window has the focus: close it, so this window gets it back, and try again
         try { if (popup && !popup.closed) (popup.__realClose || popup.close).call(popup); } catch (e) {}
         try { window.focus(); } catch (e) {}
         return new Promise(function (res) { setTimeout(function () { res(copyText(text, name, attempt + 1, null)); }, 2000); });
       }
       showBanner('CORES capture "' + name + '" is ready.', [['Copy to clipboard', function (el) {
-        navigator.clipboard.writeText(text).then(function () { el.textContent = 'Copied'; log(done, 'ok'); },
+        navigator.clipboard.writeText(text).then(function () { el.textContent = 'Copied'; log(done, 'ok'); hudEvent('copied', 'button'); },
           function (e3) { el.textContent = 'Copy failed: ' + e3.message; });
       }]]);
+      hudEvent('copy_failed', null, attempt);
       log('could not copy automatically (' + why.join('; ') + '). Click "Copy to clipboard" in the banner at the top of the ' +
         'patient list (one click; that always works).', 'warn');
       return false;
@@ -513,14 +613,14 @@
     return dir.getFileHandle(name, { create: true })
       .then(function (fh) { return fh.createWritable(); })
       .then(function (w) { return w.write(text).then(function () { return w.close(); }); })
-      .then(function () { log('saved ' + name + ' into the folder "' + dir.name + '"', 'ok'); showBanner('CORES capture: saved ' + name + ' into "' + dir.name + '".'); return true; });
+      .then(function () { log('saved ' + name + ' into the folder "' + dir.name + '"', 'ok'); hudEvent('folder_saved'); showBanner('CORES capture: saved ' + name + ' into "' + dir.name + '".'); return true; });
   }
   function saveToFolder(text, name) {
     if (!window.showDirectoryPicker) {
       log('this browser has no folder picker (File System Access API); the folder option is ignored', 'warn');
       return Promise.resolve(false);
     }
-    var failed = function (el) { return function (e) { el.textContent = 'Failed: ' + e.message; log('folder save failed: ' + e.message, 'warn'); }; };
+    var failed = function (el) { return function (e) { el.textContent = 'Failed: ' + e.message; log('folder save failed: ' + e.message, 'warn'); hudEvent('folder_failed'); }; };
     return idbGet('dir').catch(function () { return null; }).then(function (dir) {
       if (!dir) {
         showBanner('CORES capture "' + name + '" is ready. Choose the folder for captures (remembered next time):',
@@ -537,7 +637,7 @@
         ]);
         return false;
       });
-    }).catch(function (e) { log('folder save failed: ' + e.message, 'warn'); return false; });
+    }).catch(function (e) { log('folder save failed: ' + e.message, 'warn'); hudEvent('folder_failed'); return false; });
   }
 
   // ---- deliver the captured HTML every way that is switched on
@@ -634,10 +734,14 @@
     html = String(html).replace(/\r\n/g, '\n');   // so the clipboard, download and folder copies are byte-identical
     var text = '<!-- CORES capture ' + name + ' -->\n';   // the name travels with the text (used by cores --clipboard)
     if (opts.teams) text += '<!-- CORES teams ' + JSON.stringify(opts.teams).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
-    if (opts.clinical) {
-      var dataComment = '<!-- CORES data ' + (opts.clinicalText || JSON.stringify(opts.clinical)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
-      html = /<\/html>\s*$/i.test(html) ? html.replace(/<\/html>\s*$/i, function () { return dataComment + '</html>'; }) : html + '\n' + dataComment;
+    // before the closing </html>: the CORES data comment, then the HUD's event log (see LOG_EV), escaped alike
+    var tail = '';
+    if (opts.clinical) tail += '<!-- CORES data ' + (opts.clinicalText || JSON.stringify(opts.clinical)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
+    if (opts.log !== false) {
+      var evs = []; try { evs = hudEvents(); } catch (e) {}
+      if (evs.length) tail += '<!-- CORES log ' + JSON.stringify({ v: 1, events: evs }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
     }
+    if (tail) html = /<\/html>\s*$/i.test(html) ? html.replace(/<\/html>\s*$/i, function () { return tail + '</html>'; }) : html + '\n' + tail;
     text += html;
     window.coresCaptured = text;
     var jobs = [];
@@ -649,8 +753,8 @@
         a.href = URL.createObjectURL(new Blob([text], { type: 'text/html' }));
         a.download = name;
         document.body.appendChild(a); a.click(); a.remove();
-        log('download started: ' + name, 'ok');
-      } catch (e) { log('download failed: ' + e.message, 'warn'); }
+        log('download started: ' + name, 'ok'); hudEvent('downloaded');
+      } catch (e) { log('download failed: ' + e.message, 'warn'); hudEvent('download_failed'); }
     }
     return Promise.all(jobs);
   }
@@ -699,6 +803,8 @@
   function watchReport(popup, opts, reportId) {
     var retries = opts.retries === undefined ? 2 : opts.retries;
     var done = false, lastRows = 0, lastChange = Date.now(), timer, killer, reloadTimer = null, ticks = 0, reloads = 0, dialogSeen = '';
+    var watchT0 = Date.now();   // for the event log's durations
+    var HOW_KEY = { 'form submit intercepted': 'form_submit', 'window.print intercepted': 'print', 'rendered and idle': 'idle', 'timeout with rows present': 'timeout' };
 
     function wrap(inner) { return '<html>' + inner + '</html>'; }
     function stop() { done = true; clearInterval(timer); clearTimeout(killer); if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null; } }
@@ -713,17 +819,24 @@
       var rows = (html.match(/id="row_template_\d+"/g) || []).length;
       log('captured (' + how + '): ' + html.length.toLocaleString() + ' chars, ' + rows + ' patient rows -> ' + name, rows ? 'ok' : 'warn');
       ovStat('rows', rows + ' patient row' + (rows === 1 ? '' : 's'));
+      hudEvent('rendered', HOW_KEY[how], rows, Date.now() - watchT0);
+      if (ov) ov.capRows = rows;
       if (rows === 0) {
         log('no rendered patient rows in it: CORES did not render the report. The capture is delivered anyway, marked in its name.', 'warn');
         name = name.replace(/\.html$/, ' UNRENDERED.html');
+        hudEvent('unrendered');
       }
       ovStatus('Delivering ' + rows + ' patient rows (clipboard' + (opts.download !== false ? ', download' : '') + (opts.folder ? ', folder' : '') + ')\u2026', 'busy');
       var o = {}; for (var k in opts) o[k] = opts[k]; o.popup = popup;   // the report window is still open and focused now
       try { o.teams = teamsFromCores(); } catch (e) { o.teams = null; }
       if (o.teams) log('teams from the CORES patient list: ' + Object.keys(o.teams.teams).map(function (t) { return t + ' (' + o.teams.teams[t] + ')'; }).join(', '), 'ok');
       else log('no team data found in this CORES window: each patient\'s Team is left for you to type');
+      hudEvent('teams', o.teams ? 'found' : 'none', o.teams ? o.teams.patients.length : 0);
+      if (opts.data === false) hudEvent('clinical', 'off');
       if (opts.data !== false) {
-        try { o.clinical = clinicalFromCores(); } catch (e) { o.clinical = null; log('could not read CORES\'s clinical data (' + (e && e.message || e) + '); the report alone is captured', 'warn'); }
+        var clinicalErr = false;
+        try { o.clinical = clinicalFromCores(); } catch (e) { o.clinical = null; clinicalErr = true; log('could not read CORES\'s clinical data (' + (e && e.message || e) + '); the report alone is captured', 'warn'); }
+        hudEvent('clinical', clinicalErr ? 'error' : o.clinical ? 'found' : 'none', o.clinical ? o.clinical.counts.patients : 0);
         if (o.clinical) {
           o.clinicalText = JSON.stringify(o.clinical);
           var kb = Math.round(o.clinicalText.length / 1024);
@@ -748,9 +861,10 @@
       return name;
     }
 
-    function fail(msg) {
+    function fail(msg, why) {
       if (done) return;
       stop();
+      hudEvent('failed', why);
       console.error('CORES capture: ' + msg + ' The report window is left open so you can look at it.');
       ovLog(msg + ' The report window is left open so you can look at it.', 'err');
       ovVerdict('err', 'nothing captured. Press F5 in the CORES patient list window, open your list again, then paste the script again.');
@@ -765,6 +879,7 @@
       log('CORES says "' + text + '" - pressing OK and Reload (attempt ' + reloads + ' of ' + retries + ')', 'warn');
       ovStatus('Reloading report (' + reloads + ' of ' + retries + ')', 'warn');
       ovStat('reloads', reloads + ' reload' + (reloads === 1 ? '' : 's'));
+      hudEvent('reload', null, reloads);
       var ok = buttonNamed(d, 'OK');
       if (ok) { try { ok.click(); } catch (e) {} }
       reloadTimer = setTimeout(function () {
@@ -783,6 +898,7 @@
       if (w.closed) {
         stop();
         if (!done) {
+          hudEvent('window_closed');
           console.error('CORES capture: the report window closed before anything was captured.');
           ovLog('the report window closed before anything was captured.', 'err');
           ovVerdict('err', 'the report window closed before anything was captured. Open the report again.');
@@ -799,6 +915,7 @@
         if (!reportId) reportId = reportIdOf(d.location.href) || null;   // for the file name (a Reload may drop it from the URL)
         ovLog('report page loaded' + (reportId ? ' (report ' + reportId + ')' : '') + '; waiting for the patient rows');
         ovStatus('Report loading\u2026', 'busy');
+        hudEvent('report_loaded', null, null, Date.now() - watchT0);
         // PDF-type reports: the app builds <form><input name=options><input name=html></form> and calls form.submit().
         // While the capture is pending that submit is taken instead; afterwards (captured, or given up) CORES's own flow
         // is let through, so its PDF still appears
@@ -822,7 +939,8 @@
         var t = dialogText(d);
         if (t && t !== dialogSeen) {
           dialogSeen = t;
-          if (!recover(w, d, t)) fail('CORES could not load the report: "' + t + '" (after ' + reloads + ' reload' + (reloads === 1 ? '' : 's') + ').');
+          hudEvent('dialog', 'cant_load');
+          if (!recover(w, d, t)) fail('CORES could not load the report: "' + t + '" (after ' + reloads + ' reload' + (reloads === 1 ? '' : 's') + ').', 'dialog');
           return;
         }
       }
@@ -847,7 +965,7 @@
       var rows = d ? renderedRows(d) : 0;
       if (rows) finish(wrap(d.documentElement.innerHTML), 'timeout with rows present');
       else fail('timed out after ' + (opts.timeout || 120) + ' s with no rendered patient rows. The report window shows: ' +
-        (d ? describePopup(d) : '(not readable: cross-origin or closed)') + '.');
+        (d ? describePopup(d) : '(not readable: cross-origin or closed)') + '.', 'timeout');
     }, (opts.timeout || 120) * 1000);
   }
 
@@ -862,10 +980,12 @@
       if (window.__coresArmed && w) {
         if (u && u !== 'about:blank' && !/univ_wa_rnd_build_report|report_id/i.test(u)) {
           log('a window opened that is not the report (' + u.slice(0, 100) + '); still armed');
+          hudEvent('other_window');
           return w;
         }
         var o = window.__coresArmed;
         window.__coresArmed = null;
+        hudEvent('report_opened', 'window');
         ovStatus('Report window open, waiting\u2026', 'busy');
         log('CORES opened a report window' + (u ? ' (' + u.slice(0, 120) + ')' : '') + '; capturing it when it has rendered…');
         watchReport(w, o, reportIdOf(u) || null);
@@ -878,6 +998,7 @@
       'it another way: run   captureCores(281)   in the Console instead (the script then opens the report itself).');
     ovStat('rows', '');
     log('armed: the next report window CORES opens will be captured');
+    hudEvent('armed', 'window');
     return 'armed…';
   }
 
@@ -889,7 +1010,8 @@
   // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
   var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
     localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, coresDescribe: 1, captureCores: 1, probeCores: 1,
-    describeCores: 1, coresColumns: 1, listCoresColumns: 1, coresMap: 1, mapCores: 1, coresClinical: 1, __coresRealOpen: 1 };
+    describeCores: 1, coresColumns: 1, listCoresColumns: 1, coresMap: 1, mapCores: 1, coresClinical: 1, __coresRealOpen: 1,
+    coresTrace: 1, traceCores: 1, __coresTraceStop: 1 };
   function probeCopy(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
     return new Promise(function (res) {
       function old() { try { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); res(!!ok); } catch (e) { res(false); } }
@@ -1046,7 +1168,7 @@
     try {
       var st = window.localStorage;
       for (var s = 0; s < st.length; s++) {
-        if (st.key(s) === OV_KEY) continue;   // the Find box's own words
+        if (st.key(s) === OV_KEY || st.key(s) === LOG_KEY) continue;   // the Find box's own words; the HUD's event log
         var t2 = hit(st.getItem(st.key(s))); if (t2) out.notes.push('browser storage "' + safe(st.key(s)) + '" contains ' + t2);
       }
     } catch (e) {}
@@ -1278,6 +1400,7 @@
   // a Find or Describe answer in the HUD's console: the first line as a title, verdict lines coloured, section titles
   // bold, a Copy for Claude button; scrolled into view, the HUD opened if it was collapsed, lit up for a moment
   function showResult(lines, forClaude, what) {
+    if (what !== 'Trace') hudEvent('tool', String(what).toLowerCase());   // the Trace has its own events
     var box = ovEl('div', 'margin:5px 0;padding:5px 7px;border:1px solid #c9d6e3;border-radius:5px;background:#f6f9fc;color:#1b1b1b;white-space:pre-wrap;word-break:break-word');
     lines.forEach(function (line, i) {
       box.appendChild(ovEl('div', i === 0 ? 'font:600 12px Segoe UI,Arial,sans-serif;color:#1f4e79;margin-bottom:2px' :
@@ -1285,7 +1408,8 @@
         /^[A-Z][A-Z' \/,()\-]+(\(|\[|$)/.test(line) ? 'color:#1f4e79;font-weight:700;margin-top:3px' : '', line || ' '));
     });
     var cb = ovEl('button', 'margin-top:5px;font:600 11px Segoe UI,Arial,sans-serif;padding:2px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Copy for Claude');
-    cb.onclick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
+    // run by the HUD's click catcher on window (capture phase), which a page that swallows clicks cannot stop
+    cb.__coresClick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
     box.appendChild(cb);
     ovAppend(box);
     ov.expand();
@@ -1344,6 +1468,39 @@
     }
   }
   window.listCoresColumns = listCoresColumns;
+  // ---- the identifier redaction Map and Trace share. From CORES's patient records (and any more names given): every
+  // patient's name and each part of it, MRN, FIN, IDs, birth date, and the staff names in contacts and edits. The
+  // function it returns masks them in a text, with long numbers, dates in any form, ages and bare room / bed numbers,
+  // and says whether the text held any (hit): a text that did is dropped by its caller, not shown masked.
+  function coresScrubber(rows, moreNames) {
+    var ids = {}, words = {};
+    function addWords(s) { String(s || '').split(/[^A-Za-z']+/).forEach(function (w) { if (w.length >= 2) words[w.toLowerCase()] = 1; }); }
+    function addId(s) { s = String(s == null ? '' : s).trim(); if (s.length >= 3) ids[s.toLowerCase()] = 1; }
+    for (var i = 0; rows && i < rows.length; i++) {
+      var r = rows[i]; if (!r || typeof r !== 'object') continue;
+      try {
+        ['patient_name', 'patient_name_last', 'adt_attending', 'pcp'].forEach(function (k) { addWords(r[k]); });
+        ['mrn', 'fin', 'mrn_mrn', 'person_id', 'encntr_id', 'birth_date', 'acuity_data_patient_id'].forEach(function (k) { addId(r[k]); });
+        list(r.roles).forEach(function (x) { addWords(x && x.assign_name); addWords(x && x.assign_username); });
+        list(r.handoff_fields).forEach(function (x) { addWords(x && x.updt_prsnl_name); addWords(x && x.updt_name); });
+      } catch (e) {}
+    }
+    list(moreNames).forEach(addWords);
+    var idList = Object.keys(ids);
+    return function scrubbed(s) {   // s with every identifier masked, and whether it held one
+      var hit = false, t = String(s);
+      t = t.replace(/[A-Za-z']+/g, function (w) { if (words[w.toLowerCase()]) { hit = true; return '[name]'; } return w; });
+      var low = t.toLowerCase();
+      idList.forEach(function (x) { if (low.indexOf(x) >= 0) { hit = true; t = t.split(new RegExp(x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')).join('[id]'); low = t.toLowerCase(); } });
+      t = t.replace(/\d{5,}/g, function () { hit = true; return '#'; })
+        .replace(/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}/g, function () { hit = true; return '[date]'; })   // a date in any form: dropped
+        .replace(/\b\d{1,2}[-\s.\/]*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?([-\s.,\/]*\d{2,4})?\b/gi, function () { hit = true; return '[date]'; })   // 06-NOV-2026, 6 Nov
+        .replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?\b([,\s]+\d{2,4})?/gi, function () { hit = true; return '[date]'; })   // Nov 6, 2026
+        .replace(/\b\d{1,3}\s*(years?|yrs?|y\/?o|months?|mos?|weeks?|wks?|days?)\b/gi, function () { hit = true; return '[age]'; });   // 61 Years: an age, dropped
+      if (/^[A-Za-z]{0,3}\d{2,5}[A-Za-z]?$/.test(String(s).trim())) hit = true;   // a bare room or bed number (S625, 4012B): dropped
+      return { text: t, hit: hit };
+    };
+  }
   // ---- Map (mapCores): the whole shape of CORES's patient data in one pass, for working out what holds what. For
   // every field path in the patient records (lists as [i]): what kind of thing it holds, in how many patients, and how
   // long its lists run; and the values SHARED by at least 3 different patients (column and result names, units,
@@ -1362,32 +1519,7 @@
       return done(L);
     }
     // 1. the identifiers to redact, from the page itself
-    var ids = {}, words = {};
-    function addWords(s) { String(s || '').split(/[^A-Za-z']+/).forEach(function (w) { if (w.length >= 2) words[w.toLowerCase()] = 1; }); }
-    function addId(s) { s = String(s == null ? '' : s).trim(); if (s.length >= 3) ids[s.toLowerCase()] = 1; }
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i]; if (!r || typeof r !== 'object') continue;
-      try {
-        ['patient_name', 'patient_name_last', 'adt_attending', 'pcp'].forEach(function (k) { addWords(r[k]); });
-        ['mrn', 'fin', 'mrn_mrn', 'person_id', 'encntr_id', 'birth_date', 'acuity_data_patient_id'].forEach(function (k) { addId(r[k]); });
-        list(r.roles).forEach(function (x) { addWords(x && x.assign_name); addWords(x && x.assign_username); });
-        list(r.handoff_fields).forEach(function (x) { addWords(x && x.updt_prsnl_name); addWords(x && x.updt_name); });
-      } catch (e) {}
-    }
-    var idList = Object.keys(ids);
-    function scrubbed(s) {   // s with every identifier masked, and whether it held one
-      var hit = false, t = String(s);
-      t = t.replace(/[A-Za-z']+/g, function (w) { if (words[w.toLowerCase()]) { hit = true; return '[name]'; } return w; });
-      var low = t.toLowerCase();
-      idList.forEach(function (x) { if (low.indexOf(x) >= 0) { hit = true; t = t.split(new RegExp(x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')).join('[id]'); low = t.toLowerCase(); } });
-      t = t.replace(/\d{5,}/g, function () { hit = true; return '#'; })
-        .replace(/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}/g, function () { hit = true; return '[date]'; })   // a date in any form: dropped
-        .replace(/\b\d{1,2}[-\s.\/]*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?([-\s.,\/]*\d{2,4})?\b/gi, function () { hit = true; return '[date]'; })   // 06-NOV-2026, 6 Nov
-        .replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?\b([,\s]+\d{2,4})?/gi, function () { hit = true; return '[date]'; })   // Nov 6, 2026
-        .replace(/\b\d{1,3}\s*(years?|yrs?|y\/?o|months?|mos?|weeks?|wks?|days?)\b/gi, function () { hit = true; return '[age]'; });   // 61 Years: an age, dropped
-      if (/^[A-Za-z]{0,3}\d{2,5}[A-Za-z]?$/.test(String(s).trim())) hit = true;   // a bare room or bed number (S625, 4012B): dropped
-      return { text: t, hit: hit };
-    }
+    var scrubbed = coresScrubber(rows);
     // 2. every path in the records: kinds, patients, list lengths, and the values with the patients they occur in
     var paths = {}, nodes = 0;
     function kindOf(v) {
@@ -1438,7 +1570,7 @@
     var builtins = {};
     try { var fr = document.createElement('iframe'); fr.style.display = 'none'; document.body.appendChild(fr);
       Object.keys(fr.contentWindow).forEach(function (k) { builtins[k] = 1; }); fr.remove(); } catch (e) {}
-    var own = []; try { own = Object.keys(window).filter(function (k) { return !builtins[k] && !/^(cores|probeCores|describeCores|listCoresColumns|mapCores|captureCores|__cores)/.test(k); }); } catch (e) {}
+    var own = []; try { own = Object.keys(window).filter(function (k) { return !builtins[k] && !/^(cores|probeCores|describeCores|listCoresColumns|mapCores|traceCores|captureCores|__cores)/.test(k); }); } catch (e) {}
     // 3. the columns on the list: CORES's column objects, wherever the page keeps them
     var cols = {}, seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null, budget = 60000;
     function findCols(o, d) {
@@ -1481,8 +1613,870 @@
   }
   window.mapCores = mapCores;
 
+  // ---- Trace (traceCores): WHAT LOADS CORES's patient records. CORES's structured records
+  // (window.global_constant_row_info) exist only after a report has been opened from the list; the Trace watches the
+  // page while that happens, to show what fills them and what CORES's report button calls. Arm it BEFORE opening the
+  // report (in a fresh CORES session, where the records are not there yet), open the report as usual, then stop it.
+  // HUD: the Trace button (press again to stop); Console: traceCores() to arm, traceCores() or traceCores('stop') to
+  // stop. It also stops by itself a moment after a capture ends, and after 15 minutes. traceCores({poll: true}) arms it
+  // without touching the records property or the list at all (polled only: no call stacks), should CORES ever behave
+  // differently with the getter / setter in place.
+  //
+  // Armed, it ONLY OBSERVES, and puts back everything it wrapped when it stops. It never calls CORES's functions or
+  // dwh.transformativemed.com, and lets every call it watches through unchanged. With times since arming, it records:
+  //   - every assignment to window.global_constant_row_info (the property becomes a getter / setter that keeps the
+  //     value working; when the page declared it itself and it cannot be redefined, it is polled instead) and every
+  //     in-place fill (push / unshift / splice on the list, and its length and field count, polled): how many records,
+  //     the call stack as function names + script file names + line:col, which window's code did it (this page, the
+  //     report window, unknown) and whether a report window was open;
+  //   - XHR and fetch of this page: method, host, the address's file name, the NAMES of the query and body parameters,
+  //     status, answer size, duration; and the report window's requests, read from its resource timings (the report
+  //     window is never wrapped);
+  //   - window.open calls and form submits: the same, with the window name and features;
+  //   - clicks: the element as tag + classes; its text only for a button / menu item / option / link outside the
+  //     patient rows, 60 characters at most, and never when it holds an identifier (Map's redaction); the names of
+  //     the handler functions on it (inline onclick, jQuery's event data), read, never called.
+  // NO PARAMETER VALUE is ever shown, with one narrow exception: a program or report identifier, i.e. a parameter whose
+  // name matches /prg|program|report_id/i and whose value is a short programmer's identifier or a number of at most 4
+  // digits (prg_name=univ_wa_rnd_build_report, report_id:281). Addresses show as host + file name, never folders or
+  // query text; script files as file name only. Nothing unique to a patient: names, CORES vocabulary, counts, timings.
+  var TR = null;                                           // the armed Trace
+  var TR_ROWS = 'global_constant_row_info';
+  var TR_REPORT = /univ_wa_rnd_build_report|report_id/i;   // an address that is a CORES report (as arm() tells it)
+  var TR_ID_NAME = /prg|program|report_id/i;               // the parameters whose value may be shown
+  var TR_MAX = 1500;                                       // events kept
+  try { if (typeof window.__coresTraceStop === 'function') window.__coresTraceStop(); } catch (e) {}   // a Trace left armed by an earlier paste
 
+  function trSafe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,39}$/.test(x) && !/\d{3,}/.test(x) && /[a-z]/.test(x) && !/^[A-Z][a-z]+$/.test(x) ? x : '<name>'; }
+  function trNow(T) { return Math.round(performance.now() - T.t0); }
+  function trPush(T, e) {
+    if (T.ev.length >= TR_MAX && e.type !== 'records' && e.type !== 'open') { T.dropped++; return; }
+    T.ev.push(e);
+  }
+  function trUp(el, test) { for (var i = 0; el && el.nodeType === 1 && i < 60; el = el.parentElement, i++) { try { if (test(el)) return el; } catch (e) {} } return null; }
+  function trMine(el) { return !!trUp(el, function (x) { return x.id === 'cores-capture-overlay' || x.id === 'cores-capture-banner'; }); }
+  // a sloppy function called bare gets this script's window as `this`: when the wrapped function belongs to another
+  // window (the parent or top one), that window is what the page meant
+  function trThis(self, w) { return self === window && w !== window ? w : self; }
 
+  // ---- addresses and parameters: names only
+  function trFile(pathname) {   // the last piece of an address's path, when it looks like a file name
+    var p = String(pathname || ''), segs = p.split('/').filter(Boolean), last = segs.length ? segs[segs.length - 1] : '';
+    if (!last) return '/';
+    try { last = decodeURIComponent(last); } catch (e) {}
+    return (/^[A-Za-z_][\w.-]{0,59}$/.test(last) && !/\d{3,}/.test(last) ? last : '<name>') + (/\/$/.test(p) ? '/' : '');
+  }
+  function trDecode(s) { try { return decodeURIComponent(String(s).replace(/\+/g, ' ')); } catch (e) { return String(s); } }
+  function trPairs(qs) {
+    var out = [];
+    String(qs || '').split('&').forEach(function (p) { if (!p) return; var i = p.indexOf('='); out.push([trDecode(i < 0 ? p : p.slice(0, i)), i < 0 ? '' : trDecode(p.slice(i + 1))]); });
+    return out;
+  }
+  function trIdValue(v) { v = String(v == null ? '' : v).trim(); return /^\d{1,4}$/.test(v) || trSafe(v) !== '<name>' ? v : null; }
+  // parameter names in order (a repeated one once, with its count); a value only under the program / report id rule,
+  // also for sub-parameters packed into one value the way CORES does it (options=report_id:281 -> options{report_id:281})
+  function trParams(pairs) {
+    var out = [], at = {};
+    pairs.forEach(function (p) {
+      var nm = trSafe(p[0]), shown = nm;
+      if (nm !== '<name>' && TR_ID_NAME.test(nm)) { var v = trIdValue(p[1]); if (v !== null) shown = nm + '=' + v; }
+      if (shown === nm && nm !== '<name>' && p[1]) {
+        var inner = [], more = 0;
+        String(p[1]).split(/[,;|]/).forEach(function (piece) {
+          var m = /^\s*([A-Za-z_][\w$-]*)\s*[:=]\s*(.*)$/.exec(piece), v2 = null;
+          if (m && TR_ID_NAME.test(m[1]) && trSafe(m[1]) !== '<name>') v2 = trIdValue(m[2]);
+          if (v2 !== null) inner.push(m[1] + ':' + v2); else if (piece.trim()) more++;
+        });
+        if (inner.length) shown = nm + '{' + inner.join(', ') + (more ? ', +' + more + ' more' : '') + '}';
+      }
+      if (at[shown] !== undefined) { out[at[shown]].n++; return; }
+      at[shown] = out.length; out.push({ s: shown, n: 1 });
+    });
+    return out.map(function (x) { return x.s + (x.n > 1 ? ' ×' + x.n : ''); });
+  }
+  function trUrl(u, w) {   // host, file name, parameter names; `abs` is kept for matching only and is never shown
+    var out = { host: '', file: '', params: [], report: false, abs: '', same: true };
+    try {
+      var s = String(u == null ? '' : u);
+      if (!s || s === 'about:blank') { out.file = s ? 'about:blank' : '(no address)'; return out; }
+      var base = ''; try { base = w.location.href; } catch (e) {}
+      var U = new URL(s, base || undefined);
+      if (U.protocol !== 'http:' && U.protocol !== 'https:') { out.file = '(a ' + U.protocol.replace(/[^a-z]/gi, '') + ' address)'; return out; }
+      out.abs = U.href.split('#')[0]; out.host = U.hostname;
+      try { out.same = U.host === w.location.host; } catch (e) { out.same = false; }
+      out.file = trFile(U.pathname);
+      out.params = trParams(trPairs(U.search.replace(/^\?/, '')));
+      out.report = TR_REPORT.test(s);
+    } catch (e) { out.file = '(address not readable)'; }
+    return out;
+  }
+  function trJsonNames(j) {
+    if (Array.isArray(j)) return { kind: 'JSON list', n: j.length };
+    if (j && typeof j === 'object') {
+      var ks = Object.keys(j);
+      if (ks.length > 40) return { kind: 'JSON table', n: ks.length };
+      return { kind: 'JSON', names: trParams(ks.map(function (k) { var v = j[k]; return [k, typeof v === 'string' || typeof v === 'number' ? String(v) : '']; })) };
+    }
+    return { kind: 'JSON value' };
+  }
+  function trBody(b) {   // what a request sends: its kind and its parameter NAMES
+    try {
+      if (b === null || b === undefined || b === '') return null;
+      var tag = Object.prototype.toString.call(b);
+      if (typeof b === 'string') {
+        var s = b.trim();
+        if (/^[\[{]/.test(s)) {
+          if (s.length > 300000) return { kind: 'JSON text', n: s.length };
+          try { return trJsonNames(JSON.parse(s)); } catch (e) {}
+        }
+        if (/^[^=&\s]{1,80}=/.test(s) && !/\s/.test(s.slice(0, 300))) return { kind: 'form', names: trParams(trPairs(s)) };
+        return { kind: 'text', n: s.length };
+      }
+      if (tag === '[object URLSearchParams]' || tag === '[object FormData]') {
+        var pairs = []; b.forEach(function (v, k) { pairs.push([k, typeof v === 'string' ? v : '']); });
+        return { kind: tag === '[object FormData]' ? 'form data' : 'form', names: trParams(pairs) };
+      }
+      if (tag === '[object Blob]' || tag === '[object File]') return { kind: 'blob', n: b.size };
+      if (tag === '[object ArrayBuffer]' || (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(b))) return { kind: 'binary', n: b.byteLength };
+      if (b.nodeType === 9) return { kind: 'document' };
+      return { kind: 'other' };
+    } catch (e) { return { kind: 'unreadable' }; }
+  }
+  function trWinName(n) {   // a window's name, when it looks like a programmer's identifier (long numbers masked)
+    n = String(n == null ? '' : n).replace(/\d{3,}/g, '#');
+    return !n ? '' : /^[A-Za-z_$][\w$#-]{0,39}$/.test(n) && /[a-z]/.test(n) && !/^[A-Z][a-z]+$/.test(n) ? n : '<name>';
+  }
+  function trFeatures(f) { f = String(f == null ? '' : f); return f.replace(/[^\w=,.\s-]/g, '').replace(/\d{5,}/g, '#').replace(/\s+/g, '').slice(0, 120); }
+
+  // ---- whose code: the windows the Trace knows (this page, its parent and top; every window opened since arming)
+  function trSeeRealms(T) {   // a window gets a new set of built-ins each time it loads a page: keep each one seen
+    T.popups.forEach(function (p) {
+      try {
+        if (p.closedAt) return;
+        var fp = p.w.Function.prototype, last = p.realms[p.realms.length - 1];
+        if (!last || last.fp !== fp) p.realms.push({ fp: fp, ap: p.w.Array.prototype, op: p.w.Object.prototype });
+      } catch (e) {}
+    });
+  }
+  function trRealm(T, x, isFn) {   // 'list', 'report' or '' for a function or an object, by whose built-ins it descends from
+    function chain(x, protos) { try { for (var p = Object.getPrototypeOf(x), i = 0; p && i < 6; p = Object.getPrototypeOf(p), i++) if (protos.indexOf(p) >= 0) return true; } catch (e) {} return false; }
+    for (var i = 0; i < T.wins.length; i++) {
+      try { var w = T.wins[i].w; if (chain(x, isFn ? [w.Function.prototype] : [w.Array.prototype, w.Object.prototype])) return { kind: 'list', W: T.wins[i] }; } catch (e) {}
+    }
+    for (var j = 0; j < T.popups.length; j++) {
+      var p = T.popups[j];
+      for (var k = 0; k < p.realms.length; k++) if (chain(x, isFn ? [p.realms[k].fp] : [p.realms[k].ap, p.realms[k].op])) return { kind: 'report', pop: p };
+    }
+    return null;
+  }
+  function trCallers(T, fn) {   // whose functions are on the way to a watched call, nearest first, as far as they can be read
+    var out = [], n = 0;
+    try { while (fn && n++ < 30) { var r = trRealm(T, fn, true); out.push(r ? r : { kind: '' }); fn = fn.caller; } } catch (e) {}
+    return out;
+  }
+  function trWhose(T, url) {   // an address on a call stack: this page's (or a script only it loads), or a report window's
+    var u = String(url).split('#')[0], inL = false, inR = false;
+    function has(w) {
+      try {
+        if (String(w.location.href).split('#')[0] === u) return true;
+        var sc = w.document.scripts;
+        for (var i = 0; i < sc.length && i < 400; i++) if (sc[i].src && sc[i].src.split('#')[0] === u) return true;
+      } catch (e) {}
+      return false;
+    }
+    T.wins.forEach(function (W) { if (has(W.w)) inL = true; });
+    T.popups.forEach(function (p) { if (!p.closedAt && has(p.w)) inR = true; });
+    return inL && !inR ? 'list' : inR && !inL ? 'report' : '';
+  }
+  function trFnName(s) {
+    s = String(s || '').replace(/^async /, '').replace(/\s*\[as [^\]]*\]/, '').replace(/[^\w$.<> ]/g, '').replace(/\d{5,}/g, '#').trim().slice(0, 60);
+    return s || '(anonymous)';
+  }
+  // the call stack above the Trace's own wrapper: function names, script FILE names (no folders, no query), line:col
+  function trFrames(T, max, tagged) {
+    var raw = ''; try { raw = String(new Error().stack || ''); } catch (e) {}
+    var fr = [], own = -1;
+    raw.split('\n').forEach(function (ln) {
+      ln = ln.trim(); var m, fn = '', loc = '';
+      if (!ln || /^\w*Error\b/.test(ln)) return;
+      if ((m = /^at (.*?) \((.*)\)$/.exec(ln))) { fn = m[1]; loc = m[2]; }
+      else if ((m = /^at (?:async )?(.*)$/.exec(ln))) loc = m[1];
+      else if ((m = /^(.*?)@(.*)$/.exec(ln))) { fn = m[1]; loc = m[2]; }
+      else return;
+      var lm = /^(.*):(\d+):(\d+)$/.exec(loc) || /^(.*):(\d+)$/.exec(loc);
+      fr.push({ fn: fn, url: lm ? lm[1] : loc, line: lm ? lm[2] : '', col: lm && lm[3] || '' });
+    });
+    for (var i = 0; i < fr.length; i++) if (/coresTr[A-Z]/.test(fr[i].fn)) own = i;   // the Trace's wrapper: everything up to it is the Trace's own
+    return fr.slice(own + 1, own + 1 + (max || 10)).map(function (f) {
+      var url = String(f.url || ''), file = '', tag = '';
+      if (!url || url === 'native' || (url === '<anonymous>' && !f.line)) file = 'built-in';
+      else if (/^<anonymous>$|^VM\d+|^debugger eval/.test(url)) file = 'console';   // a script pasted into the Console, like this one
+      else if (/^eval at /.test(url)) file = 'eval';
+      else { try { file = trFile(new URL(url).pathname); } catch (e) { file = '<name>'; } if (tagged) tag = trWhose(T, url); }
+      var text = trFnName(f.fn) + ' (' + file + (f.line ? ':' + f.line + (f.col ? ':' + f.col : '') : '') + ')';
+      return { text: text, tag: tag };
+    });
+  }
+
+  // ---- the patient records: what they hold (counts only), and each write to them
+  function trShape(v) {
+    var o = { kind: 'nothing', n: 0, fields: 0 };
+    try {
+      if (v === null || v === undefined) return o;
+      if (typeof v !== 'object') { o.kind = typeof v; return o; }
+      if (typeof v.length === 'number') { o.kind = 'list'; o.n = v.length; var first = v[0]; if (first && typeof first === 'object') o.fields = Object.keys(first).length; }
+      else { o.kind = 'object'; o.n = Object.keys(v).length; }
+    } catch (e) { o.kind = 'unreadable'; }
+    return o;
+  }
+  function trReportsOpen(T, t) {   // the report windows (opened since arming) that were open at time t
+    var n = 0; T.popups.forEach(function (p) { if (p.report && p.t <= t && (!p.closedAt || p.closedAt > t)) n++; }); return n;
+  }
+  // who wrote: from the functions calling (when they can be read), the call stack's addresses, and where the list
+  // itself was made
+  function trWho(T, v, callerFn, frames) {
+    var chain = trCallers(T, callerFn), vr = null, why = [];
+    try { if (v && typeof v === 'object') vr = trRealm(T, v, false); } catch (e) {}
+    var kinds = chain.map(function (c) { return c.kind; });
+    var who = '', sure = false, pop = null;
+    var popOf = function () { for (var i = 0; i < chain.length; i++) if (chain[i].kind === 'report') return chain[i].pop; return vr && vr.kind === 'report' ? vr.pop : null; };
+    if (kinds[0] === 'report') { who = 'report'; sure = true; why.push('the function that wrote them belongs to the report window'); }
+    else if (kinds.indexOf('report') >= 0) { who = 'report'; sure = true; why.push('a function of this page wrote them, called by the report window\'s code'); }
+    else if (frames.some(function (f) { return f.tag === 'report'; })) { who = 'report'; sure = true; why.push('the report window\'s own script is on the call stack'); }
+    else if (kinds[0] === 'list') { who = 'list'; sure = true; why.push('the function that wrote them belongs to this page, and no report window code called it'); }
+    else if (frames.length && frames[0].tag === 'list') { who = 'list'; sure = true; why.push('the call came from this page\'s own script'); }
+    if (!who && vr) { who = vr.kind; why.push('the code that wrote them could not be read, so this rests on where the list was made'); }
+    if (vr) why.push('the list itself was made in ' + (vr.kind === 'report' ? 'the report window' : 'this page'));
+    if (who === 'report') pop = popOf();
+    return { who: who || 'unknown', sure: sure, why: why, pop: pop, madeIn: vr ? vr.kind : '' };
+  }
+  function trWrite(T, W, st, how, v, callerFn, polled) {
+    var sh = trShape(v), t = trNow(T);
+    trSeeRealms(T);
+    var frames = polled ? [] : trFrames(T, 12, true);
+    var who = trWho(T, v, callerFn, frames);
+    st.len = sh.n; st.fields = sh.fields; st.writes++;
+    var sig = how + '|' + who.who + '|' + frames.map(function (f) { return f.text; }).join('<');
+    var last = T.lastWrite;
+    if (last && last.sig === sig && how !== 'assigned' && t - last.t2 < 1500) { last.times++; last.t2 = t; last.n = sh.n; last.fields = sh.fields; return; }
+    var e = { type: 'records', t: t, t2: t, times: 1, how: how, kind: sh.kind, n: sh.n, n0: sh.n, fields: sh.fields, W: W, who: who, frames: frames,
+              during: T.inCallback || null, polled: !!polled, sig: sig };
+    T.lastWrite = e; trPush(T, e);
+    if (Array.isArray(v) && !T.passive) trWatchList(T, W, st, v);
+  }
+  // in-place fills: push / unshift / splice on the list itself, wrapped on that one list (hidden from loops and JSON)
+  function trWatchList(T, W, st, arr) {
+    if (st.listHooks && st.listHooks.arr === arr) return;
+    trUnwatchList(st);
+    var hooks = st.listHooks = { arr: arr, fns: {} };
+    ['push', 'unshift', 'splice'].forEach(function (m) {
+      try {
+        if (Object.prototype.hasOwnProperty.call(arr, m)) return;   // the page's own: left alone
+        var real = arr[m]; if (typeof real !== 'function') return;
+        var wrapped = function coresTrList() {
+          var before = this.length, r = real.apply(this, arguments);
+          if (T.on && this === arr) { try { if (arr.length !== before) { var c = null; try { c = wrapped.caller; } catch (e) {} trWrite(T, W, st, m, arr, c, false); } } catch (e) {} }
+          return r;
+        };
+        Object.defineProperty(arr, m, { configurable: true, enumerable: false, writable: true, value: wrapped });
+        hooks.fns[m] = wrapped;
+      } catch (e) {}
+    });
+  }
+  function trUnwatchList(st) {
+    var h = st.listHooks; st.listHooks = null; if (!h) return;
+    Object.keys(h.fns).forEach(function (m) { try { var d = Object.getOwnPropertyDescriptor(h.arr, m); if (d && d.value === h.fns[m]) delete h.arr[m]; } catch (e) {} });
+  }
+  function trHookRecords(T, W) {
+    var w = W.w, st = W.st = { val: undefined, mode: 'poll', had: false, setter: null, assigned: false, len: 0, fields: 0, writes: 0, listHooks: null, start: null };
+    var d = null; try { d = Object.getOwnPropertyDescriptor(w, TR_ROWS) || null; } catch (e) {}
+    st.had = !!d;
+    try { st.val = w[TR_ROWS]; } catch (e) {}
+    st.start = trShape(st.val); st.len = st.start.n; st.fields = st.start.fields;
+    if (!T.passive && (!d || (d.configurable && 'value' in d))) {
+      try {
+        st.setter = function coresTrSet(v) {
+          st.val = v; st.assigned = true;
+          if (T.on) { var c = null; try { c = coresTrSet.caller; } catch (e) {} try { trWrite(T, W, st, 'assigned', v, c, false); } catch (e) {} }
+        };
+        Object.defineProperty(w, TR_ROWS, { configurable: true, enumerable: d ? !!d.enumerable : true, get: function coresTrGet() { return st.val; }, set: st.setter });
+        st.mode = 'hook';
+      } catch (e) { st.mode = 'poll'; st.setter = null; }
+    }
+    if (Array.isArray(st.val) && !T.passive) trWatchList(T, W, st, st.val);
+    T.undo.push(function () {
+      trUnwatchList(st);
+      if (st.mode !== 'hook') return;
+      var cur = null; try { cur = Object.getOwnPropertyDescriptor(w, TR_ROWS); } catch (e) {}
+      if (!cur || cur.set !== st.setter) return;   // the page replaced the property meanwhile: left as it is
+      if (!st.had && !st.assigned) { try { delete w[TR_ROWS]; } catch (e) {} return; }   // it was not there, and still is not
+      Object.defineProperty(w, TR_ROWS, { configurable: true, enumerable: d ? !!d.enumerable : true, writable: d ? d.writable !== false : true, value: st.val });
+    });
+  }
+
+  // ---- this page's requests: XHR and fetch, let through unchanged
+  function trXhrSize(x, r) {
+    var rt = ''; try { rt = x.responseType || ''; } catch (e) {}
+    try {
+      if (rt === '' || rt === 'text') { r.size = (x.responseText || '').length; r.unit = 'chars'; }
+      else if (rt === 'arraybuffer' && x.response) { r.size = x.response.byteLength; r.unit = 'bytes'; }
+      else if (rt === 'blob' && x.response) { r.size = x.response.size; r.unit = 'bytes'; }
+      else if (r.u.same) { var cl = x.getResponseHeader('Content-Length'); if (cl && /^\d+$/.test(cl)) { r.size = +cl; r.unit = 'bytes'; } }
+    } catch (e) {}
+  }
+  function trMethod(m) { m = String(m || 'GET').toUpperCase(); return /^[A-Z]{1,10}$/.test(m) ? m : '?'; }
+  function trHookXhr(T, W) {
+    var w = W.w, XP = null; try { XP = w.XMLHttpRequest && w.XMLHttpRequest.prototype; } catch (e) {}
+    if (!XP || typeof XP.open !== 'function' || typeof XP.send !== 'function') return;
+    var realOpen = XP.open, realSend = XP.send;
+    var myOpen = function coresTrXhrOpen(method, url) {
+      if (T.on) try {
+        var x = this, m = T.meta.get(x);
+        if (!m) {
+          m = { rec: null }; T.meta.set(x, m);
+          // added here, before the page's own handlers as a rule, so "while the answer was being handled" starts in time
+          x.addEventListener('readystatechange', function coresTrXhrState() {
+            var r = m.rec; if (!T.on || !r || x.readyState !== 4 || r.tResp !== undefined) return;
+            r.tResp = trNow(T); T.inCallback = r;
+            setTimeout(function () { if (T.inCallback === r) T.inCallback = null; }, 0);   // the answer's own task is over
+          });
+          x.addEventListener('loadend', function coresTrXhrEnd() {
+            var r = m.rec; if (!r || r.done) return;
+            r.done = true;
+            if (!T.on) return;
+            try { r.tEnd = trNow(T); if (r.tResp === undefined) r.tResp = r.tEnd; r.ms = r.t === undefined ? null : r.tEnd - r.t; r.status = x.status; trXhrSize(x, r); } catch (e) {}
+          });
+        }
+        m.rec = { type: 'request', api: 'XHR', W: W, method: trMethod(method), u: trUrl(url, w) };
+      } catch (e) {}
+      return realOpen.apply(this, arguments);
+    };
+    var mySend = function coresTrXhrSend(body) {
+      if (T.on) try {
+        var m = T.meta.get(this), r = m && m.rec;
+        if (r && r.t === undefined) { r.t = trNow(T); r.body = trBody(body); r.frames = trFrames(T, 5, false); trPush(T, r); }
+      } catch (e) {}
+      return realSend.apply(this, arguments);
+    };
+    XP.open = myOpen; XP.send = mySend;
+    T.undo.push(function () { if (XP.open === myOpen) XP.open = realOpen; if (XP.send === mySend) XP.send = realSend; });
+  }
+  function trHookFetch(T, W) {
+    var w = W.w, real = null; try { real = w.fetch; } catch (e) {}
+    if (typeof real !== 'function') return;
+    var mine = function coresTrFetch(input, init) {
+      var p = real.apply(trThis(this, w), arguments);
+      if (T.on) try {
+        var isReq = input && typeof input === 'object' && typeof input.url === 'string';
+        var r = { type: 'request', api: 'fetch', W: W, method: trMethod((init && init.method) || (isReq && input.method) || 'GET'), u: trUrl(isReq ? input.url : input, w),
+                  t: trNow(T), body: trBody(init && init.body), frames: trFrames(T, 5, false) };
+        trPush(T, r);
+        p.then(function (res) {
+          if (!T.on) return;
+          try { r.tResp = r.tEnd = trNow(T); r.ms = r.tEnd - r.t; r.status = res.status; var cl = res.headers.get('content-length'); if (cl && /^\d+$/.test(cl)) { r.size = +cl; r.unit = 'bytes'; } } catch (e) {}
+        }, function () { if (T.on) { r.failed = true; r.tResp = r.tEnd = trNow(T); r.ms = r.tEnd - r.t; } });
+      } catch (e) {}
+      return p;
+    };
+    w.fetch = mine;
+    T.undo.push(function () { try { if (w.fetch === mine) w.fetch = real; } catch (e) {} });
+  }
+
+  // ---- window.open and form submits
+  function trLastClick(T, t) { for (var i = T.ev.length - 1; i >= 0; i--) { var e = T.ev[i]; if (e.type === 'click') return t - e.t <= 5000 ? e : null; } return null; }
+  function trHookOpen(T, W) {
+    var w = W.w, real = null; try { real = w.open; } catch (e) {}
+    if (typeof real !== 'function') return;
+    function make(inner) {
+      var f = function coresTrOpen(url, name, features) {
+        var t = T.on ? trNow(T) : 0;   // when it was called: opening a window can take a while
+        var pop = inner.apply(trThis(this, w), arguments);
+        if (T.on) try {
+          var c = null; try { c = f.caller; } catch (e) {}
+          var u = trUrl(url, w), p = null;
+          if (pop) {
+            for (var i = 0; i < T.popups.length; i++) if (T.popups[i].w === pop) p = T.popups[i];
+            if (!p) { p = { w: pop, n: T.popups.length + 1, t: t, u: u, report: u.report, href: u.abs, closedAt: 0, realms: [], seen: {} }; T.popups.push(p); }
+            else { p.u = u; p.href = u.abs; if (u.report) p.report = true; }
+          }
+          trSeeRealms(T);
+          trPush(T, { type: 'open', t: t, W: W, u: u, name: trWinName(name), features: trFeatures(features), blocked: !pop, opened: p,
+                      frames: trFrames(T, 10, true), callers: trCallers(T, c).map(function (x) { return x.kind; }), click: trLastClick(T, t) });
+        } catch (e) {}
+        return pop;
+      };
+      return f;
+    }
+    var mine = make(real), mineReal = null, savedReal = null;
+    w.open = mine;
+    // captureCores() keeps the page's own window.open in __coresRealOpen and calls it from its wrapper: watched too, so
+    // a capture armed (or armed again) while the Trace runs does not slip past it
+    try { if (w === window && typeof w.__coresRealOpen === 'function') { savedReal = w.__coresRealOpen; mineReal = make(savedReal); w.__coresRealOpen = mineReal; } } catch (e) {}
+    T.undo.push(function () {
+      try { if (w.open === mine) w.open = real; } catch (e) {}
+      try { if (mineReal && w.__coresRealOpen === mineReal) w.__coresRealOpen = savedReal; else if (w.__coresRealOpen === mine) w.__coresRealOpen = real; } catch (e) {}
+    });
+  }
+  function trForm(T, W, form, how) {
+    var pairs = [], els = form.elements || [];
+    for (var i = 0; i < els.length && i < 200; i++) { var nm = els[i].name; if (nm) pairs.push([nm, typeof els[i].value === 'string' && els[i].value.length <= 60 ? els[i].value : '']); }
+    trPush(T, { type: 'form', t: trNow(T), W: W, how: how, method: trMethod(form.getAttribute('method') || 'GET'), u: trUrl(form.getAttribute('action') || W.w.location.href, W.w),
+                target: trWinName(form.getAttribute('target')), names: trParams(pairs).slice(0, 40), frames: how === 'submit()' ? trFrames(T, 8, true) : [] });
+  }
+  function trHookForms(T, W) {
+    var w = W.w, FP = null; try { FP = w.HTMLFormElement.prototype; } catch (e) {}
+    if (FP && typeof FP.submit === 'function') {
+      var real = FP.submit, mine = function coresTrSubmit() { if (T.on) { try { trForm(T, W, this, 'submit()'); } catch (e) {} } return real.apply(this, arguments); };
+      FP.submit = mine;
+      T.undo.push(function () { if (FP.submit === mine) FP.submit = real; });
+    }
+    var onSubmit = function coresTrSubmitEvent(e) { if (T.on) { try { if (e.target && e.target.tagName === 'FORM' && !trMine(e.target)) trForm(T, W, e.target, 'submit event'); } catch (x) {} } };
+    try { w.addEventListener('submit', onSubmit, true); T.undo.push(function () { w.removeEventListener('submit', onSubmit, true); }); } catch (e) {}
+  }
+
+  // ---- clicks: what was clicked, as tag + classes; the handlers on it, by name
+  var TR_ACT_CLASS = /(^|[-_])(btn|button|menu-?item|menu_item)($|[-_])/i;
+  var TR_PT_ROW = /pt_list|pt_row|patient/i;
+  var TR_KEYWORD = /^(if|for|while|switch|catch|function|return|typeof|new|else|do|try|var|let|const|void|delete|in|of|with|this|super|await|async|yield|throw|case)$/;
+  function trInRow(el) {   // on or inside a list row (any tr / li), or anything of the patient list
+    return !!trUp(el, function (x) { return x.tagName === 'TR' || x.tagName === 'LI' || TR_PT_ROW.test(typeof x.className === 'string' ? x.className : '') || TR_PT_ROW.test(x.id || ''); });
+  }
+  function trInPatientList(el) { return !!trUp(el, function (x) { return TR_PT_ROW.test(typeof x.className === 'string' ? x.className : '') || TR_PT_ROW.test(x.id || ''); }); }
+  function trDesc(el) {   // Find's rule: no id on or inside a list row, and a class there only when more than one element has it
+    var d = el.tagName.toLowerCase(), doc = el.ownerDocument, inRow = trInRow(el);
+    try { if (el.id && !inRow && trSafe(el.id) !== '<name>') d += '#' + el.id; } catch (e) {}
+    try {
+      var cn = typeof el.className === 'string' ? el.className.trim() : '';
+      if (cn) d += cn.split(/\s+/).filter(function (c) { try { return trSafe(c) !== '<name>' && (!inRow || doc.getElementsByClassName(c).length > 1); } catch (e) { return false; } })
+        .slice(0, 3).map(function (c) { return '.' + c; }).join('');
+    } catch (e) {}
+    try { var role = el.getAttribute('role'); if (role && /^[a-z]{2,20}$/.test(role)) d += '[role=' + role + ']'; } catch (e) {}
+    return d;
+  }
+  function trPath(el) { var q = []; for (var x = el; x && x.nodeType === 1 && x.tagName !== 'BODY' && x.tagName !== 'HTML' && q.length < 4; x = x.parentElement) q.unshift(trDesc(x)); return q.join(' > '); }
+  function trActionable(el) {   // the button, menu item, option or link a click landed on or in
+    return trUp(el, function (x) {
+      var tag = x.tagName, role = (x.getAttribute('role') || '').toLowerCase();
+      return tag === 'BUTTON' || tag === 'A' || tag === 'OPTION' || (tag === 'INPUT' && /^(button|submit|reset)$/i.test(x.type)) ||
+        /^(button|menuitem|menuitemcheckbox|menuitemradio|option|link)$/.test(role) ||
+        (typeof x.className === 'string' && x.className.split(/\s+/).some(function (c) { return TR_ACT_CLASS.test(c); }));
+    });
+  }
+  function trCallNames(code) {   // the names of the functions a piece of code calls (never their arguments)
+    var out = [], m, re = /([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,4})\s*\(/g, src = String(code).slice(0, 20000);
+    while ((m = re.exec(src)) && out.length < 8) {
+      if (TR_KEYWORD.test(m[1])) continue;
+      var nm = m[1].split('.').map(function (seg) { return seg.length <= 40 && !/\d{3,}/.test(seg) ? seg : '<name>'; }).join('.');
+      if (out.indexOf(nm) < 0) out.push(nm);
+    }
+    return out;
+  }
+  function trJqEvents(w, node) {   // jQuery's stored handlers for a node, READ from where jQuery keeps them (jQuery is not called)
+    try {
+      var jq = w.jQuery;
+      if (jq && jq.expando && jq.cache) {   // jQuery 1.x: node[jQuery.expando] is an id into jQuery.cache
+        var id = node[jq.expando], c = id && jq.cache[id];
+        if (c && c.events) return c.events;
+      }
+      var ks = Object.getOwnPropertyNames(node);   // jQuery 2.x / 3.x: its data hangs on the node as jQuery<digits>
+      for (var i = 0; i < ks.length; i++) if (/^jQuery\d+/.test(ks[i])) { var v = node[ks[i]]; if (v && typeof v === 'object' && v.events) return v.events; }
+    } catch (e) {}
+    return null;
+  }
+  function trHandlers(W, el) {
+    var out = [];
+    function info(fn, how) {
+      var nm = ''; try { nm = String(fn.name || ''); } catch (e) {}
+      var calls = []; try { var s = Function.prototype.toString.call(fn); if (!/\[native code\]/.test(s)) calls = trCallNames(s.slice(s.indexOf('{') + 1)); } catch (e) {}
+      out.push(how + ' ' + (nm && /^[A-Za-z_$][\w$]{0,59}$/.test(nm) && !/\d{3,}/.test(nm) ? nm : '(anonymous)') + (calls.length ? ' → ' + calls.join(', ') : ''));
+    }
+    for (var x = el, depth = 0; x && depth < 25 && out.length < 8; x = x.parentNode, depth++) {
+      var where = depth && x.nodeType === 1 ? ' on ' + trDesc(x) : depth ? ' on the document' : '';
+      try {
+        if (x.nodeType === 1 && depth < 4) {
+          var a = x.getAttribute('onclick');
+          if (a) out.push('onclick' + where + ' → ' + (trCallNames(a).join(', ') || '(code)'));
+          else if (typeof x.onclick === 'function') info(x.onclick, 'onclick' + where);
+        }
+      } catch (e) {}
+      try {
+        var evs = trJqEvents(W.w, x);
+        if (evs) ['click', 'mousedown', 'mouseup'].forEach(function (type) {
+          list(evs[type]).forEach(function (h) {
+            if (!h || typeof h.handler !== 'function' || out.length >= 8) return;
+            if (depth === 0 && !h.selector) info(h.handler, 'jQuery ' + type);
+            else if (h.selector) { var hit = null; try { hit = el.closest(h.selector); } catch (e) {} if (hit && (x.nodeType !== 1 || x.contains(hit))) info(h.handler, 'jQuery ' + type + ' (delegated' + where + ')'); }
+          });
+        });
+      } catch (e) {}
+    }
+    return out;
+  }
+  function trHookClicks(T, W) {
+    var w = W.w;
+    var onClick = function coresTrClick(e) {
+      if (!T.on) return;
+      try {
+        var el = e.target; if (!el || el.nodeType !== 1 || trMine(el)) return;
+        var act = trActionable(el), rec = { type: 'click', t: trNow(T), W: W, path: trPath(el), act: act && act !== el ? trDesc(act) : '', raw: null, long: 0, inList: trInPatientList(el), handlers: trHandlers(W, act || el) };
+        if (act && !rec.inList) {   // the text is kept as it is until the result is written, where it is redacted or dropped
+          var tx = String((act.tagName === 'INPUT' ? act.value : act.textContent) || '').replace(/\s+/g, ' ').trim();
+          if (tx && tx.length <= 60) rec.raw = tx; else rec.long = tx.length;
+        }
+        trPush(T, rec);
+      } catch (x) {}
+    };
+    try { w.addEventListener('click', onClick, true); T.undo.push(function () { w.removeEventListener('click', onClick, true); }); } catch (e) {}
+  }
+
+  // ---- every 40 ms: the records when they cannot be hooked, in-place changes that no wrapped call announced, and the
+  // windows opened since arming (gone to another page, closed; their requests, read from their resource timings)
+  function trPoll(T) {
+    var t = trNow(T);
+    if (T.lastPoll !== undefined && t - T.lastPoll > T.slowest) T.slowest = t - T.lastPoll;   // a browser slows a covered window's timers
+    T.lastPoll = t;
+    T.wins.forEach(function (W) {
+      var st = W.st; if (!st) return;
+      try {
+        if (st.mode === 'hook') { var d = Object.getOwnPropertyDescriptor(W.w, TR_ROWS); if (!d || d.set !== st.setter) { st.mode = 'poll'; T.notes.push('the page redefined ' + TR_ROWS + ' itself while the Trace was armed; it was polled from then on'); } }
+        if (st.mode === 'poll') { var cur; try { cur = W.w[TR_ROWS]; } catch (e) { return; } if (cur !== st.val) { st.val = cur; trWrite(T, W, st, 'changed', cur, null, true); return; } }
+        var sh = trShape(st.val);
+        if (sh.kind === 'list' && sh.n !== st.len) trWrite(T, W, st, 'resized', st.val, null, true);
+        else if (sh.kind === 'list' && sh.fields !== st.fields) { trPush(T, { type: 'fields', t: t, W: W, from: st.fields, to: sh.fields, n: sh.n }); st.fields = sh.fields; }
+      } catch (e) {}
+    });
+    T.polls++;
+    T.popups.forEach(function (p) {
+      try {
+        if (p.closedAt) return;
+        if (p.w.closed) { p.closedAt = t || 1; trPush(T, { type: 'closed', t: t, pop: p }); return; }
+        var href = ''; try { href = String(p.w.location.href).split('#')[0]; } catch (e) { href = '(another site)'; }
+        if (href !== p.href && href !== 'about:blank') {
+          var u = href === '(another site)' ? { host: '', file: '(another site)', params: [], report: false, abs: '' } : trUrl(href, p.w);
+          trPush(T, { type: 'moved', t: t, pop: p, u: u });
+          p.href = href; if (u.report) p.report = true;
+        }
+        trSeeRealms(T);
+        if (T.polls % 5 && !T.last) return;   // its requests: five times a second, and once more at the end
+        var es = p.w.performance.getEntriesByType('resource'), origin = p.w.performance.timeOrigin;
+        for (var i = 0; i < es.length; i++) {
+          var en = es[i]; if (en.initiatorType !== 'xmlhttprequest' && en.initiatorType !== 'fetch') continue;
+          var key = origin + '|' + en.startTime + '|' + en.name; if (p.seen[key]) continue;
+          p.seen[key] = 1;
+          var r = { type: 'request', api: en.initiatorType === 'fetch' ? 'fetch' : 'XHR', pop: p, method: '', u: trUrl(en.name, p.w), t: Math.round(origin + en.startTime - T.epoch), ms: Math.round(en.duration), timed: true };
+          r.tResp = r.tEnd = r.t + r.ms;
+          if (en.responseStatus) r.status = en.responseStatus;
+          if (en.decodedBodySize) { r.size = en.decodedBodySize; r.unit = 'bytes'; }
+          trPush(T, r);
+        }
+      } catch (e) {}
+    });
+    if (T.polls % 12 === 0) trButton();
+  }
+  // what this page loaded since arming that the wrapped XHR and fetch did not carry: script tags (CORES may fetch data
+  // that way), frames, beacons; and XHR / fetch that slipped past (another frame's). From the page's own resource
+  // timings, so: no method, no body names. Pictures, styles and fonts are left out.
+  function trOtherLoads(T) {
+    var W = T.wins[0], known = {};
+    T.ev.forEach(function (e) { if (e.type === 'request' && !e.pop && e.u.abs) known[e.u.abs] = (known[e.u.abs] || 0) + 1; });
+    var es = W.w.performance.getEntriesByType('resource');
+    for (var i = 0; i < es.length; i++) {
+      var en = es[i], it = String(en.initiatorType || '');
+      if (en.startTime < T.t0 || /^(img|image|css|link|font|video|audio|track)$/.test(it)) continue;
+      var name = String(en.name).split('#')[0];
+      if (/\.(png|gif|jpe?g|svg|css|woff2?|ttf|ico)(\?|$)/i.test(name) || /capture_report\.js/.test(name)) continue;
+      if ((it === 'xmlhttprequest' || it === 'fetch') && known[name]) { known[name]--; continue; }
+      var r = { type: 'request', api: 'load (' + (/^[a-z]{1,20}$/.test(it) ? it : 'other') + ')', W: W, method: '', u: trUrl(name, W.w), t: Math.round(en.startTime - T.t0), ms: Math.round(en.duration), timed: true };
+      r.tResp = r.tEnd = r.t + r.ms;
+      if (en.responseStatus) r.status = en.responseStatus;
+      if (en.decodedBodySize) { r.size = en.decodedBodySize; r.unit = 'bytes'; }
+      trPush(T, r);
+    }
+  }
+  function trButton() {   // the HUD's Trace button and the note beside the counts
+    try {
+      if (!ov) return;
+      var on = !!TR;
+      ov.traceBtn.textContent = on ? 'Stop trace' : 'Trace';
+      ov.traceBtn.style.background = on ? '#b00020' : '#fff'; ov.traceBtn.style.color = on ? '#fff' : '#1f4e79'; ov.traceBtn.style.borderColor = on ? '#b00020' : '#1f4e79';
+      ovStat('trace', on ? '● trace ' + Math.floor(trNow(TR) / 1000) + ' s, ' + TR.ev.length + ' seen' : '');
+    } catch (e) {}
+  }
+
+  // ---- arming and stopping
+  function trArm(opt) {
+    var T = { on: true, t0: performance.now(), epoch: 0, ev: [], wins: [], popups: [], undo: [], notes: [], dropped: 0, polls: 0, slowest: 0, inCallback: null, lastWrite: null,
+              hud: !!opt.hud, passive: !!opt.poll, meta: new WeakMap(), timer: null, killer: null, after: null, auto: '' };
+    T.epoch = (performance.timeOrigin || Date.now() - performance.now()) + T.t0;
+    T.wins.push({ w: window, label: 'this page', st: null });
+    [['the parent page', function () { return window.parent; }], ['the top page', function () { return window.top; }]].forEach(function (c) {
+      try { var w = c[1](); if (w && !T.wins.some(function (W) { return W.w === w; }) && w.document) T.wins.push({ w: w, label: c[0], st: null }); } catch (e) {}
+    });
+    T.wins.forEach(function (W) {
+      [trHookRecords, trHookXhr, trHookFetch, trHookOpen, trHookForms, trHookClicks].forEach(function (hook) {
+        try { hook(T, W); } catch (e) { T.notes.push('one of the Trace\'s watchers could not be set on ' + W.label + ' (' + (e && e.name) + ')'); }
+      });
+    });
+    T.timer = setInterval(function () { try { trPoll(T); } catch (e) {} }, 40);
+    T.killer = setTimeout(function () { if (TR === T) { T.auto = 'by itself after 15 minutes'; trStop({ hud: T.hud }); } }, 15 * 60000);
+    TR = T;
+    window.__coresTraceStop = function () { if (TR === T) trStop({ quiet: true }); };
+    hudEvent('trace_started');
+    return T;
+  }
+  function trStop(opt) {
+    var T = TR; opt = opt || {};
+    if (!T) return null;
+    T.last = true;
+    try { trPoll(T); } catch (e) {}   // a last look
+    try { trOtherLoads(T); } catch (e) {}
+    T.tEnd = trNow(T);
+    T.on = false; TR = null;
+    clearInterval(T.timer); clearTimeout(T.killer); clearTimeout(T.after);
+    for (var i = T.undo.length - 1; i >= 0; i--) { try { T.undo[i](); } catch (e) { T.notes.push('one of the Trace\'s watchers could not be taken off (' + (e && e.name) + ')'); } }
+    try { delete window.__coresTraceStop; } catch (e) {}
+    trButton();
+    return T;
+  }
+  // a capture has ended (its verdict is up): the Trace has what it came for, and stops a moment later
+  function trAfterCapture() {
+    var T = TR; if (!T || T.after) return;
+    T.after = setTimeout(function () { if (TR === T) { T.auto = 'by itself, after the capture ended'; traceCores('stop', { hud: true }); } }, 2500);
+  }
+
+  // ---- the result: a timeline, as text. Everything shown is a name, a count or a time
+  function trListNames() {   // names as CORES writes them in its list (LAST, FIRST), for redacting when the records are not there
+    var out = [];
+    try {
+      var cells = document.querySelectorAll('table.rnd_tbl_pt_list td, table.rnd_tbl_pt_list a, table.rnd_tbl_pt_list span, table.rnd_tbl_pt_list div');
+      for (var i = 0; i < cells.length && i < 6000; i++) {
+        if (cells[i].children.length) continue;
+        var t = (cells[i].textContent || '').trim();
+        if (t.length <= 60 && /^[A-Za-z][A-Za-z' -]*,\s*[A-Za-z][A-Za-z' .-]*$/.test(t)) out.push(t);
+      }
+    } catch (e) {}
+    return out;
+  }
+  function trSec(ms) { return ('       ' + (ms / 1000).toFixed(2)).slice(-7); }
+  function trTag(e) { return e.pop ? '[' + (e.pop.report ? 'R' : 'W') + e.pop.n + ']' : e.W && e.W.label !== 'this page' ? '[L, ' + e.W.label + ']' : '[L]'; }
+  function trPopName(p) { return p ? (p.report ? 'the report window' : 'a window opened from this page') + ' [' + (p.report ? 'R' : 'W') + p.n + ']' : 'a report window'; }
+  function trAddr(u) { return (u.host ? u.host + ' ' : '') + u.file + (u.params.length ? ' ?' + u.params.join(', ') : ''); }
+  function trReqText(r) {
+    var s = r.api + (r.method ? ' ' + r.method : '') + ' ' + trAddr(r.u);
+    if (r.body) s += '  body: ' + r.body.kind + (r.body.names ? ' ' + r.body.names.join(', ') : '') + (r.body.n !== undefined ? ' (' + r.body.n.toLocaleString() + ')' : '');
+    return s;
+  }
+  function trReqEnd(r) {
+    if (r.failed) return '→ failed' + (r.ms != null ? ', ' + r.ms + ' ms' : '');
+    if (r.tEnd === undefined) return '→ no answer by the end of the Trace';
+    return '→ ' + (r.status === undefined ? 'status not known' : r.status === 0 ? 'no status (blocked, stopped, or another site)' : r.status) +
+      (r.size != null ? ', ' + r.size.toLocaleString() + ' ' + r.unit : '') + (r.ms != null ? ', ' + r.ms + ' ms' : '');
+  }
+  function trStackText(frames) {
+    return frames.map(function (f) { return f.text + (f.tag === 'report' ? ' [report window]' : f.tag === 'list' ? ' [this page]' : ''); }).join(' ← ');
+  }
+  function trClickText(c, scrub) {
+    var s = c.path + (c.act ? ' (in ' + c.act + ')' : '');
+    if (c.raw !== null) {
+      var r = scrub(c.raw);
+      // dropped when it holds an identifier the page knows, or has the shape CORES writes a name in (LAST, FIRST)
+      s += r.hit || /[A-Za-z][A-Za-z' -]*,\s*[A-Z]/.test(c.raw) ? ' "<hidden: it may name a patient>"' : ' "' + r.text + '"';
+    } else if (c.inList) s += ' (in the patient list: text not read)';
+    return s;
+  }
+  function trTimeline(T, scrub) {
+    var evs = T.ev.slice().sort(function (a, b) { return a.t - b.t; }), L = [], no = 0;
+    evs.forEach(function (e) { if (e.type === 'request') e.no = ++no; });
+    var st0 = T.wins[0].st, start = st0 ? st0.start : { kind: 'nothing', n: 0 };
+    L.push(trSec(0) + '  armed. Records then: ' + (start.kind === 'list' ? start.n + ' already there' : 'none') +
+      (T.passive ? ' (watched by polling only, as asked: no call stacks)' : st0 && st0.mode === 'poll' ? ' (the page declares the variable itself, so it is watched by polling: no call stacks)' : ''));
+    for (var i = 0; i < evs.length; i++) {
+      var e = evs[i], at = trSec(e.t) + '  ';
+      if (e.type === 'click') {
+        L.push(at + 'click    ' + trTag(e) + ' ' + trClickText(e, scrub));
+        if (e.handlers.length) L.push('             handlers: ' + e.handlers.join('; '));
+      } else if (e.type === 'open') {
+        L.push(at + 'open     ' + trTag(e) + ' window.open ' + trAddr(e.u) + (e.name ? '  name "' + e.name + '"' : '') + (e.features ? '  features "' + e.features + '"' : '') +
+          (e.blocked ? '  → BLOCKED (no window)' : '  → ' + trPopName(e.opened)));
+        if (e.frames.length) L.push('             called from: ' + trStackText(e.frames));
+      } else if (e.type === 'form') {
+        L.push(at + 'form     ' + trTag(e) + ' ' + e.how + ' ' + e.method + ' ' + trAddr(e.u) + (e.target ? '  target "' + e.target + '"' : '') + (e.names.length ? '  fields: ' + e.names.join(', ') : ''));
+        if (e.frames.length) L.push('             called from: ' + trStackText(e.frames));
+      } else if (e.type === 'request') {
+        // a run of the same request (same window, method, address and parameter names) is one line
+        var same = [e];
+        while (i + 1 < evs.length && evs[i + 1].type === 'request' && trTag(evs[i + 1]) === trTag(e) && trReqText(evs[i + 1]) === trReqText(e)) same.push(evs[++i]);
+        if (same.length === 1) {
+          L.push(at + 'request  ' + trTag(e) + ' #' + e.no + ' ' + trReqText(e) + '  ' + trReqEnd(e));
+          if (e.frames && e.frames.length) L.push('             sent from: ' + trStackText(e.frames));
+        } else {
+          var sizes = same.map(function (r) { return r.size; }).filter(function (x) { return x != null; }), lastR = same[same.length - 1];
+          L.push(at + 'request  ' + trTag(e) + ' #' + e.no + '–#' + lastR.no + ' ' + trReqText(e) + '  ×' + same.length + ' until ' + trSec(lastR.t).trim() + ' s' +
+            (sizes.length ? ', answers ' + Math.min.apply(null, sizes).toLocaleString() + '–' + Math.max.apply(null, sizes).toLocaleString() + ' ' + (e.unit || 'bytes') : ''));
+          if (e.frames && e.frames.length) L.push('             first sent from: ' + trStackText(e.frames));
+        }
+      } else if (e.type === 'records') {
+        var w = e.who, by = w.who === 'report' ? 'BY ' + trPopName(w.pop).toUpperCase() : w.who === 'list' ? 'BY THIS PAGE' : 'BY: NOT KNOWN';
+        var how = e.how === 'assigned' ? 'assigned' : e.how === 'changed' ? 'changed (seen by polling)' : e.how === 'resized' ? 'changed in place (seen by polling)' : 'filled in place with ' + e.how + '()';
+        L.push(at + 'RECORDS  ' + trTag(e) + ' ' + how + (e.times > 1 ? ' ×' + e.times + ' until ' + trSec(e.t2).trim() + ' s' : '') + ': ' +
+          (e.kind === 'list' ? e.n + ' record' + (e.n === 1 ? '' : 's') + (e.fields ? ', ' + e.fields + ' fields each' : '') : e.kind === 'nothing' ? 'emptied (no value)' : 'a value that is not a list (' + e.kind + ')') + '. ' + by +
+          (w.why.length ? ' (' + w.why.join('; ') + ')' : '') + '. Report windows open: ' + trReportsOpen(T, e.t) + '.' +
+          (e.during ? ' While the answer to request #' + e.during.no + ' was being handled.' : ''));
+        if (e.frames.length) L.push('             call stack: ' + trStackText(e.frames));
+      } else if (e.type === 'fields') {
+        L.push(at + 'records  ' + trTag(e) + ' now ' + e.to + ' fields each (were ' + e.from + '): filled further in place');
+      } else if (e.type === 'moved') {
+        L.push(at + 'window   ' + trTag(e) + ' went to ' + trAddr(e.u));
+      } else if (e.type === 'closed') {
+        L.push(at + 'window   ' + trTag(e) + ' closed');
+      }
+    }
+    L.push(trSec(T.tEnd) + '  stopped' + (T.auto ? ' ' + T.auto : '') + '. Records now: ' + (function () { var s = trShape(st0 ? st0.val : undefined); return s.kind === 'list' ? s.n : 'none'; })());
+    return { lines: L, evs: evs, start: start };
+  }
+  // the short answer on top of the timeline: who wrote the records, and two hints. "skip?": could the records load
+  // without the report window; "automate?": which click and which window.open call opened the report, so a script
+  // could do the same. Hints, from one run's timing: the timeline under them is the evidence.
+  function trVerdict(T, tl, scrub) {
+    var evs = tl.evs, start = tl.start, v = { who: 'not_seen', records: 0 };
+    var secs = function (ms) { return (ms / 1000).toFixed(2) + ' s'; }, cap = function (s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; };
+    var fill = null, opens = [], forms = [], repOpen = null;
+    evs.forEach(function (e) {
+      if (e.type === 'records' && !fill && e.kind === 'list' && e.n > 0) fill = e;   // the first write that put records there
+      if (e.type === 'open' && !e.blocked) { opens.push(e); if (!repOpen && (e.u.report || (e.opened && e.opened.report))) repOpen = e; }
+      if (e.type === 'form') forms.push(e);
+    });
+    var st0 = T.wins[0].st, polled = !!(st0 && st0.mode === 'poll'), had = start.kind === 'list' && start.n > 0;
+    var openBefore = null;   // the report window opened last before the write (the writer's own, when that is known)
+    if (fill) opens.forEach(function (e) { if (e.t <= fill.t && (e.u.report || (e.opened && e.opened.report) || e.opened === fill.who.pop)) openBefore = e; });
+    // the request of this page whose answer the write followed: surely (it was being handled), probably (the Trace saw
+    // the answer arrive just after the write, the page's handler having run first), or only the nearest one before
+    function reqFor(e) {
+      if (e.during) return { r: e.during, how: 'during' };
+      var before = null, late = null, others = 0;
+      evs.forEach(function (r) {
+        if (r.type !== 'request' || r.pop || r.t === undefined || r.tResp === undefined) return;
+        // an XHR whose handler was set before the Trace's listener: the page handles the answer first, the Trace sees it after
+        if (r.api === 'XHR' && r.t <= e.t && r.tResp >= e.t && r.tResp - e.t <= 150 && (!late || r.tResp < late.tResp)) late = r;
+        if (r.tResp <= e.t && e.t - r.tResp <= 5000) { others++; if (!before || r.tResp > before.tResp) before = r; }
+      });
+      return late ? { r: late, how: 'late', gap: late.tResp - e.t } : before ? { r: before, how: 'after', gap: e.t - before.tResp, others: others - 1 } : null;
+    }
+    var who, skip, auto, rq = null;
+    if (!fill) {
+      if (had) {
+        v.who = 'already_there';
+        who = '✖ WHO WROTE THE RECORDS: not seen. They were already on the page when the Trace was armed (' + start.n + ' records) and nothing rewrote them. ' +
+          'For the answer: press F5 in CORES, open your list, paste the script, press Trace BEFORE opening any report, then open the report.';
+        skip = 'No answer from this run: the records were loaded before the Trace was armed.';
+      } else {
+        who = '✖ WHO WROTE THE RECORDS: not seen. Nothing wrote window.' + TR_ROWS + ' in the ' + secs(T.tEnd) + ' the Trace was armed' +
+          (repOpen ? ', although a report window was opened at ' + secs(repOpen.t) + '. Keep the Trace armed until the report has rendered, then stop it.' :
+            opens.length ? ', and the window that was opened is not a report by its address.' : ', and no report window was opened: open the report while the Trace is armed.');
+        skip = 'No answer from this run.';
+      }
+    } else {
+      var w = fill.who, n = fill.n + ' record' + (fill.n === 1 ? '' : 's'), why = cap(w.why.join('; '));
+      v.records = fill.n;
+      if (w.who === 'report') {
+        v.who = 'report_window';
+        var own = 0, mine = 0;   // requests before the write: the report window's own, and this page's since the window opened
+        evs.forEach(function (r) { if (r.type === 'request' && r.t <= fill.t) { if (r.pop && r.pop === w.pop) own++; else if (!r.pop && openBefore && r.t >= openBefore.t) mine++; } });
+        who = '✔ WHO WROTE THE RECORDS: the report window' + (w.sure ? '' : ', probably') + '. Its code put ' + n + ' on this page (its opener)' +
+          (openBefore ? ', ' + secs(fill.t - openBefore.t) + ' after it was opened' : '') + '. ' + why + '.';
+        skip = 'Not by leaving the report window out: the records came to this page FROM the report window' +
+          (own ? ', after ' + own + ' request' + (own === 1 ? '' : 's') + ' of its own (the [R] request lines)' : '') +
+          (openBefore ? mine ? '; this page sent ' + mine + ' request' + (mine === 1 ? '' : 's') + ' of its own in between, which do not look like their source' : ', and this page sent no request in between' : '') +
+          '. Without a report window nothing seen here would load them. What is left to try is a report window that nobody has to look at: see automate.';
+      } else if (w.who === 'list') {
+        v.who = 'list_page';
+        rq = reqFor(fill);
+        who = '✔ WHO WROTE THE RECORDS: this page (the patient list)' + (w.sure ? '' : ', probably') + '. Its own code wrote ' + n +
+          (!rq ? ', with no request of this page answered in the 5 s before' :
+            rq.how === 'during' ? ', while the answer to its request #' + rq.r.no + ' was being handled' :
+            rq.how === 'late' ? ', ' + rq.gap + ' ms before the Trace saw the answer to its request #' + rq.r.no + ' arrive: probably while handling that answer' :
+            ', ' + rq.gap + ' ms after the answer to its request #' + rq.r.no + ' came back (the nearest request before the write' +
+              (rq.others ? '; ' + rq.others + ' more were answered in the 5 s before' : '') + ': a hint, not proof)') + '.' +
+          (rq ? ' Request #' + rq.r.no + ': ' + trReqText(rq.r) + '  ' + trReqEnd(rq.r) + '.' : '') + ' ' + why + '.';
+        if (!openBefore) {
+          skip = 'Yes, by this run: the records were written with no report window opened since the Trace was armed' + (rq ? ' (see request #' + rq.r.no + ')' : '') +
+            '. If a report had been opened earlier in this CORES session, check once more in a fresh one (F5): CORES may load them only after a first report.';
+        } else {
+          skip = 'Maybe. This page loads the records itself (the report window does not hand them over), but it did so ' + secs(fill.t - openBefore.t) + ' after the report was opened' +
+            (rq && rq.r.t >= openBefore.t ? ', with a request it sent ' + (rq.r.t - openBefore.t) + ' ms after window.open' + (rq.r.frames && rq.r.frames.length ? ' (sent from: ' + trStackText(rq.r.frames.slice(0, 3)) + ')' : '') :
+              rq ? ', with a request it had sent before the report was opened' : '') +
+            '. So opening the report seems to set the loading off, not the report window as such: if what sends that request can be run without opening a report, the report window is not needed for the records. Watching cannot tell that; it is the next thing to try.';
+        }
+      } else {
+        v.who = 'unknown';
+        who = '✖ WHO WROTE THE RECORDS: unclear. ' + cap(n) + ' appeared at ' + secs(fill.t) + ', but whose code wrote them could not be told' +
+          (polled ? ' (the variable was only polled, so there is no call stack)' : '') + '.';
+        skip = 'Unclear. The records appeared ' + (openBefore ? secs(fill.t - openBefore.t) + ' after a report window was opened' : 'with no report window opened since arming, which points at this page itself') + '.';
+      }
+      if (had) who += ' NOTE: ' + start.n + ' records were already there at arming, so this is a rewrite, not the first fill; trace a fresh CORES session (F5) for that.';
+    }
+    if (repOpen) {
+      var c = repOpen.click;
+      auto = 'Looks possible. The report window was opened by a plain window.open call: ' + trAddr(repOpen.u) + (repOpen.name ? ', name "' + repOpen.name + '"' : '') +
+        (repOpen.features ? ', features "' + repOpen.features + '"' : '') + '. ' +
+        (c ? 'It came ' + (repOpen.t - c.t) + ' ms after a click on ' + trClickText(c, scrub) + (c.handlers.length ? ' [handlers: ' + c.handlers.join('; ') + ']' : '') + '. ' : 'No click was seen in the 5 s before it. ') +
+        (repOpen.frames.length ? 'Called from: ' + trStackText(repOpen.frames.slice(0, 4)) + '. ' : '') +
+        'A script can make the same call (captureCores(281) opens that address itself) or click that element; whether the records then load the same way is what a Trace of such a run shows.';
+    } else if (opens.length) {
+      auto = 'Unclear: window.open was called ' + opens.length + ' time' + (opens.length === 1 ? '' : 's') + ', but not for a report address (see the timeline).';
+    } else {
+      auto = 'Not seen: no window.open call while the Trace was armed' +
+        (forms.length ? '; ' + forms.length + ' form submit' + (forms.length === 1 ? ' was' : 's were') + ' (see the timeline): CORES may open the report through a form with a target.' :
+          '. If a report did open, CORES opens it another way (a link, or a form with a target).');
+    }
+    return { v: v, lines: [who, '→ skip?  ' + skip, '→ automate?  ' + auto] };
+  }
+  function trReport(T) {
+    var rows = null; try { rows = patientRows(); } catch (e) {}
+    var scrub = coresScrubber(rows, trListNames());
+    var tl = trTimeline(T, scrub), vd = trVerdict(T, tl, scrub);
+    var L = ['Trace: what loads CORES\'s patient records'];
+    vd.lines.forEach(function (x) { L.push(x); });
+    L.push('', 'TIMELINE (seconds since arming; [L] this page, [R1] a report window it opened; requests are numbered)');
+    tl.lines.forEach(function (x) { L.push(x); });
+    var notes = T.notes.slice();
+    if (T.dropped) notes.push(T.dropped + ' more clicks / requests were seen but not kept (over ' + TR_MAX + ')');
+    if (T.popups.length) notes.push('the report window\'s requests come from its resource timings: no method, and no body parameter names');
+    notes.push('requests are this page\'s XHR and fetch, plus what its resource timings list ("load (script)" and the like); anything sent through Cerner\'s own channel (window.external, XMLCclRequest) does not show, though a write it leads to still does, with its call stack');
+    if (T.slowest > 500) notes.push('the browser slowed this page\'s timers while it was covered (up to ' + (T.slowest / 1000).toFixed(1) + ' s between looks): what is "seen by polling", a window closing, and the report window\'s last requests may be late or missing; writes, requests, window.open and clicks of this page are caught as they happen');
+    notes.push('skip? and automate? are hints from this one run; they are about the patient records only (report 281 itself still supplies the full medications, I&O and most labs)');
+    notes.push('shown: names of functions, files, parameters and elements, CORES vocabulary, counts and timings; no parameter values except program / report ids');
+    L.push('', 'NOTES');
+    notes.forEach(function (x) { L.push('• ' + x); });
+    return { lines: L, text: L.join('\n'), verdict: vd.v };
+  }
+  function traceCores(cmd, opt) {
+    if (cmd && typeof cmd === 'object') { opt = cmd; cmd = ''; }
+    opt = opt || {}; cmd = String(cmd || '').toLowerCase();
+    if (cmd === 'status') return TR ? 'armed, ' + TR.ev.length + ' seen' : 'not armed';
+    if (!TR && cmd !== 'stop') {
+      try { ovBuild(); ov.root.style.display = 'flex'; } catch (e) {}
+      var T0 = trArm(opt), st = T0.wins[0].st;
+      trButton();
+      ovLog('Trace armed: it only watches. Now open the report in CORES as you normally do; when the report is there, press Stop trace' +
+        (st && st.start.kind === 'list' && st.start.n ? '. NOTE: the patient records are already on this page (' + st.start.n + '), so what filled them will not show: press F5 in CORES, paste the script and arm the Trace before opening a report.' : '.'),
+        st && st.start.kind === 'list' && st.start.n ? 'warn' : 'info');
+      console.log('CORES capture: Trace armed. Open the report as usual, then run traceCores() again (or press Stop trace).');
+      return 'tracing…';
+    }
+    if (!TR) { ovLog('Trace: not armed. Press Trace first, then open the report.', 'warn'); return 'not armed'; }
+    var T = trStop(opt);
+    if (opt.quiet) return 'stopped';
+    var rep = trReport(T);
+    window.coresTrace = { text: rep.text, verdict: rep.verdict };
+    hudEvent('trace_done', rep.verdict.who, rep.verdict.records, T.tEnd);
+    console.log(rep.text);
+    ovLog('Trace stopped' + (T.auto ? ' ' + T.auto : '') + ': ' + T.ev.length + ' things seen in ' + (T.tEnd / 1000).toFixed(1) + ' s.');
+    if (ov) showResult(rep.lines, rep.text, 'Trace');   // with its Copy for Claude button
+    else probeCopy(rep.text).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
+    return { text: rep.text };
+  }
+  window.traceCores = traceCores;
 
   window.captureCores = function (reportId, opts) {
     if (reportId && typeof reportId === 'object') { opts = reportId; reportId = null; }
@@ -1497,6 +2491,8 @@
     var url = BASE + '?prg_name=univ_wa_rnd_build_report&options=report_id:' + reportId +
       '&mode=pcedge&emr_type=CERNER-CCL-V4&report_name=univ_wa_rnd_api';
     var popup = (opts.open || window.__coresRealOpen || function (u, n, f) { return window.open(u, n, f); })(url, 'cores_capture_' + reportId, 'width=1400,height=900');
+    hudEvent('armed', 'direct');
+    hudEvent(popup ? 'report_opened' : 'blocked', popup ? 'direct' : null);
     if (!popup) {
       console.error('CORES capture: window.open was blocked. Allow popups for this site and try again.');
       ovStart('direct mode, report ' + reportId, 'Opening the report\u2026');
@@ -1521,4 +2517,5 @@
     }]]);
   };
   window.captureCores.deliver = deliver;
+  window.captureCores.events = hudEvents;   // the HUD's event log as the next capture would carry it
 })();
