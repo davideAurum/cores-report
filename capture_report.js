@@ -789,8 +789,10 @@
     function path(el) { var q = []; while (el && el.nodeType === 1 && q.length < 7) { q.unshift(desc(el)); el = el.parentElement; } return q.join(' > '); }
     function up(el, tags) { while (el && el.nodeType === 1) { if (tags.indexOf(el.tagName) >= 0) return el; el = el.parentElement; } return null; }
     // a heading row: one with a th, a cell spanning columns, fewer cells than the row after it, or a heading-like class
+    function kind(r) { return (typeof r.className === 'string' ? r.className : '').replace(/\S*(even|odd|alt|selected|hover|active)\S*/gi, '').replace(/\s+/g, ' ').trim(); }
     function looksHead(r, ref) {
       if (!r || r.nodeType !== 1) return false;
+      if (ref && ref.nodeType === 1 && kind(r) && kind(r) === kind(ref)) return false;   // the same kind of row as the one it would head
       var cls = typeof r.className === 'string' ? r.className : '';
       return !!(r.querySelector('th') || [].some.call(r.children, function (c) { return c.colSpan > 1; }) ||
         (ref && r.children.length < ref.children.length) || /group|header|heading|section/i.test(cls));
@@ -838,7 +840,21 @@
 
     // 2. the page's JavaScript data
     var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null, objs = 0, found = {};
-    function walk(o, pth, d, parent) {
+    var records = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+    // a big object (over 25 keys) is shown by its keys only when it is one of a list of objects that share them: a record
+    // with field names, like each patient's row data. Otherwise it may be a lookup table keyed by patient, and its keys
+    // stay hidden
+    function isRecord(o, ks, sibs) {
+      if (!sibs || !records) return false;
+      for (var j = 0, seenSib = 0; j < sibs.length && seenSib < 3; j++) {
+        var x = sibs[j]; if (x === o || !x || typeof x !== 'object') continue;
+        seenSib++;
+        var shared = 0; try { for (var q = 0; q < ks.length; q++) if (Object.prototype.hasOwnProperty.call(x, ks[q])) shared++; } catch (e) { continue; }
+        if (shared >= ks.length * 0.8) return true;
+      }
+      return false;
+    }
+    function walk(o, pth, d, parent, sibs) {
       if (o === null || o === undefined || d > 7 || objs > 60000) return;
       var ty = typeof o;
       if (ty === 'string' || ty === 'number') {
@@ -847,7 +863,11 @@
         if (!found[key]) found[key] = { path: safePath(key), found: [], count: 0, inList: /\[\d+\]/.test(pth), fieldsBeside: [] };
         t.split(', ').forEach(function (w) { if (found[key].found.indexOf(w) < 0) found[key].found.push(w); });
         found[key].count++;
-        if (parent && !found[key].fieldsBeside.length) try { var pk = Object.keys(parent); found[key].fieldsBeside = pk.length > 25 ? ['(a table of ' + pk.length + ' entries)'] : pk.map(safe); } catch (e) {}
+        if (parent && !found[key].fieldsBeside.length) try {
+          var pk = Object.keys(parent), rec = records && records.has(parent);
+          found[key].fieldsBeside = pk.length > 25 && !rec ? ['(a table of ' + pk.length + ' entries)'] : pk.slice(0, 250).map(safe);
+          if (rec) found[key].record = pk.length + ' fields, the same in the other entries of its list';
+        } catch (e) {}
         return;
       }
       if (ty !== 'object') return;
@@ -855,10 +875,11 @@
       try { if (seen) { if (seen.has(o)) return; seen.add(o); } } catch (e) { return; }
       objs++;
       var ks; try { ks = Object.keys(o); } catch (e) { return; }
-      var arr = Array.isArray(o);
+      var arr = Array.isArray(o), rec = !arr && ks.length > 25 && isRecord(o, ks, sibs);
+      if (rec) records.add(o);
       for (var i = 0; i < ks.length && i < 3000; i++) {
         var v; try { v = o[ks[i]]; } catch (e) { continue; }
-        walk(v, pth + (arr ? '[' + ks[i] + ']' : '.' + (ks.length > 25 ? '<name>' : ks[i])), d + 1, o);
+        walk(v, pth + (arr ? '[' + ks[i] + ']' : '.' + (ks.length > 25 && !rec ? '<name>' : ks[i])), d + 1, o, arr ? o : null);
       }
     }
     function walkWin(w, name) {
@@ -918,6 +939,7 @@
     })]);
     if (out.data.length) sections.push(["IN THE PAGE'S DATA", out.data.map(function (h) {
       return '• "' + h.found.join('", "') + '" at ' + h.path + (h.inList ? '  (a list: ' + h.count + ' match' + (h.count === 1 ? '' : 'es') + ')' : '') +
+        (h.record ? '\n    it is one field of a record (' + h.record + ')' : '') +
         '\n    fields beside it: ' + (h.fieldsBeside.join(', ') || '(none)');
     })]);
     // what this suggests about finding each patient's team (the reason Find was written)
