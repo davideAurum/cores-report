@@ -64,6 +64,9 @@
     if (FILL === 'push') {
       op.global_constant_row_info = [];
       rows.forEach(function fake_push_one(r) { op.global_constant_row_info.push(r); });
+    } else if (FILL === 'index') {
+      op.global_constant_row_info = [];
+      for (var i = 0; i < rows.length; i++) op.global_constant_row_info[i] = rows[i];
     } else if (FILL === 'strict') {
       (function () { 'use strict'; op.global_constant_row_info = rows; })();
     } else op.global_constant_row_info = rows;

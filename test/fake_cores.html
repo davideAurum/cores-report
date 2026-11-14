@@ -23,10 +23,14 @@
     ?fk_mode=opener   (default) the REPORT WINDOW writes global_constant_row_info into its opener (this page);
     ?fk_mode=xhr      this page fills it from an XHR for fake_rows.json, sent after the report window opens;
     ?fk_mode=fetch    the same with fetch();
-    ?fk_mode=timer    this page fills it on a timer, with no report and no request (the control).
+    ?fk_mode=timer    this page fills it on a timer, with no report and no request (the control);
+    ?fk_mode=click    this page fills it when the Reports button is clicked, before any report window opens
+                      (what the Trace run in CORES showed, 2026-11-14).
   and, with any of them:
     &fk_fill=assign   (default) one assignment of the whole list
     &fk_fill=push     an empty list first, then one record pushed at a time (filled in place)
+    &fk_fill=index    an empty list first, then filled by index (list[i] = record), as CORES does it: no call
+                      announces the fill, so a tracer sees it only by polling
     &fk_fill=strict   opener mode only: the report window assigns from strict-mode code (no caller to read)
     &fk_decl=var      the page declares the variable up front, as `var global_constant_row_info;` would: the
                       property cannot be redefined, so a tracer has to fall back to polling
@@ -153,6 +157,9 @@ window.jQuery = (function () {
     if (FILL === 'push') {
       if (!window.global_constant_row_info) window.global_constant_row_info = [];
       rows.forEach(function (r) { window.global_constant_row_info.push(r); });
+    } else if (FILL === 'index') {
+      window.global_constant_row_info = [];
+      for (var i = 0; i < rows.length; i++) window.global_constant_row_info[i] = rows[i];
     } else window.global_constant_row_info = rows;
     t4m_fake_async_columns();
   }
@@ -188,6 +195,8 @@ window.jQuery = (function () {
   window.t4m_fake_toggle_reports = function t4m_fake_toggle_reports() {
     var m = document.getElementById('t4m_reports_menu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
+    // fk_mode=click: showing the menu is what fills the records, once
+    if (MODE === 'click' && m.style.display === 'block' && !window.global_constant_row_info) t4m_fake_set_rows(JSON.parse(JSON.stringify(listData)));
   };
   function t4m_fake_open_report(id) {
     var url = 'fake_report.html?prg_name=univ_wa_rnd_build_report&options=report_id:' + id +

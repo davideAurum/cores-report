@@ -1614,9 +1614,11 @@
   window.mapCores = mapCores;
 
   // ---- Trace (traceCores): WHAT LOADS CORES's patient records. CORES's structured records
-  // (window.global_constant_row_info) exist only after a report has been opened from the list; the Trace watches the
-  // page while that happens, to show what fills them and what CORES's report button calls. Arm it BEFORE opening the
-  // report (in a fresh CORES session, where the records are not there yet), open the report as usual, then stop it.
+  // (window.global_constant_row_info) are not there until a report is being opened from the list; the Trace watches
+  // the page while that happens, to show what fills them and what CORES's report button calls. Arm it BEFORE opening
+  // the report (in a fresh CORES session, where the records are not there yet), open the report as usual, then stop it.
+  // (Run in CORES on 2026-11-14: the list page fills them itself at the click on its Reports button, by assigning an
+  // empty list and filling it by index; the report opens after two more clicks. See CORES_PAGE_NOTES.md.)
   // HUD: the Trace button (press again to stop); Console: traceCores() to arm, traceCores() or traceCores('stop') to
   // stop. It also stops by itself a moment after a capture ends, and after 15 minutes. traceCores({poll: true}) arms it
   // without touching the records property or the list at all (polled only: no call stacks), should CORES ever behave
@@ -1645,6 +1647,7 @@
   var TR_REPORT = /univ_wa_rnd_build_report|report_id/i;   // an address that is a CORES report (as arm() tells it)
   var TR_ID_NAME = /prg|program|report_id/i;               // the parameters whose value may be shown
   var TR_MAX = 1500;                                       // events kept
+  var TR_SOON = 1500;                                      // ms: a polled fill this soon after an assignment of the same list belongs to it
   try { if (typeof window.__coresTraceStop === 'function') window.__coresTraceStop(); } catch (e) {}   // a Trace left armed by an earlier paste
 
   function trSafe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,39}$/.test(x) && !/\d{3,}/.test(x) && /[a-z]/.test(x) && !/^[A-Z][a-z]+$/.test(x) ? x : '<name>'; }
@@ -1860,7 +1863,7 @@
     var last = T.lastWrite;
     if (last && last.sig === sig && how !== 'assigned' && t - last.t2 < 1500) { last.times++; last.t2 = t; last.n = sh.n; last.fields = sh.fields; return; }
     var e = { type: 'records', t: t, t2: t, times: 1, how: how, kind: sh.kind, n: sh.n, n0: sh.n, fields: sh.fields, W: W, who: who, frames: frames,
-              during: T.inCallback || null, polled: !!polled, sig: sig };
+              during: T.inCallback || null, polled: !!polled, sig: sig, arr: v };   // arr: which list, to tell a later fill of the same one (never shown)
     T.lastWrite = e; trPush(T, e);
     if (Array.isArray(v) && !T.passive) trWatchList(T, W, st, v);
   }
@@ -2340,15 +2343,32 @@
   function trVerdict(T, tl, scrub) {
     var evs = tl.evs, start = tl.start, v = { who: 'not_seen', records: 0 };
     var secs = function (ms) { return (ms / 1000).toFixed(2) + ' s'; }, cap = function (s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; };
-    var fill = null, opens = [], forms = [], repOpen = null;
+    var fill = null, asg = null, lastAssign = null, opens = [], forms = [], repOpen = null;
     evs.forEach(function (e) {
-      if (e.type === 'records' && !fill && e.kind === 'list' && e.n > 0) fill = e;   // the first write that put records there
+      if (e.type === 'records' && !fill) {
+        if (e.kind === 'list' && e.n > 0) {   // the first write that put records there
+          fill = e;
+          // CORES assigns an empty list and fills it by index (list[i] = record), which no wrapped call announces: the
+          // fill is then only seen by polling, with no call stack. When it is that very list, assigned with a call
+          // stack a moment before, the assignment is the write to name: its stack, and whose code it was
+          if (e.polled && e.how === 'resized' && lastAssign && lastAssign.W === e.W && lastAssign.arr === e.arr && lastAssign.frames.length && e.t - lastAssign.t <= TR_SOON) asg = lastAssign;
+        } else if (e.how === 'assigned') lastAssign = e;
+      }
       if (e.type === 'open' && !e.blocked) { opens.push(e); if (!repOpen && (e.u.report || (e.opened && e.opened.report))) repOpen = e; }
       if (e.type === 'form') forms.push(e);
     });
     var st0 = T.wins[0].st, polled = !!(st0 && st0.mode === 'poll'), had = start.kind === 'list' && start.n > 0;
+    var wrote = asg || fill;   // the write that tells who and when
+    // an answer handled between the assignment and the fill could be what filled the list: then the assignment's
+    // stack is not proof of who filled it, and the write is judged as before, by the fill alone
+    if (asg && evs.some(function (r) { return r.type === 'request' && !r.pop && r !== asg.during && r.tResp !== undefined && r.tResp >= asg.t && r.tResp <= fill.t + 150; })) { asg = null; wrote = fill; }
     var openBefore = null;   // the report window opened last before the write (the writer's own, when that is known)
-    if (fill) opens.forEach(function (e) { if (e.t <= fill.t && (e.u.report || (e.opened && e.opened.report) || e.opened === fill.who.pop)) openBefore = e; });
+    if (fill) opens.forEach(function (e) { if (e.t <= wrote.t && (e.u.report || (e.opened && e.opened.report) || e.opened === wrote.who.pop)) openBefore = e; });
+    var clickBefore = null;  // the click this page saw last in the 5 s before the write
+    if (fill) evs.forEach(function (e) { if (e.type === 'click' && e.t <= wrote.t && wrote.t - e.t <= 5000) clickBefore = e; });
+    // how the write went, when it was an assignment and a fill: said once, with the assignment's call stack
+    var inTwo = asg ? ': it assigned an empty list and filled it in place within ' + Math.max(1, fill.t - asg.t) + ' ms (the fill was seen by polling, so the call stack is the assignment\'s): ' +
+      trStackText(asg.frames.slice(0, 5)) : '';
     // the request of this page whose answer the write followed: surely (it was being handled), probably (the Trace saw
     // the answer arrive just after the write, the page's handler having run first), or only the nearest one before
     function reqFor(e) {
@@ -2376,33 +2396,40 @@
         skip = 'No answer from this run.';
       }
     } else {
-      var w = fill.who, n = fill.n + ' record' + (fill.n === 1 ? '' : 's'), why = cap(w.why.join('; '));
+      var w = wrote.who, n = fill.n + ' record' + (fill.n === 1 ? '' : 's'), why = cap(w.why.join('; '));
       v.records = fill.n;
       if (w.who === 'report') {
         v.who = 'report_window';
         var own = 0, mine = 0;   // requests before the write: the report window's own, and this page's since the window opened
         evs.forEach(function (r) { if (r.type === 'request' && r.t <= fill.t) { if (r.pop && r.pop === w.pop) own++; else if (!r.pop && openBefore && r.t >= openBefore.t) mine++; } });
         who = '✔ WHO WROTE THE RECORDS: the report window' + (w.sure ? '' : ', probably') + '. Its code put ' + n + ' on this page (its opener)' +
-          (openBefore ? ', ' + secs(fill.t - openBefore.t) + ' after it was opened' : '') + '. ' + why + '.';
+          (openBefore ? ', ' + secs(wrote.t - openBefore.t) + ' after it was opened' : '') + inTwo + '. ' + why + '.';
         skip = 'Not by leaving the report window out: the records came to this page FROM the report window' +
           (own ? ', after ' + own + ' request' + (own === 1 ? '' : 's') + ' of its own (the [R] request lines)' : '') +
           (openBefore ? mine ? '; this page sent ' + mine + ' request' + (mine === 1 ? '' : 's') + ' of its own in between, which do not look like their source' : ', and this page sent no request in between' : '') +
           '. Without a report window nothing seen here would load them. What is left to try is a report window that nobody has to look at: see automate.';
       } else if (w.who === 'list') {
         v.who = 'list_page';
-        rq = reqFor(fill);
-        who = '✔ WHO WROTE THE RECORDS: this page (the patient list)' + (w.sure ? '' : ', probably') + '. Its own code wrote ' + n +
-          (!rq ? ', with no request of this page answered in the 5 s before' :
-            rq.how === 'during' ? ', while the answer to its request #' + rq.r.no + ' was being handled' :
-            rq.how === 'late' ? ', ' + rq.gap + ' ms before the Trace saw the answer to its request #' + rq.r.no + ' arrive: probably while handling that answer' :
-            ', ' + rq.gap + ' ms after the answer to its request #' + rq.r.no + ' came back (the nearest request before the write' +
+        rq = reqFor(wrote);
+        who = '✔ WHO WROTE THE RECORDS: this page (the patient list)' + (w.sure ? '' : ', probably') + '. Its own code wrote ' + n + (inTwo ? inTwo + '. That was ' : ', ') +
+          (!rq ? 'with no request of this page answered in the 5 s before' :
+            rq.how === 'during' ? 'while the answer to its request #' + rq.r.no + ' was being handled' :
+            rq.how === 'late' ? rq.gap + ' ms before the Trace saw the answer to its request #' + rq.r.no + ' arrive: probably while handling that answer' :
+            rq.gap + ' ms after the answer to its request #' + rq.r.no + ' came back (the nearest request before the write' +
               (rq.others ? '; ' + rq.others + ' more were answered in the 5 s before' : '') + ': a hint, not proof)') + '.' +
           (rq ? ' Request #' + rq.r.no + ': ' + trReqText(rq.r) + '  ' + trReqEnd(rq.r) + '.' : '') + ' ' + why + '.';
-        if (!openBefore) {
+        if (!openBefore && clickBefore) {
+          // written right after a click, with no report window open: not a bare "yes". The click is what loads them
+          var later = repOpen && repOpen.t > wrote.t ? repOpen : null;
+          skip = 'The records do not need the report window, but they do need a click: they were written ' + (wrote.t - clickBefore.t) + ' ms after a click on ' + trClickText(clickBefore, scrub) +
+            (clickBefore.handlers.length ? ' [handlers: ' + clickBefore.handlers.join('; ') + ']' : '') + ', before any report window was opened (' +
+            (later ? 'the first opened ' + secs(later.t - wrote.t) + ' later' : 'none was opened while the Trace was armed') + '). That click set the loading off; the report window was not involved. ' +
+            'So a capture that wants the records has to press that button (or open the report the usual way, which starts with it); leaving the report window out would not lose them.';
+        } else if (!openBefore) {
           skip = 'Yes, by this run: the records were written with no report window opened since the Trace was armed' + (rq ? ' (see request #' + rq.r.no + ')' : '') +
             '. If a report had been opened earlier in this CORES session, check once more in a fresh one (F5): CORES may load them only after a first report.';
         } else {
-          skip = 'Maybe. This page loads the records itself (the report window does not hand them over), but it did so ' + secs(fill.t - openBefore.t) + ' after the report was opened' +
+          skip = 'Maybe. This page loads the records itself (the report window does not hand them over), but it did so ' + secs(wrote.t - openBefore.t) + ' after the report was opened' +
             (rq && rq.r.t >= openBefore.t ? ', with a request it sent ' + (rq.r.t - openBefore.t) + ' ms after window.open' + (rq.r.frames && rq.r.frames.length ? ' (sent from: ' + trStackText(rq.r.frames.slice(0, 3)) + ')' : '') :
               rq ? ', with a request it had sent before the report was opened' : '') +
             '. So opening the report seems to set the loading off, not the report window as such: if what sends that request can be run without opening a report, the report window is not needed for the records. Watching cannot tell that; it is the next thing to try.';

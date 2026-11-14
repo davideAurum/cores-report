@@ -299,6 +299,72 @@
       restored(p, 'opener push');
     } finally { p.close(); }
   };
+  // what the Trace run in CORES showed (2026-11-14): the list page assigns an empty list at the Reports click and
+  // fills it by index within a few milliseconds, so the fill is seen only by polling; the report opens later. The
+  // verdict has to name the assignment (it has the call stack), as sure, and "skip?" has to name the click
+  var IN_TWO = 'it assigned an empty list and filled it in place within \\d+ ms \\(the fill was seen by polling, so the call stack is the assignment\'s\\): ';
+  tests.trace_click_fill = async function () {
+    var p = await loadHud(await openList('fk_mode=click&fk_fill=index'));
+    try {
+      p.w.traceCores();
+      await sleep(100);
+      p.d.querySelector('button.t4m_rnd_reports_btn').click();
+      await until(function () { return records(p) === 5; }, 'the records');
+      check('the Reports click filled the records, with no report window opened', p.w.fakeCores.opened === 0 && p.w.global_constant_row_info instanceof p.w.Array);
+      await until(function () { return p.w.global_constant_row_info[0].col_async_data_loaded === 1; }, 'the async columns');
+      p.d.querySelector('a.t4m_rnd_report_item[data-report="281"]').click();
+      await until(function () { try { return /generate_pdf/.test(p.w.fakeCores.lastReport.location.href); } catch (e) { return false; } }, 'the fake PDF page');
+      await sleep(200);
+      var t = p.w.traceCores('stop').text;
+      note(t.split('\n').join('\n    '));
+      has(t, /RECORDS  \[L\] assigned: 0 records\. BY THIS PAGE \(the function that wrote them belongs to this page, and no report window code called it; the list itself was made in this page\)\. Report windows open: 0\.\n\s+call stack: t4m_fake_set_rows \(fake_cores\.html:\d+:\d+\) \[this page\] ← \S*t4m_fake_toggle_reports/, 'the empty list assigned, with its call stack');
+      has(t, /RECORDS  \[L\] changed in place \(seen by polling\): 5 records, 38 fields each\. BY THIS PAGE \(the code that wrote them could not be read, so this rests on where the list was made; the list itself was made in this page\)\. Report windows open: 0\./, 'the fill by index, seen only by polling');
+      has(t, new RegExp('^✔ WHO WROTE THE RECORDS: this page \\(the patient list\\)\\. Its own code wrote 5 records: ' + IN_TWO +
+        't4m_fake_set_rows \\(fake_cores\\.html:\\d+:\\d+\\) \\[this page\\] ← \\S*t4m_fake_toggle_reports \\(fake_cores\\.html:\\d+:\\d+\\) \\[this page\\][^\\n]*\\. That was with no request of this page answered in the 5 s before\\. ' +
+        'The function that wrote them belongs to this page, and no report window code called it; the list itself was made in this page\\.$', 'm'), 'verdict: this page, sure, naming the assignment\'s call stack');
+      check('verdict: not "probably"', !/WHO WROTE THE RECORDS: this page \(the patient list\), probably/.test(t));
+      has(t, /^→ skip\?  The records do not need the report window, but they do need a click: they were written \d+ ms after a click on [^\n]*button\.x-btn\.x-btn-text\.t4m_rnd_reports_btn "Reports" \[handlers: onclick → t4m_fake_toggle_reports\], before any report window was opened \(the first opened [\d.]+ s later\)\. That click set the loading off; the report window was not involved\./m, 'skip? names the click, its handlers, and says the report window was not involved');
+      check('skip? is not a bare Yes', !/skip\?  Yes/.test(t));
+      has(t, /^→ automate\?  Looks possible\. The report window was opened by a plain window\.open call/m, 'automate? hint');
+      check('verdict: list_page, 5 records', p.w.coresTrace.verdict.who === 'list_page' && p.w.coresTrace.verdict.records === 5);
+      check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
+      restored(p, 'click fill');
+    } finally { p.close(); }
+  };
+  tests.trace_index_fill_variants = async function () {
+    // no click and no report: still "Yes, by this run", with the assignment's stack
+    var p = await loadHud(await openList('fk_mode=timer&fk_delay=400&fk_fill=index'));
+    try {
+      p.w.traceCores();
+      await until(function () { return records(p) === 5; }, 'the records');
+      await sleep(150);
+      var t = p.w.traceCores('stop').text;
+      has(t, new RegExp('^✔ WHO WROTE THE RECORDS: this page \\(the patient list\\)\\. Its own code wrote 5 records: ' + IN_TWO + 't4m_fake_set_rows \\(fake_cores\\.html:\\d+:\\d+\\) \\[this page\\] ← t4m_fake_timer_fill', 'm'), 'on a timer, filled by index: this page, sure, by the assignment\'s stack');
+      has(t, /^→ skip\?  Yes, by this run: the records were written with no report window opened since the Trace was armed\./m, 'with no click before it, skip? stays "Yes, by this run"');
+    } finally { p.close(); }
+    // the report window assigning an empty list into its opener and filling it by index
+    p = await loadHud(await openList('fk_mode=opener&fk_fill=index'));
+    try {
+      p.w.traceCores(); openReport(p);
+      await until(function () { return records(p) === 5; }, 'the records');
+      await sleep(150);
+      t = p.w.traceCores('stop').text;
+      has(t, new RegExp('^✔ WHO WROTE THE RECORDS: the report window\\. Its code put 5 records on this page \\(its opener\\), [\\d.]+ s after it was opened: ' + IN_TWO + 'fake_fill_opener \\(fake_report\\.html:\\d+:\\d+\\) \\[report window\\] ← fake_after_render', 'm'), 'the report window filling by index: sure, by the assignment\'s stack');
+      has(t, /^→ skip\?  Not by leaving the report window out/m, 'skip? for the report window is unchanged');
+      restored(p, 'opener index');
+    } finally { p.close(); }
+    // one assignment right after the click, and no report opened at all
+    p = await loadHud(await openList('fk_mode=click'));
+    try {
+      p.w.traceCores();
+      p.d.querySelector('button.t4m_rnd_reports_btn').click();
+      await until(function () { return records(p) === 5; }, 'the records');
+      await sleep(100);
+      t = p.w.traceCores('stop').text;
+      has(t, /^✔ WHO WROTE THE RECORDS: this page \(the patient list\)\. Its own code wrote 5 records, with no request of this page answered in the 5 s before\./m, 'one assignment after the click: worded as before');
+      has(t, /^→ skip\?  The records do not need the report window, but they do need a click: they were written \d+ ms after a click on [^\n]*t4m_rnd_reports_btn "Reports" \[handlers: onclick → t4m_fake_toggle_reports\], before any report window was opened \(none was opened while the Trace was armed\)\./m, 'skip? names the click when no report was opened at all');
+    } finally { p.close(); }
+  };
   tests.trace_hud_button = async function () {
     var p = await loadHud(await openList('fk_mode=timer&fk_delay=400'));
     try {

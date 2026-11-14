@@ -20,7 +20,7 @@ const args = process.argv.slice(2);
 const show = args.includes('--show');
 const capAt = args.indexOf('--capture'), captureTo = capAt >= 0 ? args[capAt + 1] : '';
 if (capAt >= 0 && !captureTo) { console.error('--capture needs a file name'); process.exit(2); }
-const only = args.filter((a, i) => !a.startsWith('--') && i !== capAt + 1).join(',');
+const only = args.filter((a, i) => !a.startsWith('--') && (capAt < 0 || i !== capAt + 1)).join(',');
 const port = 8700 + Math.floor(Math.random() * 200);
 const LIMIT = 300000;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
