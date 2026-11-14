@@ -893,30 +893,125 @@ def clipboard_is_script(text):
     return 'captureCores' in text and 'CORES report capture' in text[:300]
 
 
-def clipboard_capture(cfg, skip_sha=None):
-    """A CORES report on the clipboard (captureCores puts it there) -> saved into the reports folder.
-    Returns (path or None, sha of the clipboard text or None, saved_now); skip_sha = a text already handled."""
+def clipboard_report():
+    """(text, name) of the CORES report on the clipboard (captureCores puts it there): its text with \\n line ends, and
+    the file name in its first comment (None for a capture without one). (None, None) for anything else."""
     text = clipboard_text()
     m = CAPTURE_NAME_RE.search(text[:400])  # a capture cut short before its first row still starts with its name
     if not text or clipboard_is_script(text) or not (m or ('row_template' in text and 'column_name=' in text)):
+        return None, None
+    return text.replace('\r\n', '\n'), (m.group(1).strip() if m else None)
+
+
+def holds(p, text):
+    """True when the file p holds this report text (line ends aside), or holds the whole capture that this text is the
+    cut-short beginning of (a clipboard transfer with a size limit cuts a copy short; the download is whole)."""
+    try:
+        with open(p, encoding='utf-8', errors='replace', newline='') as fh:
+            saved = fh.read().replace('\r\n', '\n')
+    except OSError:
+        return False
+    if saved == text:
+        return True
+    whole = re.compile(r'</html>\s*$', re.I)
+    return bool(text.strip()) and not whole.search(text[-512:]) and bool(whole.search(saved[-512:])) and saved.startswith(text.rstrip())
+
+
+def saved_copy(name, text, cfg):
+    """The capture in the reports folder that already holds this clipboard report: the file called `name`, or one
+    renamed "... (2)" when it came in, whichever holds the text (see holds()). None when there is none."""
+    rd = reports_dir(cfg, create=False)
+    if not name or not rd.is_dir():
+        return None
+    twin = re.compile(re.escape(Path(name).stem) + r'( \(\d+\))?' + re.escape(Path(name).suffix), re.I)
+    return next((p for p in sorted(rd.iterdir()) if p.is_file() and twin.fullmatch(p.name) and holds(p, text)), None)
+
+
+def clipboard_capture(cfg, skip_sha=None):
+    """A CORES report on the clipboard -> saved into the reports folder, unless it is there already.
+    Returns (path or None, sha of the clipboard text or None, saved_now); skip_sha = a text already handled."""
+    text, name = clipboard_report()
+    if text is None:
         return None, None, False
-    text = text.replace('\r\n', '\n')
     sha = hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()
     if sha == skip_sha:
         return None, sha, False
-    name = m.group(1).strip() if m else f'CORES report clip {dt.datetime.now():%Y-%m-%d %H%M}.html'
-    dst = reports_dir(cfg) / name
+    done = saved_copy(name, text, cfg)
+    if done:
+        return done, sha, False  # this capture was saved already
+    dst = reports_dir(cfg) / (name or f'CORES report clip {dt.datetime.now():%Y-%m-%d %H%M}.html')
     if dst.exists():
-        try:
-            with open(dst, encoding='utf-8', errors='replace', newline='') as fh:
-                if fh.read() == text:
-                    return dst, sha, False  # this capture was saved already
-        except OSError:
-            pass
         dst = unique_path(dst)
     with open(dst, 'w', encoding='utf-8', newline='') as fh:
         fh.write(text)
     return dst, sha, True
+
+
+# The one line cores leaves on the clipboard in place of a report it has saved. Until then the clipboard holds every
+# patient's report, and one stray Ctrl+V into an email, a chat or a search box pastes the lot. The line names the
+# saved file (a name captureCores made: report id, date, time), which is how a second `cores generate` finds it again.
+SAVED_NOTE = ('CORES report saved as "{name}" (cores took the report off the clipboard once it was saved; '
+              '`cores generate` builds it again from the saved file)')
+SAVED_NOTE_RE = re.compile(r'\s*CORES report saved as "([^<>\r\n\\/:*?"|]+?\.html)"')
+
+
+def clipboard_history_on():
+    """True when Windows keeps a clipboard history (Win+V) for this user, False when it does not, None when it cannot
+    be told (not Windows). The history keeps its own copy of everything copied, a report included, and replacing the
+    clipboard does not remove it from there."""
+    if not IS_WIN:
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Clipboard') as k:
+            return bool(winreg.QueryValueEx(k, 'EnableClipboardHistory')[0])
+    except OSError:
+        return False  # the value is only there once the history has been switched on
+
+
+def release_clipboard(saved):
+    """Take the report off the clipboard, leaving SAVED_NOTE there, once the file `saved` in the reports folder holds
+    it. The clipboard is read again here, so nothing is touched when something else has been copied meanwhile or when
+    the file does not hold what the clipboard holds. True when the clipboard was replaced."""
+    text, _ = clipboard_report()
+    if text is None or not holds(saved, text):
+        return False
+    return to_clipboard(SAVED_NOTE.format(name=Path(saved).name))
+
+
+def noted_capture(cfg):
+    """(path, name) of the saved capture that SAVED_NOTE on the clipboard names: path is None when that file is no
+    longer in the reports folder, and both are None when the clipboard holds no such note."""
+    m = SAVED_NOTE_RE.match(clipboard_text()[:600])
+    if not m:
+        return None, None
+    p = reports_dir(cfg, create=False) / m.group(1)
+    return (p if p.is_file() and kind_of(p) == 'capture' else None), m.group(1)
+
+
+def settle_clipboard(cfg, save=True):
+    """After a Daily Report has been built from a file: no CORES report stays on the clipboard. The same capture is
+    usually there too (captureCores copies and downloads it); it is taken off now that its file is in the reports
+    folder. Another report found there is saved into the reports folder first (save=True), as `cores capture` would,
+    or left alone (save=False). Never stops the command: the report has been built."""
+    try:
+        text, name = clipboard_report()
+        if text is None:
+            return
+        saved, fresh = saved_copy(name, text, cfg), False
+        if not saved and save:
+            saved, _, fresh = clipboard_capture(cfg)
+        if not saved:
+            return
+        if not release_clipboard(saved):
+            say('Note:     the report is still on the clipboard (it could not be replaced); copy anything else to clear it')
+        elif fresh:
+            say(f'Clipboard: it held another CORES report. Saved as {rel(saved)} and taken off the clipboard;')
+            say(f'          `cores generate "{saved}"` builds its Daily Report.')
+        else:
+            say(f'Clipboard: the report was taken off the clipboard; it is saved as {rel(saved)}')
+    except (OSError, CoresError) as ex:
+        say(f'Note:     the clipboard was left as it is ({type(ex).__name__})')
 
 
 def add_to_user_path(folder):
@@ -1087,7 +1182,16 @@ def generate_source(a, cfg):
     src, _, saved_now = clipboard_capture(cfg)
     if src:
         say(f'Clipboard: {rel(src)}' + ('' if saved_now else '  (this report was saved before)'))
+        if release_clipboard(src):
+            say('          saved, so the report was taken off the clipboard (a line naming the file is there instead)')
         return src
+    src, noted = noted_capture(cfg)
+    if src:
+        say(f'Clipboard: {rel(src)}  (this report was saved before, and taken off the clipboard then)')
+        return src
+    if noted:
+        raise CoresError(f'the clipboard holds the line cores left when it saved "{noted}", but that file is no longer in '
+                         f'{rel(reports_dir(cfg, create=False))}. Capture the report again (`cores capture` shows the steps).')
     if clipboard_is_script(clipboard_text()):
         src = unrendered_capture(cfg)
         if src:
@@ -1100,6 +1204,7 @@ def generate_source(a, cfg):
 
 def cmd_generate(a, cfg):
     run_pipeline(generate_source(a, cfg), cfg, **pipeline_opts(a, cfg))
+    settle_clipboard(cfg)  # the capture is in the reports folder now: its copy on the clipboard has done its job
 
 
 def cmd_capture(a, cfg):
@@ -1267,16 +1372,20 @@ def cmd_watch(a, cfg):
                 path, sha, saved_now = None, None, False
                 say(f'error reading the clipboard capture: {ex}')
             clip_sha = sha or clip_sha
+            # It is in the reports folder now, so it comes off the clipboard. The line left in its place is not a capture,
+            # so the next check finds nothing new there until captureCores() copies the next report.
+            off = ' (saved, so it was taken off the clipboard)' if path and release_clipboard(path) else ''
             # a report that was saved and rendered before (e.g. by `cores generate` just before this watch started) is left alone
             if path and (saved_now or not derived(path, 'report').exists()):
-                say(f'\n{dt.datetime.now():%H:%M:%S}  capture from the clipboard: {path.name}')
+                say(f'\n{dt.datetime.now():%H:%M:%S}  capture from the clipboard: {path.name}{off}')
                 try:
                     with logged('watch', cfg):  # a line in the cores log per capture: a watch window is closed more often than stopped
                         run_pipeline(path, cfg, **opts)
                 except Exception as ex:  # keep watching whatever went wrong with this capture
                     say_error(ex)
             elif path and sha != clip_sha_seen:
-                say(f'{dt.datetime.now():%H:%M:%S}  the clipboard holds {path.name}, which is already processed')
+                say(f'{dt.datetime.now():%H:%M:%S}  the clipboard held {path.name}, which is already processed{off}' if off else
+                    f'{dt.datetime.now():%H:%M:%S}  the clipboard holds {path.name}, which is already processed')
             clip_sha_seen = sha or clip_sha_seen
         for path, sig in snapshot().items():
             if seen.get(path) == sig:
@@ -1288,6 +1397,7 @@ def cmd_watch(a, cfg):
             try:
                 with logged('watch', cfg):
                     run_pipeline(path, cfg, **opts, skip_done=True)
+                settle_clipboard(cfg, save=False)  # the same capture's copy on the clipboard, now that its file is saved
             except PermissionError as ex:
                 busy[path] = busy.get(path, 0) + 1
                 if busy[path] <= 5:
@@ -1451,6 +1561,12 @@ def cmd_doctor(a, cfg):
     rd = reports_dir(cfg, create=False)
     line(True, f'Reports folder {rd}', f'{len(capture_sets(cfg))} capture set(s)' if rd.is_dir() else 'will be created on first run')
     line(True, 'Config', f'{CONFIG_FILE}' if CONFIG_FILE.exists() else 'defaults (create with `cores config --init`)')
+    history = clipboard_history_on()
+    if history is not None:
+        line(not history, 'Windows clipboard history (Win+V)',
+             'on: Windows keeps its own copy of every report that crosses the clipboard, and cores cannot remove it. Turn it off in '
+             'Settings > System > Clipboard, or clear it there after a capture' if history
+             else 'off, so a report is gone from the clipboard once cores has saved it', required=False)
     if cores_log is not None:
         folder, how = log_folder(cfg)
         n = len(cores_log.log_files(folder))

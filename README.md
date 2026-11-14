@@ -50,6 +50,13 @@ printed as it arrives, from the clipboard or from Downloads.
 records, what the report button calls, and which requests go out. Its result shows in the HUD when the capture
 ends. `CORES_PAGE_NOTES.md` (section *Trace*) says how to run it, how to read it, and what it found.
 
+**The report does not stay on the clipboard.** Once `cores generate` or `cores watch` has saved the report into
+`reports\`, it takes it off the clipboard and leaves one line there that names the saved file. A stray Ctrl+V then
+pastes that line, not every patient's report. Running `cores generate` a second time still works: it reads the
+line and builds from the saved file. Something else you copied in the meantime is never touched. One thing cores
+cannot reach: if Windows clipboard history (Win+V) is switched on, Windows keeps its own copy; `cores doctor` says
+whether it is on.
+
 Order matters with the clipboard: run `cores generate` *before* the next `cores capture`, because the latter
 puts the script on the clipboard. If you do it the other way round nothing is lost: `cores capture` first saves any
 report it finds on the clipboard into `reports\` and tells you so; `cores generate` then builds it. Inside Citrix the
@@ -192,7 +199,7 @@ machine uses.
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
 | `cores latest` | newest capture / JSON / Daily Report / PDF, and what `generate` would use |
 | `cores clean [--keep N] [--inbox] [--dry-run] [-y]` | delete older capture sets from `reports\` (default keeps 3); `--inbox` also removes captures left in Downloads that are identical to a copy already in `reports\` |
-| `cores annotate FILE [--open] [--copy]` | annotatable copy of a capture: hover shows the parser field, click names it (same rule for captures) |
+| `cores annotate FILE [--open] [--copy]` | annotatable copy of a capture: hover shows the parser field, click names it (same rule for captures). Its *Copy list* carries your names, the parser's field names and each part's place in the page, and no text from the report, so it can be pasted into a chat. An annotate copy made by an older version still copies samples of the text: make it again before using its Copy list |
 | `cores har FILE` | fallback capture: recover the report HTML from a DevTools HAR export or a copied cURL |
 | `cores doctor` | environment check |
 | `cores log [--last N] [--where] [--json]` | the cores log: every command run and every capture's HUD events, from all your computers, oldest first (default the newest 30); `--where` shows the folder and each computer's file (see *The log*) |
