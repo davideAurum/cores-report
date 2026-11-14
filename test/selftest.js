@@ -495,6 +495,27 @@
     } finally { p.close(); localStorage.removeItem(LOG_KEY); }
   };
 
+  // ================= selftest.html?capture=1: no tests, one capture of the fake report =================
+  // For trying the PC side on a capture with no patient in it (node test/run_selftest.mjs --capture FILE, then
+  // cores generate FILE): the second of two captures in a row, so its CORES log comment also carries the first
+  // one's verdict.
+  if (new URLSearchParams(location.search).get('capture')) {
+    (async function () {
+      try {
+        var p = await loadHud(await openList('fk_mode=opener'));
+        await capture(p, { download: false, clipboard: false });
+        await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the first verdict', 15000);
+        await sleep(800);   // the first report window has closed
+        var text = await capture(p, { download: false, clipboard: false });
+        await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 2; }, 'the second verdict', 15000);
+        p.close();
+        document.getElementById('result').textContent = 'fake capture made (' + text.length + ' chars)';
+        window.selftestDone = { ok: true, capture: true, text: text };
+      } catch (e) { window.selftestDone = { ok: false, text: 'the fake capture failed: ' + (e && e.stack || e) }; }
+    })();
+    return;
+  }
+
   // ================= run =================
   (async function () {
     var names = Object.keys(tests).filter(function (n) { return !only || only.split(',').indexOf(n) >= 0; });

@@ -388,6 +388,8 @@ report opens), `timer` (the list fills them with no report: the control); `&fk_f
   the Trace in every mode (who wrote, the hints, the redaction, everything restored), the Trace with a capture
   in both orders of arming, and the event log's contract. It proves the tools on the fake page; what the real
   page does is what the Trace run in CORES is for.
+- `node test/run_selftest.mjs --capture FILE` writes a capture of the fake report (invented patients, with its
+  `CORES teams`, `CORES data` and `CORES log` comments) for trying the PC side: `cores generate FILE`.
 
 ## Privacy rules the tools follow (and why)
 
