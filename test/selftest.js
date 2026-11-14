@@ -227,7 +227,9 @@
       has(t, /request  \[L\] #\d+ fetch POST 127\.0\.0\.1 univ_wa_log\.php  body: JSON program=univ_wa_rnd_log, username, patients, note  → 200/, 'the fetch POST: the JSON body\'s key names');
       has(t, /RECORDS  \[L\] assigned: 0 records\. BY THIS PAGE/, 'the empty list first');
       has(t, /RECORDS  \[L\] filled in place with push\(\) ×5 until [\d.]+ s: 5 records, 38 fields each\. BY THIS PAGE/, 'then five pushes, as one line');
-      has(t, /^✔ WHO WROTE THE RECORDS: this page \(the patient list\)\. Its own code wrote 5 records, \d+ ms after the answer to its request #\d+ came back \(the nearest request before the write(; \d+ more were answered in the 5 s before)?: a hint, not proof\)\. Request #\d+: fetch GET 127\.0\.0\.1 fake_rows\.json \?program=univ_wa_rnd_row_info, report_id=281, person_ids, mrn  → 200/m, 'verdict: this page, after a fetch (the nearest request, as a hint)');
+      // the fake page's two fetches (the records, the log POST) are answered within a millisecond or two of each other,
+      // so either can be the nearest one before the write: that is why the verdict calls it a hint, and both pass here
+      has(t, /^✔ WHO WROTE THE RECORDS: this page \(the patient list\)\. Its own code wrote 5 records, \d+ ms after the answer to its request #\d+ came back \(the nearest request before the write(; \d+ more were answered in the 5 s before)?: a hint, not proof\)\. Request #\d+: fetch (GET 127\.0\.0\.1 fake_rows\.json \?program=univ_wa_rnd_row_info, report_id=281, person_ids, mrn|POST 127\.0\.0\.1 univ_wa_log\.php  body: JSON program=univ_wa_rnd_log, username, patients, note)  → 200/m, 'verdict: this page, after a fetch (the nearest request, as a hint)');
       check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
       restored(p, 'fetch');
     } finally { p.close(); }
