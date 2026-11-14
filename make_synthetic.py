@@ -99,9 +99,15 @@ def main(argv):
     args = [a for i, a in enumerate(argv) if not a.startswith('--') and i not in skip]
     out = Path(args[0]) if args else HERE / 'reports' / 'SYNTHETIC test report.json'
     rng = random.Random(seed)
-    data = {'header': {'report_format': 'SYNTHETIC test report (no real patients)', 'service': 'MICU', 'team': 'Test',
+    records = [patient(i, rng) for i in range(n)]
+    # each patient's team, as a capture from a CORES list of two teams brings it (cores_parse.attach_teams); the last
+    # patient has none, so the report's Team field is exercised both ways
+    teams = ['Pulmonary - Consult', 'Pulmonary IP - IP']
+    for i, r in enumerate(records[:-1]):
+        r['team'] = teams[i % 3 == 2]
+    data = {'header': {'report_format': 'SYNTHETIC test report (no real patients)', 'service': '', 'team': ', '.join(teams), 'teams': teams,
                        'report_date': '09/15/26 06:30', 'printed_by': 'Test User', 'printed_by_id': 'test'},
-            'source': out.name, 'records': [patient(i, rng) for i in range(n)]}
+            'source': out.name, 'records': records}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=1), encoding='utf-8')
     print(f'{n} made-up patients -> {out}')

@@ -501,10 +501,32 @@
   }
 
   // ---- deliver the captured HTML every way that is switched on
+  // ---- each patient's rounding team, from the patient list this script runs in. CORES keeps one record per patient on
+  // the list in window.global_constant_row_info (its service, team and sub-team, the way its Services / Teams / Sub-teams
+  // menus name them, with the MRN, FIN and encounter that tie it to the report's patients). The report CORES prints
+  // does not carry them, so they travel in the capture, in a comment after its name: <!-- CORES teams {...} -->.
+  function teamsFromCores() {
+    var rows; try { rows = window.global_constant_row_info; } catch (e) { return null; }
+    if (!rows || typeof rows !== 'object' || typeof rows.length !== 'number' || !rows.length) return null;
+    var pts = [], count = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i]; if (!r || typeof r !== 'object') continue;
+      var g = function (k) { try { var v = r[k]; return v === undefined || v === null ? '' : String(v).trim(); } catch (e) { return ''; } };
+      var sub = g('sub_team'); if (/^none$/i.test(sub)) sub = '';
+      // the label CORES's Teams menu shows: "Service - Team" (Pulmonary - Consult), with a real sub-team after it
+      var label = [g('service'), g('team')].filter(Boolean).join(' - ') + (sub ? ' - ' + sub : '');
+      pts.push({ mrn: g('mrn'), fin: g('fin'), encntr_id: g('encntr_id'), person_id: g('person_id'),
+                 service: g('service'), team: g('team'), sub_team: sub, label: label });
+      if (label) count[label] = (count[label] || 0) + 1;
+    }
+    return pts.length ? { teams: count, patients: pts } : null;
+  }
   function deliver(html, name, opts) {
     opts = opts || {};
     html = String(html).replace(/\r\n/g, '\n');   // so the clipboard, download and folder copies are byte-identical
-    var text = '<!-- CORES capture ' + name + ' -->\n' + html;   // the name travels with the text (used by cores --clipboard)
+    var text = '<!-- CORES capture ' + name + ' -->\n';   // the name travels with the text (used by cores --clipboard)
+    if (opts.teams) text += '<!-- CORES teams ' + JSON.stringify(opts.teams).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
+    text += html;
     window.coresCaptured = text;
     var jobs = [];
     if (opts.clipboard !== false) jobs.push(copyText(text, name, 1, opts.popup || null));
@@ -585,6 +607,9 @@
       }
       ovStatus('Delivering ' + rows + ' patient rows (clipboard' + (opts.download !== false ? ', download' : '') + (opts.folder ? ', folder' : '') + ')\u2026', 'busy');
       var o = {}; for (var k in opts) o[k] = opts[k]; o.popup = popup;   // the report window is still open and focused now
+      try { o.teams = teamsFromCores(); } catch (e) { o.teams = null; }
+      if (o.teams) log('teams from the CORES patient list: ' + Object.keys(o.teams.teams).map(function (t) { return t + ' (' + o.teams.teams[t] + ')'; }).join(', '), 'ok');
+      else log('no team data found in this CORES window: each patient\'s Team is left for you to type');
       // the verdict once every delivery has settled: green when all went through, yellow when the capture is in hand
       // but something needs a hand (a click on the banner, an unrendered report, a reload, a warning above), red when
       // the delivery itself broke
@@ -789,10 +814,11 @@
     function path(el) { var q = []; while (el && el.nodeType === 1 && q.length < 7) { q.unshift(desc(el)); el = el.parentElement; } return q.join(' > '); }
     function up(el, tags) { while (el && el.nodeType === 1) { if (tags.indexOf(el.tagName) >= 0) return el; el = el.parentElement; } return null; }
     // a heading row: one with a th, a cell spanning columns, fewer cells than the row after it, or a heading-like class
-    function kind(r) { return (typeof r.className === 'string' ? r.className : '').replace(/\S*(even|odd|alt|selected|hover|active)\S*/gi, '').replace(/\s+/g, ' ').trim(); }
+    // a row's kind: its first class (t4m_rnd_pt_list_row), whatever else it has (even / odd, selected, a state)
+    function kind(r) { return ((typeof r.className === 'string' ? r.className : '').trim().split(/\s+/)[0] || '') + '|' + r.children.length; }
     function looksHead(r, ref) {
       if (!r || r.nodeType !== 1) return false;
-      if (ref && ref.nodeType === 1 && kind(r) && kind(r) === kind(ref)) return false;   // the same kind of row as the one it would head
+      if (ref && ref.nodeType === 1 && kind(r).split('|')[0] && kind(r).split('|')[0] === kind(ref).split('|')[0]) return false;   // the same kind of row as the one it would head
       var cls = typeof r.className === 'string' ? r.className : '';
       return !!(r.querySelector('th') || [].some.call(r.children, function (c) { return c.colSpan > 1; }) ||
         (ref && r.children.length < ref.children.length) || /group|header|heading|section/i.test(cls));

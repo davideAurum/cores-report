@@ -329,7 +329,7 @@ body.inspect .insp-hl{outline:2px solid var(--trust);outline-offset:1px;backgrou
    left out and empty Notes stay blank for handwriting */
 .ufields{margin:2px 0 0} .uf{display:flex;align-items:baseline;gap:4px} .uf b{flex:none;font-weight:600}
 .ufin{flex:1 1 auto;min-width:0;width:100%;border:0;border-bottom:1px dotted var(--line);background:transparent;font:inherit;color:inherit;padding:0 1px}
-.ufin:hover{border-bottom-color:var(--mute)} .ufin:focus,.notein:focus{outline:2px solid var(--trust);outline-offset:0}
+.ufin:hover{border-bottom-color:var(--mute)} .uf.auto .ufin{color:#3c4a57} .ufin:focus,.notein:focus{outline:2px solid var(--trust);outline-offset:0}
 .ufin::placeholder,.notein::placeholder{color:#b5b5b5}
 .ufv,.notetxt{display:none} .notetxt{white-space:pre-wrap;overflow-wrap:break-word}
 .notein{display:block;width:100%;min-height:42px;border:0;background:transparent;font:inherit;color:inherit;padding:0;resize:none;overflow:hidden}
@@ -511,7 +511,9 @@ JS = """
   for(const k in vals)if(!(vals[k]&&vals[k].t>NOW-60*DAYMS))delete vals[k];
   for(const k in notesV)if(!(notesV[k]&&notesV[k].t>NOW-14*DAYMS))delete notesV[k];
   store(KEYV,vals); store(KEYN,notesV);
-  function fieldVal(r,id){const v=vals[r.dataset.pid]; return (v&&v.v&&v.v[id])||'';}
+  // a field's value: what was typed on the report, else (for Team) the patient's team in CORES, from the capture
+  function typedVal(r,id){const v=vals[r.dataset.pid]; return (v&&v.v&&v.v[id])||'';}
+  function fieldVal(r,id){return typedVal(r,id)||(id==='team'&&r.dataset.team)||'';}
   function utext(r){const v=vals[r.dataset.pid], n=notesV[nkey(r)]; return ((v?Object.values(v.v||{}).join(' '):'')+' '+(n?n.v:'')).toLowerCase();}
   function setVal(r,id,val){const p=r.dataset.pid, x=vals[p]||(vals[p]={t:NOW,v:{}}); if(val.trim())x.v[id]=val; else delete x.v[id]; if(!Object.keys(x.v).length)delete vals[p]; store(KEYV,vals);}
   function setNote(r,val){const k=nkey(r); if(val.trim())notesV[k]={t:NOW,v:val}; else delete notesV[k]; store(KEYN,notesV);}
@@ -537,6 +539,7 @@ JS = """
       fields.forEach(f=>{const v=fieldVal(r,f.id), d=document.createElement('div'), b=document.createElement('b'), i=document.createElement('input'), s=document.createElement('span');
         d.className='uf'+(v.trim()?'':' blank'); d.dataset.name=f.name+' field'; d.dataset.fid=f.id; b.textContent=f.name;
         i.className='ufin'; i.value=v; i.autocomplete='off'; i.setAttribute('list','dl-'+f.id); i.setAttribute('aria-label',f.name);
+        if(f.id==='team'&&r.dataset.team&&!typedVal(r,f.id)){d.classList.add('auto'); i.title='The team CORES has for this patient. Type to change it here; clear it to go back to the CORES team.';}
         s.className='ufv'; s.textContent=v; d.append(b,i,s); box.appendChild(d);});
     });
   }
@@ -544,10 +547,13 @@ JS = """
   pts.forEach(r=>{const t=r.querySelector('.notein'), n=notesV[nkey(r)]; if(!t)return; if(n){t.value=n.v; t.nextElementSibling.textContent=n.v;} grow(t);});
   if(window.ResizeObserver){const ro=new ResizeObserver(es=>es.forEach(x=>{const t=x.target.querySelector('.notein'); if(t)grow(t);})); table.querySelectorAll('td.notes').forEach(td=>ro.observe(td));}
   table.addEventListener('input',e=>{const t=e.target, r=t.closest('tbody.blk'); if(!r||!r.dataset.pid)return;
-    if(t.classList.contains('ufin')){const d=t.parentElement; setVal(r,d.dataset.fid,t.value); d.lastChild.textContent=t.value; d.classList.toggle('blank',!t.value.trim());}
+    if(t.classList.contains('ufin')){const d=t.parentElement; setVal(r,d.dataset.fid,t.value); d.lastChild.textContent=t.value; d.classList.toggle('blank',!t.value.trim()); d.classList.remove('auto');}
     else if(t.classList.contains('notein')){setNote(r,t.value); t.nextElementSibling.textContent=t.value; grow(t);}
   });
-  table.addEventListener('change',e=>{if(e.target.classList.contains('ufin')){refreshLists(); apply();}});
+  table.addEventListener('change',e=>{const t=e.target; if(!t.classList.contains('ufin'))return;
+    const d=t.parentElement, r=t.closest('tbody.blk');  // a Team cleared here goes back to CORES's
+    if(d.dataset.fid==='team'&&!t.value.trim()&&r&&r.dataset.team){t.value=r.dataset.team; d.lastChild.textContent=t.value; d.classList.remove('blank'); d.classList.add('auto');}
+    refreshLists(); apply();});
   // Enter (Shift+Enter) goes to the same field of the next (previous) patient shown, for assigning a team down the list
   table.addEventListener('keydown',e=>{const t=e.target; if(e.key!=='Enter'||!t.classList.contains('ufin'))return; e.preventDefault();
     const all=[...table.querySelectorAll('tbody.blk:not(.hide) .snap .uf[data-fid="'+t.parentElement.dataset.fid+'"] .ufin')], n=all[all.indexOf(t)+(e.shiftKey?-1:1)];
@@ -1384,7 +1390,7 @@ def row_text(r, uloc=''):
              r.get('restraints', ''), r.get('admit_attending', ''), r.get('admit_service', ''),
              ' '.join(x['description'] for x in (r.get('tld') or [])),
              ' '.join(r['summary']['lines']), ' '.join(r['tasks']), ' '.join(r['sit_awareness']), ' '.join(r.get('notes') or []),
-             ' '.join((r.get('handoff') or {}).values())]
+             ' '.join((r.get('handoff') or {}).values()), r.get('team', '')]
     for items in (r.get('meds') or {}).values():
         parts += [f'{i["drug"]} {i["dose_frequency"]}' for i in items]
     return re.sub(r'\s+', ' ', ' '.join(parts)).lower()
@@ -1461,6 +1467,7 @@ def render_row(r, report_date='', unit_color=None, uloc=''):
         'location': r['location'], 'unit': r['unit'], 'pname': r['patient_name'], 'sev': sev.lower(),
         'sevrank': SEV_RANK.get(sev.lower(), 9), 'los': r['los_days'] or 0, 'age': age or 0, 'o2': r.get('o2_delivery', ''),
         'tasks': len(r['tasks']), 'drips': len((r.get('meds') or {}).get('infusions', [])), 'text': row_text(r, uloc), 'uloc': uloc,
+        'team': r.get('team', ''),  # the patient's team in CORES (from the capture), behind the Team field
         'pid': r.get('mrn') or f"{r['patient_name']}|{r.get('dob', '')}",  # key for the values typed on the report and for Don't print (MRN; name+DOB if none)
     }
     attrs = ' '.join(f'data-{k}="{e(v)}"' for k, v in data.items())

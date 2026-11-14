@@ -304,6 +304,47 @@ def row_parser(rows, header):
     raise UnsupportedLayout(header.get('report_format', ''), found)
 
 
+# Each patient's rounding team, read by captureCores() from the CORES patient list and written into the capture as
+# <!-- CORES teams {"teams": {label: count}, "patients": [{mrn, fin, encntr_id, person_id, service, team, sub_team, label}]} -->
+TEAMS_RE = re.compile(r'<!--\s*CORES teams (\{.*?\})\s*-->', re.S)
+
+
+def _id(s):
+    """An MRN or FIN for matching: its digits, without leading zeros."""
+    return re.sub(r'\D', '', str(s or '')).lstrip('0')
+
+
+def attach_teams(raw, header, records):
+    """Sets each record's 'team' (CORES's "Service - Team" label, e.g. "Pulmonary - Consult") from the capture's team
+    comment, matched by MRN, else FIN; and the header's 'teams' (the labels, largest first) in place of CORES's
+    "[Multiple Teams Selected]". Nothing changes when the capture has no team comment (an older capture)."""
+    m = TEAMS_RE.search(raw[:500000])
+    if not m:
+        return
+    try:
+        info = json.loads(m.group(1))
+    except ValueError:
+        return
+    by_mrn, by_fin = {}, {}
+    for pt in info.get('patients') or []:
+        if not isinstance(pt, dict) or not pt.get('label'):
+            continue
+        if _id(pt.get('mrn')):
+            by_mrn.setdefault(_id(pt['mrn']), pt)
+        if _id(pt.get('fin')):
+            by_fin.setdefault(_id(pt['fin']), pt)
+    for rec in records:
+        pt = by_mrn.get(_id(rec.get('mrn'))) or by_fin.get(_id(rec.get('fin')))
+        if pt:
+            rec['team'] = pt['label']
+            rec['team_detail'] = {k: pt.get(k, '') for k in ('service', 'team', 'sub_team')}
+    teams = info.get('teams') or {}
+    labels = sorted((t for t in teams if t), key=lambda t: (-teams[t], t))
+    if labels:
+        header['teams'] = labels
+        header['service'], header['team'] = '', ', '.join(labels)
+
+
 def parse_file(path):
     # Captures are UTF-8, but CORES's <meta> says windows-1250 and lxml obeys it on a large file (a 1.5 MB capture came
     # out with every bullet as 'â€˘'), so the encoding is given outright.
@@ -314,7 +355,9 @@ def parse_file(path):
     header = parse_header(soup)
     rows = [tr for tr in soup.select('tr.row_template') if tr.find('td', attrs={'column_name': True})]
     parse_row_fn = row_parser(rows, header) if rows else None
-    return {'header': header, 'source': path, 'records': [parse_row_fn(tr) for tr in rows]}
+    records = [parse_row_fn(tr) for tr in rows]
+    attach_teams(raw, header, records)
+    return {'header': header, 'source': path, 'records': records}
 
 
 if __name__ == '__main__':

@@ -26,7 +26,7 @@ command: `cores generate`.
    into the HUD: whether each word was found, where (page, list rows, including heading rows that group rows under
    them, and the page's data with the names of the fields beside each match), and what that suggests; names that do not
    look like a programmer's field name show as `<name>` and no values are included. **Copy for Claude** copies it to
-   paste into a chat. In the Console the same search is `probeCores('pulm', 'interv')`. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
+   paste into a chat. In the Console the same search is `probeCores('pulm', 'interv')`. The capture also records each patient's rounding team from the CORES patient list (CORES's Service - Team, e.g. *Pulmonary - Consult*), so the Daily Report's header names your teams and each patient's **Team** field is filled in; anything typed there overrides it, and clearing it goes back to the CORES team. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
 3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the
    clipboard. It saves it into `reports\`, checks that it is complete and parses, writes
