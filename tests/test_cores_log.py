@@ -6,16 +6,24 @@ Every capture here is a few invented lines of HTML; no test reads a real capture
 its temporary folder (the log folder is always given, never the automatic OneDrive one).
 """
 import contextlib
+import datetime as dt
+import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import cores  # noqa: E402
 import cores_log  # noqa: E402
+
+HAVE_PARSER = all(importlib.util.find_spec(m) for m in ('bs4', 'lxml'))
 
 
 def capture_html(events=None, raw=None):
@@ -242,6 +250,118 @@ class Reading(TempFolder):
         self.assertRegex(text, r'PC-A +hud +verdict +success +8\.1 s +n=57')
         self.assertRegex(text, r'PC-A +pc +generate +ok +0 +2\.1 s +patients=57  bytes=1\.2 MB  captures=1')
         self.assertRegex(text, r'PC-B +pc +generate +refused \(CoresError\) +1 +80 ms')
+
+
+class Commands(TempFolder):
+    """cores.py: every command leaves a line, and a capture's HUD events are added when it is taken in. cores.py reads
+    a temporary cores.config.json here, whose log_dir, reports_dir and inbox_dirs are all inside the temporary folder."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = self.tmp / 'cores.config.json'
+        self.settings(log_dir=str(self.log))
+        for p in (mock.patch.object(cores, 'CONFIG_FILE', self.config), mock.patch.dict(os.environ, {'COMPUTERNAME': 'PC-A'})):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def settings(self, **changes):
+        cfg = {'reports_dir': str(self.tmp / 'reports'), 'inbox_dirs': [str(self.tmp / 'inbox')], 'check_updates': False,
+               'open_after_run': False}
+        cfg.update(changes)
+        self.config.write_text(json.dumps(cfg), encoding='utf-8')
+
+    def run_cores(self, *argv):
+        """(exit code, what it printed, what it wrote on stderr)"""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cores.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def entries(self):
+        return [json.loads(x) for x in self.lines()]
+
+    def test_a_command_logs_its_outcome(self):
+        code, out, _ = self.run_cores('help')
+        self.assertEqual(code, 0)
+        self.assertIn('generate', out)
+        (e,) = self.entries()
+        self.assertEqual({k: e[k] for k in ('computer', 'source', 'command', 'version', 'outcome', 'exit')},
+                         {'computer': 'PC-A', 'source': 'pc', 'command': 'help', 'version': cores.VERSION, 'outcome': 'ok', 'exit': 0})
+        self.assertIsInstance(e['ms'], int)
+        self.assertLess(abs(time.time() - dt.datetime.strptime(e['t'], '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=dt.timezone.utc).timestamp()), 60)
+
+    def test_exit_code_interrupt_and_crash(self):
+        with mock.patch.object(cores, 'cmd_help', return_value=1):
+            self.assertEqual(self.run_cores('help')[0], 1)
+        with mock.patch.object(cores, 'cmd_help', side_effect=KeyboardInterrupt):
+            self.assertEqual(self.run_cores('help')[0], 130)
+        with mock.patch.object(cores, 'cmd_help', side_effect=ValueError('Smith, John has no rows')):
+            with self.assertRaises(ValueError):   # a crash still surfaces as it did before
+                self.run_cores('help')
+        with mock.patch.object(cores, 'cmd_help', side_effect=cores.CoresError('not found: C:\\Users\\x\\CORES report.html')):
+            self.assertEqual(self.run_cores('help')[0], 1)
+        got = [(e['outcome'], e['exit'], e.get('error')) for e in self.entries()]
+        self.assertEqual(got, [('error', 1, None), ('interrupted', 130, None), ('error', 1, 'ValueError'), ('refused', 1, 'CoresError')])
+        text = '\n'.join(self.lines())
+        for word in ('Smith', 'rows', 'Users', 'report'):   # the message of an error never reaches the log
+            self.assertNotIn(word, text)
+
+    def test_unwritable_folder_does_not_break_a_command(self):
+        blocker = self.tmp / 'a file, not a folder'
+        blocker.write_text('x')
+        self.settings(log_dir=str(blocker / 'log'))
+        code, out, err = self.run_cores('help')
+        self.assertEqual(code, 0)
+        self.assertIn('generate', out)
+        self.assertEqual(len(err.splitlines()), 1)
+        self.assertIn('cores log was not written', err)
+
+    def test_log_setting_off(self):
+        self.settings(log_dir=str(self.log), log=False)
+        self.assertEqual(self.run_cores('help')[0], 0)
+        self.assertFalse(self.log.exists())
+        self.settings(log_dir=str(self.log), log='no')   # typed by hand as text: still off
+        self.assertEqual(self.run_cores('help')[0], 0)
+        self.assertFalse(self.log.exists())
+
+    def test_taking_a_capture_adds_its_hud_events_once(self):
+        cfg = cores.load_config()
+        cap = self.capture(events=EVENTS)
+        parsed = {'header': {}, 'records': [{}, {}, {}]}
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(cores, 'parse_capture', return_value=parsed):
+            with cores.logged('generate', cfg):
+                moved, _ = cores.take_capture(cap, cfg)
+            with cores.logged('parse', cfg):
+                cores.take_capture(moved, cfg)   # the same capture again, now in the reports folder
+        got = self.entries()
+        self.assertEqual([(e['source'], e.get('id') or e['command']) for e in got],
+                         [('hud', 'k3f9a2-17'), ('hud', 'k3f9a2-18'), ('pc', 'generate'), ('pc', 'parse')])
+        self.assertEqual(got[2]['counts'], {'captures': 1, 'hud_events': 2})
+        self.assertEqual(got[3]['counts'], {'captures': 1})
+
+    @unittest.skipUnless(HAVE_PARSER, 'needs beautifulsoup4 and lxml')
+    def test_a_refused_capture_is_logged_with_what_its_hud_saw(self):
+        cap = self.capture(events=EVENTS)   # invented, with no patient rows: cores refuses it
+        code, out, _ = self.run_cores('parse', str(cap))
+        self.assertEqual(code, 1)
+        self.assertTrue(cap.exists())       # left where it was
+        got = self.entries()
+        self.assertEqual([e['source'] for e in got], ['hud', 'hud', 'pc'])
+        self.assertEqual((got[2]['command'], got[2]['outcome'], got[2]['exit'], got[2]['error']), ('parse', 'refused', 1, 'CoresError'))
+        self.assertEqual(got[2]['counts'], {'bytes': cap.stat().st_size, 'hud_events': 2})
+        self.assertEqual(self.run_cores('parse', str(cap))[0], 1)
+        self.assertEqual([e['source'] for e in self.entries()], ['hud', 'hud', 'pc', 'pc'])   # the events are not added twice
+
+    def test_each_capture_in_watch_gets_a_line_and_the_session_the_totals(self):
+        cfg = cores.load_config()
+        with cores.logged('watch', cfg):
+            for n in (3, 4):
+                with cores.logged('watch', cfg):
+                    cores.count('patients', n)
+                    cores.count('captures')
+        self.assertEqual([e.get('counts') for e in self.entries()],
+                         [{'patients': 3, 'captures': 1}, {'patients': 4, 'captures': 1}, {'patients': 7, 'captures': 2}])
+        self.assertEqual(cores._COUNTS, [{}])
 
 
 if __name__ == '__main__':

@@ -32,6 +32,11 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))  # the parser / renderer modules live next to this file
 
+try:
+    import cores_log  # imported now, so that `cores update` replacing it mid-run cannot change what this run logs with
+except ImportError:  # a folder copied without it: everything works, without a log (`cores doctor` says it is missing)
+    cores_log = None
+
 IS_WIN = platform.system() == 'Windows'
 IS_MAC = platform.system() == 'Darwin'
 CONFIG_FILE = HERE / 'cores.config.json'
@@ -48,6 +53,8 @@ DEFAULTS = {
     'orientation': 'landscape',      # paper a Daily Report prints on: 'landscape' or 'portrait' (its Paper switch overrides)
     'black_and_white': False,        # Daily Reports start in black and white, for a black-and-white printer (its B&W box overrides)
     'check_updates': True,           # `generate` and `capture` say when a newer release is out (asks GitHub at most once a day)
+    'log': True,                     # every command adds a line to the cores log (cores_log.py): what ran and how it ended, no patient data
+    'log_dir': '',                   # folder of the cores log; '' = "CORES Report log" in OneDrive, else in the user profile
 }
 REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)',
               '7': 'Medicine Report +VS/Meds (five columns)'}
@@ -117,11 +124,13 @@ def load_config():
     cfg['orientation'] = str(cfg['orientation']).strip().lower()
     if cfg['orientation'] not in ('landscape', 'portrait'):
         raise CoresError('"orientation" in the config must be "landscape" or "portrait"')
-    if not isinstance(cfg['black_and_white'], bool):
-        v = str(cfg['black_and_white']).strip().lower()
-        if v not in ('1', 'true', 'yes', 'on', 'y', '0', 'false', 'no', 'off', 'n', '', 'none'):
-            raise CoresError('"black_and_white" in the config must be true or false')
-        cfg['black_and_white'] = v in ('1', 'true', 'yes', 'on', 'y')
+    for key in ('black_and_white', 'log'):
+        if not isinstance(cfg[key], bool):
+            v = str(cfg[key]).strip().lower()
+            if v not in ('1', 'true', 'yes', 'on', 'y', '0', 'false', 'no', 'off', 'n', '', 'none'):
+                raise CoresError(f'"{key}" in the config must be true or false')
+            cfg[key] = v in ('1', 'true', 'yes', 'on', 'y')
+    cfg['log_dir'] = str(cfg['log_dir'] or '').strip()
     return cfg
 
 
@@ -168,6 +177,76 @@ def inbox_dirs(cfg):
 def in_inbox(p, cfg):
     """True when p sits directly in one of the inbox folders."""
     return Path(p).resolve().parent in [d.resolve() for d in inbox_dirs(cfg) if d.is_dir()]
+
+
+# ---------------------------------------------------------------- the cores log
+
+_COUNTS = [{}]  # the counts of the command (or, in `watch`, the capture) being logged, innermost last
+
+
+def count(key, n=1):
+    """Add to one of the counts the cores log keeps for the command under way (cores_log.COUNT_KEYS)."""
+    if n:
+        _COUNTS[-1][key] = _COUNTS[-1].get(key, 0) + n
+
+
+def log_folder(cfg):
+    """(folder, how it was chosen: 'setting', 'onedrive' or 'profile') of the cores log."""
+    return cores_log.log_folder(expand(cfg['log_dir']) if cfg.get('log_dir') else None)
+
+
+def write_log(cfg, what, *args, **kw):
+    """cores_log.<what>(the log folder, ...) when the "log" setting is on. The log never stops a command: cores_log
+    swallows its own failures, and whatever goes wrong on the way there is swallowed here. Returns what it wrote."""
+    if cores_log is None or not cfg.get('log', True):
+        return 0
+    try:
+        return getattr(cores_log, what)(log_folder(cfg)[0], *args, **kw)
+    except Exception as ex:
+        cores_log.note(ex)
+        return 0
+
+
+@contextlib.contextmanager
+def logged(command, cfg):
+    """One line in the cores log for what runs inside: when it started, how it ended, its exit code, how long it took
+    and the counts gathered with count(). Outcomes: ok; refused (cores said why not: a CoresError); error (a non-zero
+    exit code or any other exception, logged by its class name only); interrupted (Ctrl+C). Exceptions pass through
+    untouched. The body sets run['code'] to its exit code. Inside another logged() block (a capture in `watch`) the
+    counts are also added to the outer one's."""
+    run = {'code': 0}
+    started, t0 = time.time(), time.perf_counter()
+    _COUNTS.append({})
+    outcome, code, error = 'ok', 0, None
+    try:
+        yield run
+        code = run['code'] if isinstance(run['code'], int) else 1
+        outcome = 'error' if code else 'ok'
+    except CoresError as ex:
+        outcome, code, error = 'refused', 1, ex
+        raise
+    except KeyboardInterrupt:
+        outcome, code = 'interrupted', 130
+        raise
+    except SystemExit as ex:
+        code = ex.code if isinstance(ex.code, int) else 0 if ex.code is None else 1
+        outcome = 'error' if code else 'ok'
+        raise
+    except BaseException as ex:
+        outcome, code, error = 'error', 1, ex
+        raise
+    finally:
+        counts = _COUNTS.pop()
+        if len(_COUNTS) > 1:
+            for k, v in counts.items():
+                count(k, v)
+        write_log(cfg, 'log_command', command, VERSION, outcome, code, (time.perf_counter() - t0) * 1000, counts,
+                  error=type(error).__name__ if error else None, started=started)
+
+
+def log_hud_events(capture, cfg):
+    """Add the HUD events a capture carries (its <!-- CORES log ... --> comment) to the cores log, each one once."""
+    count('hud_events', write_log(cfg, 'log_hud', capture, VERSION))
 
 
 # ---------------------------------------------------------------- files
@@ -334,6 +413,7 @@ def parse_capture(capture):
     except Exception as ex:  # a cut-short / template-only capture can crash the row parsers
         data, crash = None, ex
     blob = capture.read_bytes()
+    count('bytes', len(blob))
     if not CAPTURE_END_RE.search(blob[-512:]):  # checked first: a cut-short capture parses without error more often than not
         raise CoresError(f'{capture.name} is incomplete: it stops part-way ({len(blob):,} bytes, no closing </html>), so patients '
                          'would be missing from the Daily Report. A clipboard transfer with a size limit (Citrix) or an '
@@ -354,6 +434,7 @@ def parse_capture(capture):
         raise CoresError(f'{capture.name} is the unrendered CORES report template ({holes:,} unfilled {{{{placeholders}}}}, no report date): '
                          'CORES did not render the report before it was captured. Look at the report popup in CORES for an error message, '
                          f'then capture again; this file is left where it is: {capture}')
+    count('patients', len(data['records']))
     return data
 
 
@@ -430,8 +511,10 @@ def refresh_report(report, cfg, force=False):
 def take_capture(src, cfg, copy=False, parse=True):
     """Validate a capture where it is, then bring it into the reports folder. Returns (path, data or None)."""
     src = Path(src)
+    log_hud_events(src, cfg)  # before it is parsed: what the HUD saw matters most for a capture that is then refused
     data = parse_capture(src) if parse else None
     cap, how = import_capture(src, cfg, copy=copy)
+    count('captures')
     say(f'Capture:  {rel(cap)}  ({how})')
     if how.startswith('copied'):
         say(f'          the original stays in {src.parent} (PHI); delete it when it is no longer needed')
@@ -968,6 +1051,7 @@ def clean_sets(cfg, keep, dry_run, yes, inbox):
             return 0
     for p in doomed:
         p.unlink()
+    count('files', len(doomed))
     say(f'Deleted {len(doomed)} file(s); kept the newest {min(keep, len(sets))} capture set(s) in {rel(rd)}.')
     return len(doomed)
 
@@ -1150,7 +1234,8 @@ def cmd_watch(a, cfg):
             if path and (saved_now or not derived(path, 'report').exists()):
                 say(f'\n{dt.datetime.now():%H:%M:%S}  capture from the clipboard: {path.name}')
                 try:
-                    run_pipeline(path, cfg, **opts)
+                    with logged('watch', cfg):  # a line in the cores log per capture: a watch window is closed more often than stopped
+                        run_pipeline(path, cfg, **opts)
                 except Exception as ex:  # keep watching whatever went wrong with this capture
                     say_error(ex)
             elif path and sha != clip_sha_seen:
@@ -1164,7 +1249,8 @@ def cmd_watch(a, cfg):
                 continue
             say(f'\n{dt.datetime.now():%H:%M:%S}  new capture: {path.name}')
             try:
-                run_pipeline(path, cfg, **opts, skip_done=True)
+                with logged('watch', cfg):
+                    run_pipeline(path, cfg, **opts, skip_done=True)
             except PermissionError as ex:
                 busy[path] = busy.get(path, 0) + 1
                 if busy[path] <= 5:
@@ -1945,12 +2031,13 @@ def main(argv=None):
         if not a.cmd:
             parser.print_help()
             return 0
-        if a.cmd in NEEDS_PACKAGES:
-            check_dependencies(cfg)
-        notice = a.cmd in UPDATE_NOTICE and start_update_check(cfg)
-        code = a.fn(a, cfg) or 0
-        if a.cmd in UPDATE_NOTICE:
-            show_update_notice(cfg, notice)
+        with logged(a.cmd, cfg) as run:  # every command leaves a line in the cores log, however it ends
+            if a.cmd in NEEDS_PACKAGES:
+                check_dependencies(cfg)
+            notice = a.cmd in UPDATE_NOTICE and start_update_check(cfg)
+            run['code'] = code = a.fn(a, cfg) or 0
+            if a.cmd in UPDATE_NOTICE:
+                show_update_notice(cfg, notice)
         return code
     except (CoresError, PermissionError) as ex:
         say(f'cores: {ex}')
