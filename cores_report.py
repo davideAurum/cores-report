@@ -47,7 +47,7 @@ DEFAULT_PAPER = 'legal'
 # Default column widths, in % of the printed table. The Data column starts at the narrowest width that, printed, keeps
 # Volume and Labs side by side (the .duo container query switches at 352 px of content; 364 px with the cell's
 # padding and border, measured with CORES's two days of I&O). The others share the rest in these proportions.
-DATA_MIN_PX = 364
+DATA_MIN_PX = 366   # 364 in print; 366 on screen, where cells have 1 px more padding a side
 COL_SHARES = [22, None, 26, 12]   # Snapshot, Data, Meds, Notes (Meds wide enough for two 140 px med-list columns)
 
 
@@ -282,6 +282,13 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .snap,.snap-ghost{padding:4px 6px;columns:2 120px;column-gap:12px;column-rule:1px solid var(--line)}
 .snap{position:absolute;inset:0;column-fill:auto;overflow:hidden}
 .snap-ghost{visibility:hidden;column-fill:balance;padding-bottom:7px!important}  /* 3 px spare: the flow is inside the cell's borders */
+/* filling the first column first can break differently from balanced columns (a heading is kept with what follows it)
+   and push the end of a Snapshot past the second column; the page script then makes the row that much taller, by
+   --sgx on screen and --pgx in print (measured on a copy laid out as it prints) */
+@media print{.snap-ghost{padding-bottom:calc(7px + var(--pgx,0px))!important}}
+.pm .snapcell > .snap-ghost{padding-bottom:calc(6px + var(--pgx,0px))!important}
+/* on screen the Patient controls sit in a strip of their own along the bottom of the cell, out of the two columns */
+@media screen{.snapcell > .snap{padding-bottom:26px} .snapcell > .snap-ghost{padding-bottom:calc(29px + var(--sgx,0px))!important} .snapcell > .ptctl{position:absolute;left:6px;bottom:4px;margin:0}}
 .snap h4{break-after:avoid} .snap li,.snap .pthead,.snap .pid,.snap .care > div,.snap .adm > div,.snap .status tr{break-inside:avoid}
 /* its sections are ruled off from each other and, the first one shown too, from the identity lines above them */
 .snap > .sec,.snap > .sec.lead,.snap-ghost > .sec,.snap-ghost > .sec.lead{border-top:1px solid var(--line);margin-top:5px;padding-top:4px}
@@ -396,10 +403,35 @@ JS = """
     const old=td.querySelector(':scope > .snap-ghost'); if(old)old.replaceWith(g); else td.appendChild(g);
   }
   table.querySelectorAll('td.snapcell').forEach(ghost);
+  const spills=sn=>sn.scrollWidth>sn.clientWidth+1;
+  function stretch(sn,v){  // the extra row height (in CSS variable v on the hidden copy) that keeps sn within two columns
+    const g=sn&&sn.parentElement.querySelector(':scope > .snap-ghost'); if(!g)return 0;
+    g.style.removeProperty(v); if(!sn.offsetParent)return 0;
+    let x=0; while(spills(sn)&&x<400){x+=6; g.style.setProperty(v,x+'px');}
+    return x;
+  }
+  function fit(sn){stretch(sn,'--sgx');}
+  // refit a Snapshot when its size changes, then once more when the layout has settled (other cells resizing after it,
+  // e.g. Notes growing to the new width, can leave it spilling again)
+  let settle=0; const refit=()=>{clearTimeout(settle); settle=setTimeout(()=>table.querySelectorAll('td.snapcell > .snap').forEach(sn=>{if(spills(sn))fit(sn);}),80);};
+  if(window.ResizeObserver){const ro=new ResizeObserver(es=>{es.forEach(x=>fit(x.target)); refit();}); table.querySelectorAll('td.snapcell > .snap').forEach(sn=>ro.observe(sn));}
+  // printing: lay out a copy as it prints (paper width, print font and padding: the .pm rules) and mark the Snapshots
+  // that would spill there
+  function fitPrint(){
+    const snaps=[...table.querySelectorAll('td.snapcell > .snap')];
+    const pw=PAPERS[paper].map(x=>(x-.6)*96), W=orient==='portrait'?pw[0]:pw[1];  // the printable width, as page() below
+    const box=document.createElement('div'); box.className='pm'; box.style.width=W+'px';
+    const t=table.cloneNode(true); t.removeAttribute('id'); t.querySelectorAll('.noprint').forEach(x=>x.remove());
+    box.appendChild(t); document.body.appendChild(box);
+    try{[...t.querySelectorAll('td.snapcell > .snap')].forEach((sn,i)=>{const x=stretch(sn,'--pgx'), g=snaps[i].parentElement.querySelector(':scope > .snap-ghost');
+      if(g){if(x)g.style.setProperty('--pgx',x+'px'); else g.style.removeProperty('--pgx');}});}
+    finally{box.remove();}
+  }
+  window.addEventListener('beforeprint',fitPrint);
   const dirty=new Set();
   new MutationObserver(ms=>{
     ms.forEach(m=>{const n=m.target.nodeType===1?m.target:m.target.parentElement, sn=n&&n.closest('.snap'); if(sn)dirty.add(sn.parentElement);});
-    dirty.forEach(ghost); dirty.clear();
+    dirty.forEach(td=>{ghost(td); fit(td.querySelector(':scope > .snap'));}); dirty.clear();
   }).observe(table,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','style','value']});
   const q=document.getElementById('q'), unit=document.getElementById('f-unit'), sev=document.getElementById('f-sev'),
         o2=document.getElementById('f-o2'), tasks=document.getElementById('f-tasks'), cnt=document.getElementById('count'),
@@ -568,7 +600,7 @@ JS = """
     c.innerHTML=(isBlank(r)?'<button type="button" class="pr" data-name="Remove blank button" title="Remove this blank patient block">Remove</button>'
       :'<button type="button" class="px" data-name="Don\\u2019t print button"></button>')
       +'<button type="button" class="pb" data-name="Blank below button" title="Add a blank patient block after this one">+ Blank below</button>';
-    (r.querySelector('td .snap')||r.querySelector('td')).appendChild(c);
+    r.querySelector('td').appendChild(c);
   }
   const COLN=[...table.querySelectorAll('thead th')].map(th=>th.dataset.name.replace(' header',' column'));
   function blankEl(b){
@@ -691,7 +723,10 @@ JS = """
     document.querySelectorAll('.rpt .sec').forEach(s=>{let p=s.previousElementSibling; while(p&&!(p.classList.contains('sec')&&shown(p)))p=p.previousElementSibling; s.classList.toggle('lead',!p);});
     document.querySelectorAll('.rpt .vitl,.rpt .pt .pid').forEach(c=>{const it=[...c.children].filter(x=>x.matches('.vi,[data-name="MRN"],[data-name="Date of birth"]')&&shown(x)); it.forEach((x,i)=>x.classList.toggle('endvis',i===it.length-1));});
     document.querySelectorAll('[data-sec]').forEach(cb=>{cb.checked=!hidden.has(cb.dataset.sec);});
-    pageSz.textContent='@page{size:'+paper+' '+orient+';margin:.3in}'; orientSel.value=orient; paperSel.value=paper;
+    // on screen the page is as wide as the paper's printable width (less the .3in margins, 96 px per inch), so the
+    // columns are the widths they print at: no wider than their content needs, as the default widths are worked out
+    const pw=PAPERS[paper].map(x=>(x-.6)*96), W=orient==='portrait'?pw[0]:pw[1];
+    pageSz.textContent='@page{size:'+paper+' '+orient+';margin:.3in} @media screen{.page{max-width:'+Math.round(W+36)+'px}}'; orientSel.value=orient; paperSel.value=paper;
   }
   function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify({d:defs(orient).join(),w:base}));}catch(e){}}
   function saveS(){try{localStorage.setItem(KEYS,JSON.stringify([...hidden]));}catch(e){}}

@@ -193,7 +193,7 @@ shows the isolation text) to the right of the name when the patient is on isolat
 the Allergy / Diet block, then Admission, Patient summary, Status lines, Tasks and Situational Awareness — the
 **Snapshot flow**, in two columns: it fills the first column down to the height the other cells give the row (sections
 hidden in Sections do not count) and carries on in the second, and the row grows only when two columns are not enough,
-and then only to balanced columns; one column when the Snapshot is under 2 × 120 px. Hospital Summary and Tasks /
+and then only to balanced columns (or, where filling the first column first breaks differently, just enough for both columns to hold it); one column when the Snapshot is under 2 × 120 px. On screen the Patient controls sit in a strip along the bottom of the Snapshot, outside its columns, and the page is no wider than the paper's printable width, so the columns are the widths they print at. Hospital Summary and Tasks /
 Sit. Awareness were columns of their own until 2026-11-13) · Vitals column (header "Data"; its default width is the narrowest that keeps Volume and Labs side by side in print. Vitals across the top, then
 Ventilation, then Volume and Labs side by side with a rule between them — Labs goes under Volume when the column
 is too narrow, as in portrait — then Tubes / Lines / Drains; Labs, heading "LABS (today)", was a column of its own
