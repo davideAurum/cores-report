@@ -30,14 +30,36 @@ command: `cores generate`.
    paste into a chat. In the Console the same search is `probeCores('pulm', 'interv')`. Beside Find, **Describe** shows the layout of the CORES patient records (each patient's data on the list): which fields are filled, in how many records, and what kind of thing each holds (text, a number, a list and its entries' fields, JSON or HTML text), with a guess at which fields could hold each part of the Daily Report; never a value. Type a data path such as `window.some.list` in the box first to describe that instead; in the Console, `describeCores()`. **Columns**, with CORES's column picker open, lists every column name it offers (found by its *Microbiolgy Results* column, CORES's spelling, or by an XPath typed in the box), with the highlighted ones marked; in the Console, `listCoresColumns()`. **Map** shows the whole shape of CORES's patient data at once: every field, what kind of thing it holds, in how many patients and how long its lists run; the values shared by 3 or more patients (column and result names, units, statuses, drug names); the columns on the list; and the page's top-level data. Every identifier the page itself holds (each patient's name and its parts, MRN, FIN, IDs, birth date, and staff names) is redacted wherever it turns up, dates and long numbers are dropped, and nothing unique to one patient is shown; in the Console, `mapCores()`.
    The capture also carries **CORES's own clinical data** for each patient, as the patient list holds it once its columns have loaded and a report has been opened: results (vitals, labs, vent and O2, each with its time), medication orders, pending results, code status and handoff fields. The HUD logs how much it took. It travels in the capture file (`<!-- CORES data … -->` before its closing `</html>`), so it stays on this PC like the rest of the capture; `captureCores({data: false})` leaves it out. **`cores compare [FILE]`** checks it against what the printed report says: for each vital sign, lab and the medication list, in how many patients the two agree, differ, or only one has a value, and which CORES result labels it matched. It prints counts and shared labels only, never a patient's values. The capture also records each patient's rounding team from the CORES patient list (CORES's Service - Team, e.g. *Pulmonary - Consult*), so the Daily Report's header names your teams and each patient's **Team** field is filled in; anything typed there overrides it, and clearing it goes back to the CORES team. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
-3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the
-   clipboard. It saves it into `reports\`, checks that it is complete and parses, writes
-   `reports\CORES report 281 <date> <time> - Daily Report.html` and opens it. Every option is optional: `--print`
-   also brings the print dialog up (or prints without a dialog once a printer is configured, see *Printing*), and
-   `--clipboard` uses the clipboard even when Downloads has a capture.
+3. **`cores generate`** takes the newest capture: the newest file in Downloads or the report on the clipboard,
+   whichever was captured later. (The same capture in both places is read from the file.) It says which one it
+   used and how old it is, and it warns when the capture is more than 6 hours old, so an old file left in
+   Downloads cannot quietly become today's report. It saves the capture into `reports\`, checks that it is
+   complete and parses, writes `reports\CORES report 281 <date> <time> - Daily Report.html` and opens it. Every
+   option is optional: `--print` also brings the print dialog up (or prints without a dialog once a printer is
+   configured, see *Printing*), and `--clipboard` uses the clipboard even when Downloads has a newer capture.
+   If one patient's row cannot be read, the report is still built: that patient shows as a block marked
+   **NOT READ**, and `cores generate` says how many rows were affected.
+
+**One paste, no clicks: `cores capture --auto` (new, opt-in).** In step 1, run `cores capture --auto` instead. In
+step 2, paste and press Enter, and that is all: the script presses CORES's own three buttons itself (Reports, then
+the report *ANES ICU w/ Meds*, then *Just Print*), as you would by hand. CORES opens the report window and the
+script captures it. Watch the HUD. If it hands a step back, it names the button it could not press: press that
+button yourself. The capture stays armed, so the rest goes on by itself. Step 3 is the same. Plain `cores capture`
+works as before; `--auto` cannot be combined with `--direct` or `--no-run`.
 
 Hands-free: keep `cores watch --clipboard --print` running in a terminal; every capture is saved, rendered and
 printed as it arrives, from the clipboard or from Downloads.
+
+**The Trace.** `cores capture --trace` also arms the Trace in the paste. It only watches: what fills CORES's patient
+records, what the report button calls, and which requests go out. Its result shows in the HUD when the capture
+ends. `CORES_PAGE_NOTES.md` (section *Trace*) says how to run it, how to read it, and what it found.
+
+**The report does not stay on the clipboard.** Once `cores generate` or `cores watch` has saved the report into
+`reports\`, it takes it off the clipboard and leaves one line there that names the saved file. A stray Ctrl+V then
+pastes that line, not every patient's report. Running `cores generate` a second time still works: it reads the
+line and builds from the saved file. Something else you copied in the meantime is never touched. One thing cores
+cannot reach: if Windows clipboard history (Win+V) is switched on, Windows keeps its own copy; `cores doctor` says
+whether it is on.
 
 Order matters with the clipboard: run `cores generate` *before* the next `cores capture`, because the latter
 puts the script on the clipboard. If you do it the other way round nothing is lost: `cores capture` first saves any
@@ -46,7 +68,7 @@ browser's download may land in a Citrix folder rather than your Downloads, which
 dependable route.
 
 No terminal handy? Drop the downloaded file onto **Make Daily Report.cmd** or **Print Daily Report.cmd**, or
-double-click either to use the newest capture in Downloads, else the clipboard. (A file dropped from anywhere other than Downloads or
+double-click either to use the newest capture (Downloads or the clipboard, whichever is newer). (A file dropped from anywhere other than Downloads or
 this folder is copied into `reports\`, and the original stays where it was; the window says so and stays open for a
 few seconds.)
 
@@ -159,8 +181,9 @@ publishing the release with the zip and its `.sha256` attached. The release note
 previous release; `--notes "..."` replaces them, and they can be edited on GitHub afterwards.
 `py release.py minor --dry-run` builds and checks the zip without committing, tagging or pushing anything; try it on a
 copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
-`release.py` itself is not in the zip (`.gitattributes` leaves it out), and `.gitattributes` makes the `.cmd` and
-`.ps1` files CRLF in the zip whatever the building machine uses.
+`release.py`, `tests\`, `test\` and `docs\` are not in the zip (`.gitattributes` leaves them out, and the zip is
+checked for them), and `.gitattributes` makes the `.cmd` and `.ps1` files CRLF in the zip whatever the building
+machine uses.
 
 ## Commands
 
@@ -168,8 +191,8 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 
 | Command | What it does |
 |---|---|
-| `cores generate [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | newest capture in Downloads, else the clipboard -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` uses the clipboard even when Downloads has a capture. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
-| `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run] [--trace]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself; `--trace` also arms the Trace (what loads CORES's patient records, see `CORES_PAGE_NOTES.md`); `--no-run` leaves the capture call out, so nothing shows in CORES until a call is typed in the Console |
+| `cores generate [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | newest capture (Downloads or the clipboard, whichever was captured later) -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` uses the clipboard even when Downloads has a newer capture. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
+| `cores capture [--auto \| --direct [--id 281]] [--no-download] [--folder] [--no-run] [--trace]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens when you open the report, `--auto` (new, opt-in) has the script press CORES's Reports, report and Just Print buttons itself, `--direct` opens the report's address itself; `--trace` also arms the Trace (what loads CORES's patient records, see `CORES_PAGE_NOTES.md`); `--no-run` leaves the capture call out, so nothing shows in CORES until a call is typed in the Console |
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores compare [FILE]` | compare a capture's printed report with the CORES clinical data it carries: agree / differ / only one, per vital, lab and the meds (counts only) |
@@ -180,7 +203,7 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 | `cores render FILE [-o X.html] [--open] [--copy]` | capture or JSON -> Daily Report only (same rule for captures) |
 | `cores latest` | newest capture / JSON / Daily Report / PDF, and what `generate` would use |
 | `cores clean [--keep N] [--inbox] [--dry-run] [-y]` | delete older capture sets from `reports\` (default keeps 3); `--inbox` also removes captures left in Downloads that are identical to a copy already in `reports\` |
-| `cores annotate FILE [--open] [--copy]` | annotatable copy of a capture: hover shows the parser field, click names it (same rule for captures) |
+| `cores annotate FILE [--open] [--copy]` | annotatable copy of a capture: hover shows the parser field, click names it (same rule for captures). Its *Copy list* carries your names, the parser's field names and each part's place in the page, and no text from the report, so it can be pasted into a chat. An annotate copy made by an older version still copies samples of the text: make it again before using its Copy list |
 | `cores har FILE` | fallback capture: recover the report HTML from a DevTools HAR export or a copied cURL |
 | `cores doctor` | environment check |
 | `cores log [--last N] [--where] [--json]` | the cores log: every command run and every capture's HUD events, from all your computers, oldest first (default the newest 30); `--where` shows the folder and each computer's file (see *The log*) |
@@ -256,7 +279,7 @@ the report that has no location yet, so the file fills in from real reports. A r
 
 ## The log
 
-Every `cores` command adds one line to the **cores log** when it ends, and a capture brings its HUD's events along
+Every `cores` command (except `cores log` itself) adds one line to the **cores log** when it ends, and a capture brings its HUD's events along
 (`<!-- CORES log … -->` before its closing `</html>`), which are added the first time a command takes that capture in.
 The log outlives any one capture, report or folder, so `cores log` can still say next week whether Tuesday's capture
 worked, on which computer, and how long it took.
@@ -280,7 +303,8 @@ worked, on which computer, and how long it took.
 ## Settings
 
 Defaults work as they are. `cores config --init` writes `cores.config.json` next to `cores.py`; edit it in any editor
-or use `cores config --set KEY VALUE`.
+or use `cores config --set KEY VALUE`. `--set` checks the value first: a wrong one (`--set paper a4`) is refused
+with the allowed values, and nothing is saved.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -316,6 +340,7 @@ or use `cores config --set KEY VALUE`.
 | `make_synthetic.py` | writes a made-up report (`reports\SYNTHETIC test report.json`, no real patients) for trying layout and printing |
 | `requirements.txt` | Python packages |
 | `release.py` | publishes a release (development copy only; not in the release zip) |
+| `tests\`, `test\`, `docs\` | development copy only, not in the release zip: the unit tests (`python -m unittest discover -s tests`), the fake CORES page with the HUD self-test, and the code review |
 | `.cores-update.json` | made by `cores update`: when GitHub was last asked, and the files the installed release put here |
 | `cores.config.json` | optional settings |
 | `python\` | optional, made by `.\bundle`: a private Python so nothing needs installing |
@@ -328,6 +353,9 @@ into `reports\` by hand.
 
 ## If something does not work
 
+- **`cores capture --auto` stops part-way**: the HUD names the button it could not press (Reports, the report, or
+  Just Print). Press that button yourself; the capture is still armed and takes the report window when CORES opens
+  it. If no window opens, allow popups for the CORES site. Plain `cores capture` always works the old way.
 - **Nothing downloads after `captureCores(281)`**: allow popups for the CORES site and run it again. The console must
   belong to the Cerner-hosted patient-list window; a report opened in a plain browser tab has no CORES session.
 - **The report window says "Can't Load Patient List / Unable to load the patient list from CORES"**: CORES itself
@@ -347,11 +375,21 @@ into `reports\` by hand.
 - **`cores generate` says there is no report on the clipboard**: Citrix may block or cap clipboard transfer
   from the session to your PC (a capture is 0.4 to 2 MB of text). The console in CORES says whether the copy worked;
   if the banner at the top of the patient list offers *Copy to clipboard*, click it. Otherwise use the downloaded
-  file: `cores generate` uses it whenever Downloads has one.
+  file: `cores generate` uses it when it is the newest capture there is.
 - **`cores generate` says the capture "is incomplete"**: the file or clipboard text stops part-way (a whole capture
   ends with `</html>`), so patients at the end would be missing; it is refused rather than turned into a Daily
   Report with patients left out. A capped Citrix clipboard transfer or an interrupted download does this. Capture
   again; if the clipboard copy is cut short every time, use the downloaded file (`cores generate FILE`).
+- **`cores generate` warns that "this capture is old"**: the newest capture it found was taken more than 6 hours
+  ago, by the date and time in its name. The report is still built, but it shows the patients as they were then.
+  For today's report, capture again. (`cores generate FILE` on a file you name never warns.)
+- **A patient shows as "NOT READ"**: that patient's row in the CORES report had something the parser did not
+  expect. The rest of the report is complete. `cores generate` says how many rows and which (by number, top to
+  bottom). The block keeps the bed and the name where they could be read; look that patient up in CORES.
+- **A command says a setting "must be ..."**: `cores.config.json` has a value that is not allowed, for example
+  one typed by hand. The message ends with the line that repairs it (`cores config --set paper legal`).
+  `cores config`, `cores help` and `cores doctor` still run meanwhile. `cores config --set` itself refuses a
+  wrong value, lists the allowed ones and saves nothing.
 - **`cores` is not recognised**: use `.\cores` from this folder, or run `.\cores setup --add-path` and open a new
   terminal.
 - **`cores generate` says "no CORES report in Downloads or on the clipboard"**: `cores latest` shows where it looked; `cores config` shows the inbox

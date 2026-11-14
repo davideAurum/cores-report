@@ -7,8 +7,15 @@ In the copy:
   - hovering any part of the report outlines it and shows what the PARSER currently calls it
     (column › section › label › lab slot), so you can see how the source maps to parsed fields;
   - clicking a part asks you for YOUR name for it; the pair is added to the panel at the top right;
-  - "Copy list" copies all your annotations as text you can paste back to Claude.
+  - "Copy list" copies your annotations as text you can paste into a chat: your name for each part, the parser's
+    name for it and where it sits in the page.
 Annotations are also kept in the browser's localStorage for this file, so they survive a reload.
+
+Privacy: the copied list and the browser's storage carry NO text from the report. The hover tip and the name box
+show a part's text on screen only (the page itself is the report). Of the parser's name, a piece read from the page
+(a column, section or label) is copied only when 3 or more patients' rows have it, which makes it the report's own
+wording and not one patient's; anything else is replaced by "(left out)". Entries an older copy stored with a sample
+of the text lose that sample the first time a new copy is opened. tests/test_annotate.py holds this.
 """
 import re
 import sys
@@ -45,20 +52,94 @@ OVERLAY = r"""
 <div id="ann-tip"></div>
 <div id="ann-ask"><div id="ann-ask-info"></div><input id="ann-ask-in" placeholder="Your name for this part, then Enter"><div><button id="ann-ask-save">Save</button><button id="ann-ask-cancel">Cancel</button></div></div>
 <div id="ann-panel"><h3>Annotate: hover to see parser name, click to name it</h3><div class="body">
-<div class="hint">Names are saved in this browser. "Copy list" copies them as text for Claude.</div>
+<div class="hint">Names are saved in this browser. "Copy list" copies your names, the parser's field names and each part's place in the page, to paste into a chat. It carries no text from the report: a label is copied only when 3 or more patients have it.</div>
 <button id="ann-copy">Copy list</button><button id="ann-clear">Clear all</button><span id="ann-count"></span>
 <textarea id="ann-out" style="display:none;width:100%;height:120px;font:11px monospace;margin-top:6px"></textarea>
 <ol id="ann-list"></ol></div></div>
 <script>
 (function(){
   var SLOT = __SLOT__;
-  var KEY = 'cores-annotations:' + location.pathname.split('/').pop();
+  var PREFIX = 'cores-annotations:', KEY = PREFIX + location.pathname.split('/').pop();
   var tip = document.getElementById('ann-tip'), list = document.getElementById('ann-list'), count = document.getElementById('ann-count');
   function store(v){ try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} }   // storage is unavailable in some viewers
-  var ann = []; try { ann = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) {}
   var hl = null;
 
   function textOf(el){ return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
+
+  /*PURE*/
+  // What may leave this page (the copied list, the browser's storage): the name typed for a part, the parser's name
+  // for it and its place in the page; never the part's text. No DOM in this block: tests/test_annotate.py runs it
+  // under node. shared(kind, value) says whether 3 or more patients' rows have that value, as an attribute
+  // ('attr': a column, section or title) or in their text ('text': a label): only then is it the report's wording.
+  var LEFT_OUT = '(left out)';
+  var FIXED_PART = /^(Page header|Meds row|outside patient row|I&O table|value field|Lab slot [A-Za-z0-9 ]{1,30}( \((prior|current)\))?|field=[\w.-]{1,60}|((Column|Section|Meds section|I&O table row|Label) )?\(left out\))$/;
+  var READ_PART = /^(Column|Section|Meds section|I&O table row|Label) "([\s\S]*)"$/;
+  function safePart(part, shared){
+    if (FIXED_PART.test(part)) return part;
+    var m = READ_PART.exec(part);
+    if (!m || !m[2] || m[2].indexOf('"') >= 0) return LEFT_OUT;
+    var kind = m[1] === 'Column' || m[1] === 'Section' ? 'attr' : 'text';
+    return shared(kind, m[1] === 'Label' ? m[2] + ':' : m[2]) ? part : m[1] + ' ' + LEFT_OUT;
+  }
+  function safeParser(parser, shared){
+    return String(parser || '').split(' › ').map(function(p){ return safePart(p, shared); }).join(' › ');
+  }
+  var PATH_STEP = /^([a-z][a-z0-9]*)((?:\.[A-Za-z0-9_-]+)*)(?:\[column_name="([^"\]]*)"\]|(\[column_name \(left out\)\]))?$/;
+  function safePath(path, shared){
+    return String(path || '').split(' > ').map(function(s){
+      var m = PATH_STEP.exec(s);
+      if (!m) return '?';
+      if (m[4]) return m[1] + m[2] + m[4];   // cleaned before
+      return m[1] + m[2] + (m[3] === undefined ? '' : shared('attr', m[3]) ? '[column_name="' + m[3] + '"]' : '[column_name ' + LEFT_OUT + ']');
+    }).join(' > ');
+  }
+  function cleanEntry(a, shared){   // nothing but these three fields is kept: an older copy also stored a sample of the text
+    a = a && typeof a === 'object' ? a : {};
+    return { name: String(a.name || ''), parser: safeParser(a.parser, shared), path: safePath(a.path, shared) };
+  }
+  function withoutSample(entries){   // for the annotations of other captures, whose rows are not on this page
+    return (Array.isArray(entries) ? entries : []).map(function(a){
+      a = a && typeof a === 'object' ? a : {};
+      return { name: String(a.name || ''), parser: String(a.parser || ''), path: String(a.path || '') };
+    });
+  }
+  function listText(ann){
+    return ann.map(function(a, i){ return (i + 1) + '. "' + a.name + '"  =  ' + a.parser + '\n   path: ' + a.path; }).join('\n');
+  }
+  function sharedIn(rows){   // rows: one {text, names} per patient row; the answer is yes from 3 rows up
+    return function(kind, value){
+      var n = 0;
+      for (var i = 0; i < rows.length && n < 3; i++) if (kind === 'attr' ? rows[i].names['=' + value] === 1 : rows[i].text.indexOf(value) >= 0) n++;
+      return n >= 3;
+    };
+  }
+  /*END PURE*/
+
+  var ROWS = null;   // each patient's row: its text, and the column, section and title names it has
+  function rowsOf(){
+    if (ROWS) return ROWS;
+    ROWS = [];
+    var trs = document.querySelectorAll('tr.row_template');
+    for (var i = 0; i < trs.length; i++) {
+      if (!trs[i].querySelector('td[column_name]')) continue;
+      var names = {}, els = trs[i].querySelectorAll('[column_name], [section_name], [title]');
+      for (var j = 0; j < els.length; j++) ['column_name', 'section_name', 'title'].forEach(function(at){ var v = els[j].getAttribute(at); if (v) names['=' + v] = 1; });
+      ROWS.push({ text: textOf(trs[i]), names: names });
+    }
+    return ROWS;
+  }
+  function shared(kind, value){ return sharedIn(rowsOf())(kind, value); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  var ann = [];
+  try { ann = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) {}
+  ann = (Array.isArray(ann) ? ann : []).map(function(a){ return cleanEntry(a, shared); });   // stored again, cleaned, by render() below
+  try {   // the samples an older copy stored for other captures go too
+    for (var k = 0; k < localStorage.length; k++) {
+      var key = localStorage.key(k);
+      if (key && key.indexOf(PREFIX) === 0 && key !== KEY) localStorage.setItem(key, JSON.stringify(withoutSample(JSON.parse(localStorage.getItem(key) || '[]'))));
+    }
+  } catch (e) {}
   function labelBefore(el){
     // walk backwards through previous siblings (stopping at <br>) looking for "Label:" text or a <b>Label:</b>
     for (var n = el.previousSibling; n; n = n.previousSibling) {
@@ -97,7 +178,7 @@ OVERLAY = r"""
     return p.join(' > ');
   }
   function render(){
-    list.innerHTML = ann.map(function(a, i){ return '<li><b>' + a.name + '</b><br><span class="p">' + a.parser + '</span><br><span class="p">e.g. "' + a.sample + '"</span><a data-i="' + i + '">remove</a></li>'; }).join('');
+    list.innerHTML = ann.map(function(a, i){ return '<li><b>' + esc(a.name) + '</b><br><span class="p">' + esc(a.parser) + '</span><a data-i="' + i + '">remove</a></li>'; }).join('');
     count.textContent = ann.length + ' named';
     store(ann);
   }
@@ -112,7 +193,7 @@ OVERLAY = r"""
   function closeAsk(){ ask.style.display = 'none'; pending = null; }
   function saveAsk(){
     var name = askIn.value.trim(); if (!name || !pending) { closeAsk(); return; }
-    ann.push({ name: name, parser: parserName(pending), path: pathOf(pending), sample: textOf(pending).slice(0, 80) });
+    ann.push(cleanEntry({ name: name, parser: parserName(pending), path: pathOf(pending) }, shared));   // no text of the part itself
     pending.classList.add('ann-done'); render(); closeAsk();
   }
   document.getElementById('ann-ask-save').onclick = saveAsk;
@@ -130,7 +211,7 @@ OVERLAY = r"""
   list.addEventListener('click', function(e){ var a = e.target.closest('a[data-i]'); if (!a) return; ann.splice(+a.dataset.i, 1); render(); });
   document.getElementById('ann-clear').onclick = function(){ ann = []; render(); };
   document.getElementById('ann-copy').onclick = function(){
-    var txt = ann.map(function(a, i){ return (i + 1) + '. "' + a.name + '"  =  ' + a.parser + '\n   path: ' + a.path + '\n   e.g.: ' + a.sample; }).join('\n');
+    var txt = listText(ann.map(function(a){ return cleanEntry(a, shared); }));
     var out = document.getElementById('ann-out'); out.value = txt; out.style.display = 'block'; out.select();
     if (navigator.clipboard) navigator.clipboard.writeText(txt).then(function(){ count.textContent = ann.length + ' named — copied to clipboard'; }, function(){ count.textContent = ann.length + ' named — select the text below and copy'; });
   };
@@ -146,7 +227,8 @@ OVERLAY = r"""
 
 
 def main(path):
-    html = open(path, encoding='utf-8', errors='replace').read()
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        html = fh.read()
     html = re.sub(r'<meta[^>]+charset=[^>]+>', '<meta charset="utf-8">', html, count=1, flags=re.I)
     html = re.sub(r'<body([^>]*)class="t4m_report', r'<body\1class="t4m_report ann-mode', html, count=1)  # no-op marker
     overlay = OVERLAY.replace('__SLOT__', SLOT_JS)

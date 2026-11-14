@@ -384,8 +384,20 @@ class Commands(TempFolder):
         self.assertIn('6 of 6 entries from 2 computers', out)
         self.assertIn(str(self.log), out)
         code, out, _ = self.run_cores('log', '--last', '2')
-        self.assertEqual([r.split()[4] for r in out.splitlines()[1:3]], ['print', 'log'])   # the `cores log` before this one is an entry too
-        self.assertIn('2 of 7 entries', out)
+        self.assertEqual([r.split()[4] for r in out.splitlines()[1:3]], ['generate', 'print'])
+        self.assertIn('2 of 6 entries', out)   # the `cores log` before this one left no entry
+
+    def test_cores_log_does_not_log_itself(self):
+        self.assertEqual(self.run_cores('log')[0], 0)
+        self.assertEqual(self.run_cores('log', '--where')[0], 0)
+        self.assertEqual(self.run_cores('log', '--json')[0], 0)
+        self.assertFalse(self.log.exists())          # reading an empty log does not start one
+        self.assertEqual(self.run_cores('log', '--last', '-1')[0], 1)   # refused: still no entry
+        self.assertFalse(self.log.exists())
+        self.run_cores('help')
+        for _ in range(3):
+            self.run_cores('log')
+        self.assertEqual([e['command'] for e in self.entries()], ['help'])
 
     def test_cores_log_json(self):
         self.two_computers()
@@ -403,7 +415,7 @@ class Commands(TempFolder):
         self.assertIn(f'Log folder: {self.log}', out)
         self.assertIn('the "log_dir" setting', out)
         self.assertIn('not under OneDrive', out)
-        self.assertIn('cores-log.PC-A.jsonl  3 lines', out)   # two commands and the first `cores log`
+        self.assertIn('cores-log.PC-A.jsonl  2 lines', out)   # the two commands; the `cores log` above left no line
         self.assertIn('cores-log.PC-B.jsonl  4 lines', out)
 
     def doctor(self):

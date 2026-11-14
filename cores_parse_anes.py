@@ -182,6 +182,19 @@ def parse_meds_row(tr):
     return meds
 
 
+def parse_identity(tr):
+    """Where and who only, each cell on its own, for a row the rest of which could not be read
+    (cores_parse.unreadable_record)."""
+    c = {td['column_name']: td for td in tr.find_all('td', attrs={'column_name': True})}
+    rec = {}
+    for column, parse in (('Bed', parse_bed), ('Patient', parse_patient)):
+        try:
+            rec.update(parse(c[column]))
+        except Exception:
+            pass
+    return rec
+
+
 def parse_row(tr):
     c = {td['column_name']: td for td in tr.find_all('td', attrs={'column_name': True})}
     rec = parse_bed(c['Bed'])
