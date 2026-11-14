@@ -110,7 +110,9 @@
     var fgo = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 12px;border:1px solid #1f4e79;border-radius:4px;background:#1f4e79;color:#fff;cursor:pointer', 'Find');
     var fdesc = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Describe');
     fdesc.title = 'The layout of the CORES patient records: which fields are filled, and what kind of thing each holds. No values.';
-    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc);
+    var fcols = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Columns');
+    fcols.title = 'With CORES\'s column picker open: every column name it offers. (Or type the XPath of its list first.)';
+    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc); findBar.appendChild(fcols);
 
     // the console: the script's messages, Find results, and the live spinner line at the bottom
     var list = ovEl('div', 'flex:1;min-height:0;overflow-y:auto;padding:5px 9px 7px;font:11px/1.45 ' + MONO + ';user-select:text;cursor:text');
@@ -174,6 +176,17 @@
     }
     // caught on the way down (capture phase), so a page that swallows clicks or keys before they arrive cannot stop them
     window.addEventListener('click', function (e) { if (e.target === fgo) { e.stopPropagation(); runFind(); } }, true);
+    // Columns: the column picker's column names (or the list at an XPath typed in the box)
+    window.addEventListener('click', function (e) {
+      if (e.target !== fcols) return;
+      e.stopPropagation();
+      var xp = /^\//.test(fin.value.trim()) ? fin.value.trim() : '';
+      ovLog('Listing: the column picker\'s columns' + (xp ? ' (at the XPath typed)' : ''));
+      setTimeout(function () {
+        try { listCoresColumns(xp, { hud: true }); }
+        catch (err) { console.error('CORES capture: Columns failed', err); ovLog('Columns failed: ' + (err && (err.name + ': ' + err.message) || err) + '. Copy this line for Claude.', 'err'); }
+      }, 30);
+    }, true);
     // Describe: the CORES patient records, or the data path typed in the box (window.something)
     window.addEventListener('click', function (e) {
       if (e.target !== fdesc) return;
@@ -780,7 +793,7 @@
   // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
   var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
     localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, coresDescribe: 1, captureCores: 1, probeCores: 1,
-    describeCores: 1, __coresRealOpen: 1 };
+    describeCores: 1, coresColumns: 1, listCoresColumns: 1, __coresRealOpen: 1 };
   function probeCopy(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
     return new Promise(function (res) {
       function old() { try { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); res(!!ok); } catch (e) { res(false); } }
@@ -1146,6 +1159,57 @@
     setTimeout(function () { box.style.backgroundColor = '#f6f9fc'; }, 60);
   }
   window.describeCores = describeCores;
+  // ---- Columns (listCoresColumns): the column names CORES's column picker offers, for choosing which columns to show
+  // on the patient list. With the picker open, its list(s) are found by the "Microbiolgy Results" column (CORES's own
+  // spelling), else by an XPath typed in the box (starting with /); every <select> in the same dialog is listed, with
+  // its options in order and the chosen ones marked. Only that dialog's menus are read: column names, no patient data.
+  function listCoresColumns(xpath, opt) {
+    opt = opt || {};
+    var L = ['Columns: the CORES column picker'], anchor = null;
+    xpath = String(xpath || '').trim();
+    if (/^\//.test(xpath)) {
+      try { anchor = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch (e) { anchor = null; }
+      if (!anchor) L.push('✖ nothing at that XPath; looking for the picker by its Microbiolgy Results column instead');
+    }
+    if (!anchor || anchor.tagName !== 'SELECT') {
+      var sels = document.getElementsByTagName('select');
+      for (var i = 0; i < sels.length && !(anchor && anchor.tagName === 'SELECT'); i++)
+        for (var j = 0; j < sels[i].options.length; j++) if (/microbiolo?gy\s+results/i.test(sels[i].options[j].text)) { anchor = sels[i]; break; }
+    }
+    if (!anchor || anchor.tagName !== 'SELECT') {
+      L.push('✖ no column picker found: open CORES\'s column picker (so its lists are on the screen), then press Columns again');
+      return done(L);
+    }
+    // the dialog the list sits in: the nearest ancestor holding more than one menu, else a few levels up
+    var box = anchor.parentElement, up = 0;
+    while (box && box.parentElement && box.getElementsByTagName('select').length < 2 && up < 8) { box = box.parentElement; up++; }
+    var lists = box ? [].slice.call(box.getElementsByTagName('select')) : [anchor];
+    if (lists.indexOf(anchor) < 0) lists = [anchor];
+    var total = 0;
+    lists.forEach(function (sel, n) {
+      var opts = [].slice.call(sel.options), chosen = opts.filter(function (o) { return o.selected; }).length;
+      var label = (sel.getAttribute('title') || sel.getAttribute('name') || sel.getAttribute('aria-label') || '').replace(/\d{3,}/g, '#');
+      L.push('', 'LIST ' + (n + 1) + ' (' + opts.length + ' column' + (opts.length === 1 ? '' : 's') + (label ? ', "' + label + '"' : '') +
+        (chosen ? ', ' + chosen + ' highlighted' : '') + (sel === anchor ? ', the one with Microbiolgy Results' : '') + ')');
+      opts.forEach(function (o) {
+        var t = (o.text || '').replace(/\s+/g, ' ').trim().replace(/\d{3,}/g, '#');
+        if (t) { L.push((o.selected ? '▸ ' : '  ') + t + (o.disabled ? '  (disabled)' : '')); total++; }
+      });
+    });
+    L.splice(1, 0, '✔ ' + total + ' column name' + (total === 1 ? '' : 's') + ' in ' + lists.length + ' list' + (lists.length === 1 ? '' : 's') +
+      ' (▸ = highlighted in the picker)');
+    return done(L);
+
+    function done(lines) {
+      var text = lines.join('\n');
+      window.coresColumns = { text: text };
+      if (opt.hud && ov) showResult(lines, text, 'Columns');
+      else { console.log(text); probeCopy(text).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); }); }
+      return { text: text };
+    }
+  }
+  window.listCoresColumns = listCoresColumns;
+
 
 
   window.captureCores = function (reportId, opts) {
