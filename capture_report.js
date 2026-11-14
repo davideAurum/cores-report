@@ -47,7 +47,25 @@
 // Its magnifier opens the tools that look at the CORES page without showing patient data: Find, Describe, Columns, Map
 // and Trace (traceCores(): what loads CORES's patient records; see CORES_PAGE_NOTES.md).
 (function () {
-  var BASE = location.origin + '/cores/uab/prod/cores.4.11.0/base/public_web/';
+  // CORES's own folder on its server (.../cores.<version>/base/public_web/), where direct mode opens the report. It is
+  // taken from the page the script runs in, so it follows CORES to its next version: this page's own address, else
+  // the address of a script the page loaded from that folder. The 4.11.0 path is only what is left when neither tells
+  // (the HUD then says so).
+  var BASE_FALLBACK = '/cores/uab/prod/cores.4.11.0/base/public_web/';
+  function coresBase() {
+    var m = /^(.*\/public_web\/)/.exec(location.pathname);
+    if (m) return { url: location.origin + m[1], from: 'page' };
+    try {
+      for (var i = 0, sc = document.scripts; i < sc.length && i < 400; i++) {
+        if (!sc[i].src) continue;
+        var u = new URL(sc[i].src, location.href), mm = /^(.*\/public_web\/)/.exec(u.pathname);
+        if (!mm || !/^https?:$/.test(u.protocol)) continue;
+        // this site's own script, or one with CORES's whole folder shape (never CORES's data server)
+        if (u.origin === location.origin || (/\/cores\.[\d.]+\/base\/public_web\/$/.test(mm[1]) && !/^dwh\./i.test(u.hostname))) return { url: u.origin + mm[1], from: 'script' };
+      }
+    } catch (e) {}
+    return { url: location.origin + BASE_FALLBACK, from: 'fallback' };
+  }
   var DB = 'cores-capture', STORE = 'kv';
 
   // kind: none for a neutral message, 'ok' (done), 'warn' (a problem worked around), 'err' or false (failed)
@@ -445,6 +463,7 @@
   // capture. captureCores({log: false}) leaves the comment out.
   var LOG_EV = {                               // ev: [the k values it may carry]
     armed: ['window', 'direct'],               // captureCores(): waiting for CORES's own report window / opening the report itself
+    report_address: ['page', 'script', 'fallback'],   // direct mode: where the report's address came from (this page's own address / a script it loaded / the fixed 4.11.0 one)
     blocked: [],                               // the browser blocked the report window (direct mode: the script's own; armed: the one CORES tried to open)
     report_opened: ['window', 'direct'],       // a report window is in hand (opened by CORES / by the script)
     other_window: [],                          // armed: CORES opened a window that is not a report
@@ -842,7 +861,7 @@
       var o = {}; for (var k in opts) o[k] = opts[k]; o.popup = popup;   // the report window is still open and focused now
       try { o.teams = teamsFromCores(); } catch (e) { o.teams = null; }
       if (o.teams) log('teams from the CORES patient list: ' + Object.keys(o.teams.teams).map(function (t) { return t + ' (' + o.teams.teams[t] + ')'; }).join(', '), 'ok');
-      else log('no team data found in this CORES window: each patient\'s Team is left for you to type');
+      else log('no team data found in this CORES window (its patient records are not on the page): each patient\'s Team is left for you to type', 'warn');
       hudEvent('teams', o.teams ? 'found' : 'none', o.teams ? o.teams.patients.length : 0);
       if (opts.data === false) hudEvent('clinical', 'off');
       if (opts.data !== false) {
@@ -854,15 +873,23 @@
           var kb = Math.round(o.clinicalText.length / 1024);
           log('clinical data from the CORES patient list: ' + o.clinical.counts.patients + ' patients, ' + o.clinical.counts.results.toLocaleString() +
             ' results, ' + o.clinical.counts.meds + ' medication orders (' + kb.toLocaleString() + ' KB, carried in the capture)', 'ok');
-        }
+        } else if (!clinicalErr) log('no clinical data found in this CORES window (its patient records are not on the page): the report alone is captured', 'warn');
       }
+      // what the capture went without. CORES fills its patient records when its Reports button is pressed; a report
+      // opened another way (direct mode in a fresh session) finds none, and the capture must not look complete then
+      var missing = [];
+      if (!o.teams) missing.push('the teams');
+      if (opts.data !== false && !o.clinical) missing.push('CORES\'s clinical data');
       // the verdict once every delivery has settled: green when all went through, yellow when the capture is in hand
       // but something needs a hand (a click on the banner, an unrendered report, a reload, a warning above), red when
       // the delivery itself broke
       var settle = function (results) {
         var held = (results || []).some(function (r) { return r === false; });
         if (rows === 0) ovVerdict('warn', 'captured, but CORES had not rendered the report (0 patient rows). Try again.');
-        else if (held) ovVerdict('warn', rows + ' patient rows captured, but not every delivery went through: see the yellow lines (a banner at the top may need a click).');
+        else if (held) ovVerdict('warn', rows + ' patient rows captured, but not every delivery went through: see the yellow lines (a banner at the top may need a click).' +
+          (missing.length ? ' Also missing: ' + missing.join(' and ') + '.' : ''));
+        else if (missing.length) ovVerdict('warn', rows + ' patient rows captured and delivered, but without ' + missing.join(' and ') + ': CORES\'s patient records were not on the page. ' +
+          'The Daily Report can still be made from it' + (o.teams ? '' : ' (each Team is then yours to type)') + '. For a full capture, open the report with CORES\'s own Reports button. On your PC run   cores generate');
         else if (ov && ov.warns) ovVerdict('warn', rows + ' patient rows captured and delivered, after the problems in yellow above. On your PC run   cores generate');
         else ovVerdict('ok', rows + ' patient rows captured and delivered. On your PC run   cores generate');
       };
@@ -908,12 +935,13 @@
     timer = setInterval(function () {
       var w = popup, d;
       if (w.closed) {
+        var was = done;   // stop() sets done: asked before it, or the lines below could never run
         stop();
-        if (!done) {
+        if (!was) {
           hudEvent('window_closed');
           console.error('CORES capture: the report window closed before anything was captured.');
           ovLog('the report window closed before anything was captured.', 'err');
-          ovVerdict('err', 'the report window closed before anything was captured. Open the report again.');
+          ovVerdict('err', 'the report window closed before anything was captured. To try again: on your PC run   cores capture   and paste into the Console as before.');
         }
         return;
       }
@@ -1162,7 +1190,7 @@
           return pressItem(pick.el);
         }
         if (pick.n > 1) return handOver('several_menu_items', 'more than one item on the Reports menu matches "' + name + '".', 'choose the right report on the Reports menu, then press Just Print');
-        if (items.length && waited > Math.min(1500, WAIT / 2)) return handOver('no_menu_item', 'the Reports menu has no item that matches "' + name + '".', 'choose the report on the Reports menu, then press Just Print');
+        if (items.length && waited > WAIT / 2) return handOver('no_menu_item', 'the Reports menu has no item that matches "' + name + '".', 'choose the report on the Reports menu, then press Just Print');
         // something else came up instead of the menu: CORES is asking first (its Reports button checks the user's role)
         var asked = !items.length && auDialogs().some(function (d) { return before.indexOf(d) < 0; });
         if (!asked) promptAt = 0;
@@ -2703,10 +2731,12 @@
       console.warn('CORES capture: this window is not Cerner-hosted and has no CORES site-code record; ' +
         'the report will probably fail to initialise. Run this from the CORES patient list window.');
     }
-    var url = BASE + '?prg_name=univ_wa_rnd_build_report&options=report_id:' + reportId +
+    var base = coresBase(), ver = (/\/cores\.(\d[\d.]{0,14})\//.exec(base.url) || [])[1] || '';
+    var url = base.url + '?prg_name=univ_wa_rnd_build_report&options=report_id:' + reportId +
       '&mode=pcedge&emr_type=CERNER-CCL-V4&report_name=univ_wa_rnd_api';
     var popup = (opts.open || window.__coresRealOpen || function (u, n, f) { return window.open(u, n, f); })(url, 'cores_capture_' + reportId, 'width=1400,height=900');
     hudEvent('armed', 'direct');
+    hudEvent('report_address', base.from);
     hudEvent(popup ? 'report_opened' : 'blocked', popup ? 'direct' : null);
     if (!popup) {
       console.error('CORES capture: window.open was blocked. Allow popups for this site and try again.');
@@ -2720,6 +2750,11 @@
       'and closes by itself.\n\nIf CORES says it cannot load the patient list, the script presses OK and Reload for you, ' +
       'up to ' + (opts.retries === undefined ? 2 : opts.retries) + ' times.');
     watchReport(popup, opts, String(reportId));
+    // where the report's address came from: this page (it follows CORES's version), or the fixed one as a last resort
+    if (base.from === 'page') log('report address: taken from this page' + (ver ? ' (CORES ' + ver + ')' : ''));
+    else if (base.from === 'script') log('report address: taken from a CORES script this page has loaded' + (ver ? ' (CORES ' + ver + ')' : ''));
+    else log('report address: this page does not show which CORES version it runs, so the address for CORES 4.11.0 was used. If the report window stays ' +
+      'empty or looks old, open the report with CORES\'s own buttons instead (captureCores() or captureCores({auto: true})).', 'warn');
     log('opened report ' + reportId + ' in a popup; waiting for it to render…');
     return 'capturing…';
   };

@@ -195,6 +195,18 @@ setup**, which says exactly what data it fetches. Our list's columns (2026-11-14
 - **Auto** = `captureCores({auto: true})` (`cores capture --auto`, 2026-11-14): the capture arms itself, then
   presses CORES's own Reports button, the report's menu item and Just Print. See "Auto" below. Not yet run in
   CORES.
+- **Three fixes on the capture's path** (from `docs/code-review.md`, 2026-11-14):
+  - *The report's address follows CORES's version* (finding 5). Direct mode (`captureCores(281)`) used an address
+    fixed to `cores.4.11.0`. It now takes CORES's folder (`.../cores.<version>/base/public_web/`) from the page's
+    own address, else from a script the page loaded from that folder, and the HUD says which ("report address:
+    taken from this page (CORES 4.11.0)"). Only when neither tells does it use the 4.11.0 address, with a yellow
+    line. Unconfirmed until a run in CORES: that the patient list's own address has that folder in it.
+  - *A capture with no teams or no clinical data ends yellow* (finding 6): "CAPTURED WITH PROBLEMS: 57 patient
+    rows captured and delivered, but without the teams and CORES's clinical data: CORES's patient records were
+    not on the page." It used to be a green SUCCESS with nothing said. This is what a direct-mode capture in a
+    fresh session gives, because nothing pressed Reports. (`data: false` is a choice, not a problem.)
+  - *A report window closed before the capture ends it* (finding 8): a red FAILED line that says how to try
+    again. Before, the HUD kept its spinner and clock going for ever.
 - **The HUD's event log** (same work): the HUD's steps, kept in localStorage and carried by each capture as
   `<!-- CORES log {...} -->`; fixed vocabulary, no free text. See "The HUD's event log" below.
 - **A fake CORES page and a self-test** (`test/`, same work): see "Trying the HUD outside Citrix" below.
@@ -537,6 +549,7 @@ log`, the run-log lane's work) reads it and drops repeats by `id`; cores_parse i
 | `ev` | `k` | `n` | `ms` | when |
 |---|---|---|---|---|
 | `armed` | `window`, `direct` | | | `captureCores()`: waiting for CORES's own report window / opening the report itself |
+| `report_address` | `page`, `script`, `fallback` | | | direct mode: where the report's address came from (this page's own address / a script it loaded / the fixed 4.11.0 one) |
 | `auto` | `reports`, `menu_item`, `just_print`, `opened` | | since the automation started | `captureCores({auto: true})`: the script pressed Reports / the report's menu item / Just Print; then CORES opened the report window |
 | `auto_handed_over` | `no_reports_button`, `prompt`, `no_menu`, `no_menu_item`, `several_menu_items`, `no_just_print`, `no_window`, `blocked` | | since the automation started | the automation stopped at a step it could not do and said which button to press; the capture stays armed |
 | `blocked` | | | | the browser blocked the report window (direct mode: the script's own; armed: the one CORES tried to open) |
@@ -588,11 +601,13 @@ report: the control), `click` (the list fills them when its Reports button is cl
 
 - Serve it with `python test/serve.py` (only `test/` and capture_report.js, only to this computer), then open
   `http://127.0.0.1:8765/fake_cores.html` and paste the script, or press "Load the HUD". **Not** `python -m
-  http.server` in the project folder: that would serve `reports\` too.
+  http.server` in the project folder: that would serve `reports\` too. The same page also answers at an address
+  shaped like CORES's own, `http://127.0.0.1:8765/cores/uab/prod/cores.9.9.9/base/public_web/fake_cores.html`
+  (any version number), for trying where direct mode opens the report.
 - `node test/run_selftest.mjs` runs `test/selftest.html` in headless Edge and prints PASS / FAIL: the fake page,
   the Trace in every mode (who wrote, the hints, the redaction, everything restored), the Trace with a capture
-  in both orders of arming, the event log's contract, and the automation (the full run, every hand-over, with a
-  Trace armed before and after). It proves the tools on the fake page; what the real
+  in both orders of arming, the event log's contract, the automation (the full run, every hand-over, with a
+  Trace armed before and after) and the three capture-path fixes. It proves the tools on the fake page; what the real
   page does is what a run in CORES shows. `node test/run_selftest.mjs trace_cores_mode` runs one test (several:
   commas between).
 - `node test/run_selftest.mjs --capture FILE` writes a capture of the fake report (invented patients, with its

@@ -22,13 +22,13 @@
     });
   }
   // a fake CORES list in a frame of its own
-  function openList(params) {
+  function openList(params, folder) {   // folder: an address shaped like CORES's own, which test/serve.py answers too
     return new Promise(function (res, rej) {
       var f = document.createElement('iframe');
       f.onload = function () { res({ frame: f, w: f.contentWindow, d: f.contentDocument, popups: [],
         close: function () { this.popups.forEach(function (p) { try { p.close(); } catch (e) {} }); try { var lr = f.contentWindow.fakeCores.lastReport; if (lr) lr.close(); } catch (e) {} f.remove(); } }); };
       f.onerror = rej;
-      f.src = 'fake_cores.html' + (params ? '?' + params : '');
+      f.src = (folder || '') + 'fake_cores.html' + (params ? '?' + params : '');
       document.getElementById('frames').appendChild(f);
     }).then(function (p) { return until(function () { return p.d.querySelectorAll('tr.t4m_rnd_pt_list_row').length === 5; }, 'the list rows').then(function () { return p; }); });
   }
@@ -809,6 +809,97 @@
   }
   tests.auto_then_trace = function () { return autoWithTrace(false); };
   tests.trace_then_auto = function () { return autoWithTrace(true); };
+
+  // ================= stage 2: the capture path's fixes from the code review (findings 5, 6, 8) =================
+  // finding 5: direct mode takes the report's address from the page, not from a fixed CORES version
+  tests.direct_address = async function () {
+    var DIR = '/cores/uab/prod/cores.9.9.9/base/public_web/', REPORT = '?prg_name=univ_wa_rnd_build_report&options=report_id:281&mode=';
+    function watchOpen(p) {   // the address the script opens
+      var seen = { url: '' }, real = p.w.open;
+      p.w.open = function (u) { seen.url = String(u); var w = real.apply(p.w, arguments); p.popups.push(w); return w; };
+      return seen;
+    }
+    async function run(p, what, from, folder, said) {
+      var seen = watchOpen(p);
+      p.w.coresCaptured = undefined;
+      p.w.captureCores(281, QUIET);
+      check(what + ': the report is opened at ' + folder, seen.url.indexOf(location.origin + folder + REPORT) === 0, seen.url);
+      await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture (' + what + ')', 20000);
+      check(what + ': and captured from there (5 patient rows)', (p.w.coresCaptured.match(/id="row_template_\d+"/g) || []).length === 5);
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict');
+      var ev = p.w.captureCores.events();
+      check(what + ': the HUD says where the address came from', said.test(hudText(p)), hudText(p).slice(0, 600));
+      check(what + ': logged as report_address ' + from, seq(ev).indexOf('armed:direct report_address:' + from + ' report_opened:direct') === 0 && badEvents(ev).length === 0, seq(ev));
+      return ev;
+    }
+    localStorage.removeItem(LOG_KEY);
+    var p = await loadHud(await openList('fk_mode=click', DIR));
+    try {
+      var ev = await run(p, 'a page in CORES\'s own folder', 'page', DIR, /report address: taken from this page \(CORES 9\.9\.9\)/);
+      check('a page in CORES\'s own folder: no warning, a green SUCCESS', find(ev, 'verdict', 'success').length === 1);
+    } finally { p.close(); }
+    localStorage.removeItem(LOG_KEY);
+    p = await loadHud(await openList('fk_mode=click'));
+    try {
+      var s = p.d.createElement('script'); s.src = '/cores/uab/prod/cores.8.8.8/base/public_web/js/t4m_fake_lib.js'; p.d.head.appendChild(s);
+      await run(p, 'a page elsewhere that loaded a CORES script', 'script', '/cores/uab/prod/cores.8.8.8/base/public_web/', /report address: taken from a CORES script this page has loaded \(CORES 8\.8\.8\)/);
+    } finally { p.close(); }
+    localStorage.removeItem(LOG_KEY);
+    p = await loadHud(await openList('fk_mode=click'));
+    try {
+      ev = await run(p, 'a page that does not tell', 'fallback', '/cores/uab/prod/cores.4.11.0/base/public_web/', /⚠ report address: this page does not show which CORES version it runs, so the address for CORES 4\.11\.0 was used\./);
+      check('a page that does not tell: the capture ends yellow', find(ev, 'verdict', 'problems').length === 1);
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
+  // finding 6: a capture with no team or clinical data is not a green SUCCESS
+  tests.capture_without_records = async function () {
+    localStorage.removeItem(LOG_KEY);
+    var p = await loadHud(await openList('fk_mode=xhr&fk_delay=60000'));   // the records would come a minute after the report: never, here
+    try {
+      var cap = await capture(p, QUIET);
+      check('the report is captured (5 rows), with no teams and no clinical data in it', (cap.match(/id="row_template_\d+"/g) || []).length === 5 && !/CORES teams|CORES data/.test(cap));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict');
+      var h = hudText(p), ev = p.w.captureCores.events();
+      noteHud(p);
+      check('it ends yellow, saying what is missing', /⚠ CAPTURED WITH PROBLEMS: 5 patient rows captured and delivered, but without the teams and CORES's clinical data: CORES's patient records were not on the page\./.test(h) && !/SUCCESS/.test(h), h.slice(-500));
+      check('a yellow line for each', /⚠ no team data found in this CORES window/.test(h) && /⚠ no clinical data found in this CORES window/.test(h));
+      check('logged: teams none, clinical none, verdict problems', find(ev, 'teams', 'none').length === 1 && find(ev, 'clinical', 'none').length === 1 && find(ev, 'verdict', 'problems').length === 1, seq(ev));
+    } finally { p.close(); }
+    localStorage.removeItem(LOG_KEY);
+    p = await loadHud(await openList('fk_mode=xhr&fk_delay=60000'));
+    try {
+      await capture(p, withOpts({ data: false }));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict');
+      h = hudText(p);
+      check('with data: false only the teams count as missing', /CAPTURED WITH PROBLEMS: 5 patient rows captured and delivered, but without the teams: /.test(h) && !/no clinical data found/.test(h), h.slice(-400));
+    } finally { p.close(); }
+    localStorage.removeItem(LOG_KEY);
+    p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      await capture(p, withOpts({ data: false }));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict');
+      check('teams there and the clinical data switched off: still a green SUCCESS', find(p.w.captureCores.events(), 'verdict', 'success').length === 1 && /✔ SUCCESS/.test(hudText(p)));
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
+  // finding 8: a report window closed before the capture ends the capture, in red, instead of leaving the HUD spinning
+  tests.report_window_closed = async function () {
+    localStorage.removeItem(LOG_KEY);
+    var p = await loadHud(await openList(''));
+    try {
+      p.w.captureCores(QUIET);
+      var pop = await openReportCores(p);
+      (pop.__realClose || pop.close).call(pop);   // closed by hand before it has rendered
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict after the window closed', 8000);
+      var ev = p.w.captureCores.events(), h = hudText(p), hud = p.d.getElementById('cores-capture-overlay');
+      check('logged: window_closed, verdict failed', find(ev, 'window_closed').length === 1 && find(ev, 'verdict', 'failed').length === 1, seq(ev));
+      check('the HUD says so in red, and how to try again', /✖ FAILED: the report window closed before anything was captured\. To try again: on your PC run   cores capture   and paste into the Console as before\./.test(h), h.slice(-400));
+      check('the spinner has stopped: a cross in the status bar, no live line', hud.children[1].children[0].textContent === '✖' && !/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(h));
+      var clock = hud.children[1].children[2].textContent;
+      await sleep(1200);
+      check('... and the clock too', hud.children[1].children[2].textContent === clock);
+      check('nothing was captured', typeof p.w.coresCaptured !== 'string');
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
 
   // ================= selftest.html?capture=1: no tests, one capture of the fake report =================
   // For trying the PC side on a capture with no patient in it (node test/run_selftest.mjs --capture FILE, then
