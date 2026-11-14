@@ -647,18 +647,188 @@
     } finally { p.close(); localStorage.removeItem(LOG_KEY); }
   };
 
+  // ================= stage 2: captureCores({auto: true}) presses CORES's own three buttons =================
+  // what must never show in the HUD: anything of a patient (the fake's names, numbers, user, free text)
+  var PATIENT = ['ZZTEST', 'ALPHA', 'BRAVO', 'CHARLIE', '9990001', '9990002', '99900001', '99900002', 'zzuser', 'ZZDOCTOR', 'Invented', 'invented', 'Madeupcillin'];
+  function hudText(p) { var h = p.d.getElementById('cores-capture-overlay'); return h ? h.textContent : ''; }
+  function noteHud(p) {   // the HUD's console, a line each, into the test's output
+    note('the HUD says:');
+    [].forEach.call(p.d.getElementById('cores-capture-overlay').children[2].children[2].children, function (c) { note('  | ' + c.textContent.split(String.fromCharCode(10)).join(' / ')); });
+  }
+  function hudStatus(p) { return p.d.getElementById('cores-capture-overlay').children[1].children[1].textContent; }
+  function patientIn(text) { return PATIENT.filter(function (s) { return text.indexOf(s) >= 0; }); }
+  function seq(events) { return events.map(function (e) { return e.ev + (e.k ? ':' + e.k : ''); }).join(' '); }
+  var QUIET = { download: false, clipboard: false };
+  function withOpts(more) { var o = {}, k; for (k in QUIET) o[k] = QUIET[k]; for (k in more) o[k] = more[k]; return o; }
+
+  tests.auto_capture = async function () {
+    localStorage.removeItem(LOG_KEY);
+    var p = await loadHud(await openList(''));
+    try {
+      var said = p.w.captureCores(withOpts({ auto: true }));
+      check('captureCores({auto: true}) arms the capture and says it is opening the report', /opening the report/.test(said) && !!p.w.__coresArmed && /auto mode/.test(hudText(p)));
+      check('nothing is pressed inside the call itself (a Trace armed right after it still sees the first click)', records(p) === 0 && !menuItems(p).length);
+      await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture', 20000);
+      var cap = p.w.coresCaptured;
+      check('the report is captured: 5 patient rows, report 281', (cap.match(/id="row_template_\d+"/g) || []).length === 5 && /^<!-- CORES capture CORES report 281 /.test(cap));
+      check('with the teams and the clinical data the Reports click loaded', /<!-- CORES teams \{"teams":\{"ZZ Pulmonary - Consult":3,"ZZ Pulmonary IP - IP":2\}/.test(cap) && /<!-- CORES data \{/.test(cap));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict');
+      var ev = p.w.captureCores.events(), h = hudText(p);
+      noteHud(p);
+      check('it ends in a green SUCCESS', /✔ SUCCESS: 5 patient rows captured and delivered/.test(h) && find(ev, 'verdict', 'success').length === 1, h.slice(-400));
+      check('the events, in order: armed, the three buttons, the report window, the capture',
+        seq(ev) === 'armed:window auto:reports auto:menu_item auto:just_print report_opened:window auto:opened report_loaded rendered:form_submit teams:found clinical:found verdict:success', seq(ev));
+      check('each auto event says when (ms since the automation started), and keeps to the log\'s contract', find(ev, 'auto').every(function (e) { return e.ms >= 0 && e.n === undefined; }) && badEvents(ev).length === 0, JSON.stringify(find(ev, 'auto')));
+      check('each button pressed once: one fill of the records, one report window, the hidden nav bar untouched', p.w.fakeCores.fills === 1 && p.w.fakeCores.opened === 1 && p.w.fakeCores.hiddenClicks === 0);
+      check('the HUD says what it pressed, by name', /auto: pressing Reports/.test(h) && /auto: pressing the menu item "ANES ICU w\/ Meds"/.test(h) && /auto: pressing Just Print/.test(h));
+      check('... and that the records were there after the Reports click (a count)', /auto: CORES's patient records are on the page after the Reports click \(5\)/.test(h));
+      check('nothing of a patient in the HUD', patientIn(h).length === 0, patientIn(h).join(', '));
+      check('window.open still works afterwards, and the page\'s own is what the capture kept', isNative(p.w.__coresRealOpen));
+    } finally { p.close(); }
+
+    // another report by its menu text, other options in the same object; and starting with the menu already open
+    p = await loadHud(await openList(''));
+    try {
+      navReports(p).click();   // by hand, before the script is asked
+      p.w.captureCores(withOpts({ auto: 'i-pass  detailed', data: false }));
+      await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture', 20000);
+      check('auto: \'<menu text>\' opens that report (I-PASS Detailed = 8)', /^<!-- CORES capture CORES report 8 /.test(p.w.coresCaptured));
+      check('other options ride along: data: false left the clinical data out', !/CORES data/.test(p.w.coresCaptured));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length >= 1; }, 'the verdict');
+      var ks = find(p.w.captureCores.events(), 'auto').slice(-3).map(function (e) { return e.k; }).join();
+      check('with the menu already open it goes on from there: Reports is not pressed again', ks === 'menu_item,just_print,opened' && p.w.fakeCores.fills === 1, ks);
+      check('the HUD names the menu item by the text asked for', /auto: pressing the menu item "i-pass detailed"/.test(hudText(p)));
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
+
+  // every step that cannot be done: the automation stops, the HUD says which button to press, the capture stays armed
+  tests.auto_hand_over = async function () {
+    var ALL = 'press Reports in CORES, choose "ANES ICU w\\/ Meds", then press Just Print';
+    var cases = [
+      { what: 'no Reports button (its handler does not name showReportMenu)', q: 'fk_break=reports', k: 'no_reports_button', pressed: '',
+        say: 'auto stopped: could not find CORES\'s Reports button \\(the nav button that opens the report menu\\)\\. Your turn: ' + ALL + '\\.', status: 'Your turn: press Reports in CORES' },
+      { what: 'no nav bar at all (an older fake mode)', q: 'fk_mode=opener', k: 'no_reports_button', pressed: '',
+        say: 'auto stopped: could not find CORES\'s Reports button', status: 'Your turn: press Reports in CORES',
+        byHand: function (p) { openReport(p); } },
+      { what: 'CORES asks something first', q: 'fk_role=ask', k: 'prompt', pressed: 'reports',
+        say: 'auto stopped: Reports was pressed, and CORES is asking something first\\. Your turn: answer CORES\'s question, then choose "ANES ICU w\\/ Meds" on the Reports menu and press Just Print\\.', status: 'Your turn: answer CORES\'s question',
+        byHand: async function (p) {
+          [].filter.call(p.d.querySelectorAll('div.t4m_rnd_prompt div.t4m_rnd_btn'), function (b) { return b.textContent === 'Provider'; })[0].click();
+          menuItem(p).click();
+          (await until(function () { return justPrint(p); }, 'the Just Print button')).click();
+        } },
+      { what: 'the Reports menu does not show', q: 'fk_break=menu', k: 'no_menu', pressed: 'reports',
+        say: 'auto stopped: Reports was pressed, but its menu did not show in 1 s\\. Your turn: ' + ALL + '\\.', status: 'Your turn: press Reports in CORES' },
+      { what: 'the menu has no such item', q: 'fk_break=item', k: 'no_menu_item', pressed: 'reports',
+        say: 'auto stopped: the Reports menu has no item that matches "ANES ICU w\\/ Meds"\\. Your turn: choose the report on the Reports menu, then press Just Print\\.', status: 'Your turn: choose the report on the Reports menu',
+        byHand: async function (p) {
+          menuItem(p, 'I-PASS Detailed').click();
+          (await until(function () { return justPrint(p); }, 'the Just Print button')).click();
+        } },
+      { what: 'two menu items look like it', q: 'fk_break=twins', k: 'several_menu_items', pressed: 'reports',
+        say: 'auto stopped: more than one item on the Reports menu matches "ANES ICU w\\/ Meds"\\. Your turn: choose the right report on the Reports menu, then press Just Print\\.', status: 'Your turn: choose the right report' },
+      { what: 'a menu text that is not on the menu', q: '', auto: 'No Such Report', k: 'no_menu_item', pressed: 'reports',
+        say: 'auto stopped: the Reports menu has no item that matches "No Such Report"\\.', status: 'Your turn: choose the report on the Reports menu' },
+      { what: 'the print dialog has no Just Print', q: 'fk_break=dialog', k: 'no_just_print', pressed: 'reports,menu_item',
+        say: 'auto stopped: "ANES ICU w\\/ Meds" was pressed, but the Just Print button did not show in 1 s \\(CORES may be asking something first\\)\\. Your turn: press Just Print in CORES\'s print dialog\\.', status: 'Your turn: press Just Print' },
+      { what: 'Just Print opens no window', q: 'fk_break=open', k: 'no_window', pressed: 'reports,menu_item,just_print',
+        say: 'auto stopped: Just Print was pressed, but CORES opened no report window in 1 s\\. Your turn: ' + ALL + '\\.', status: 'Your turn: press Reports in CORES' },
+      { what: 'the browser blocks the report window', q: '', block: true, k: 'blocked', pressed: 'reports,menu_item,just_print',
+        say: 'auto stopped: the browser blocked the report window CORES tried to open\\. Allow pop-ups for this site \\(the icon at the right end of the address bar\\)\\. Your turn: allow pop-ups, then ' + ALL + '\\.', status: 'Your turn: allow pop-ups' }
+    ];
+    for (var i = 0; i < cases.length; i++) {
+      var c = cases[i];
+      localStorage.removeItem(LOG_KEY);
+      var p = await loadHud(await openList(c.q));
+      try {
+        if (c.block) p.w.open = function () { return null; };   // what a pop-up blocker makes of window.open
+        p.w.coresCaptured = undefined;
+        p.w.captureCores(withOpts({ auto: c.auto || true, autoWait: 1 }));
+        await until(function () { return find(p.w.captureCores.events(), 'auto_handed_over').length === 1; }, 'the hand-over (' + c.what + ')', 10000);
+        var ev = p.w.captureCores.events(), h = hudText(p);
+        if (c.k === 'prompt') noteHud(p);
+        check(c.what + ': handed over as ' + c.k, find(ev, 'auto_handed_over')[0].k === c.k && badEvents(ev).length === 0, seq(ev));
+        check(c.what + ': the HUD says what happened and which button to press', new RegExp(c.say + '[^\\n]*The capture is still armed: the report is captured when it opens\\.').test(h), h.slice(-500));
+        check(c.what + ': the status bar says whose turn it is', hudStatus(p).indexOf(c.status) === 0, hudStatus(p));
+        check(c.what + ': it pressed only what it could', find(ev, 'auto').map(function (e) { return e.k; }).join() === c.pressed, seq(ev));
+        check(c.what + ': the capture is still armed, with no verdict', !!p.w.__coresArmed && find(ev, 'verdict').length === 0 && !/SUCCESS|FAILED|CAPTURED WITH/.test(h));
+        if (c.block) check(c.what + ': logged as blocked', find(ev, 'blocked').length === 1);
+        await sleep(400);
+        check(c.what + ': nothing more is pressed after the hand-over', find(p.w.captureCores.events(), 'auto').length === find(ev, 'auto').length && find(p.w.captureCores.events(), 'auto_handed_over').length === 1);
+        check(c.what + ': nothing of a patient in the HUD', patientIn(h).length === 0, patientIn(h).join(', '));
+        if (c.byHand) {
+          await c.byHand(p);
+          await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture after pressing by hand (' + c.what + ')', 20000);
+          await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict');
+          check(c.what + ': pressing by hand still captures (5 rows), ending yellow because the automation had stopped',
+            (p.w.coresCaptured.match(/id="row_template_\d+"/g) || []).length === 5 && find(p.w.captureCores.events(), 'verdict', 'problems').length === 1 && /CAPTURED WITH PROBLEMS: 5 patient rows captured and delivered, after the problems in yellow above/.test(hudText(p)), hudText(p).slice(-300));
+        }
+      } finally { p.close(); }
+    }
+    // without the automation, a blocked report window is said too, and the capture stays armed
+    localStorage.removeItem(LOG_KEY);
+    p = await loadHud(await openList(''));
+    try {
+      p.w.open = function () { return null; };
+      p.w.captureCores(withOpts({}));
+      navReports(p).click(); menuItem(p).click();
+      (await until(function () { return justPrint(p); }, 'the Just Print button')).click();
+      await until(function () { return find(p.w.captureCores.events(), 'blocked').length === 1; }, 'the blocked window');
+      check('armed by hand, window blocked: said in yellow, still armed', /the browser blocked the report window CORES tried to open\. Allow pop-ups for this site[^\n]*The capture is still armed\./.test(hudText(p)) && !!p.w.__coresArmed);
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
+
+  // captureCores({auto: true}); traceCores();  is what `cores capture --auto --trace` pastes: the Trace has to see the
+  // script's own clicks, the records being filled at the first one, and the report window
+  async function autoWithTrace(traceFirst) {
+    var p = await loadHud(await openList('')), tag = traceFirst ? 'Trace armed first' : 'auto capture, then Trace (as pasted)';
+    try {
+      if (traceFirst) p.w.traceCores();
+      p.w.captureCores(withOpts({ auto: true }));
+      if (!traceFirst) p.w.traceCores();
+      await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture', 20000);
+      check(tag + ': the capture took the report (5 patient rows) with its teams', (p.w.coresCaptured.match(/id="row_template_\d+"/g) || []).length === 5 && /<!-- CORES teams \{"teams":\{"ZZ Pulmonary - Consult":3/.test(p.w.coresCaptured));
+      await until(function () { return p.w.traceCores('status') === 'not armed'; }, 'the Trace to stop by itself', 8000);
+      var t = p.w.coresTrace.text;
+      if (!traceFirst) note(t.split('\n').join('\n    '));
+      has(t, /^\s+0\.00  armed\. Records then: none$/m, tag + ': the records were not there yet when the Trace was armed');
+      has(t, /click    \[L\] [^\n]*span\.nav_button \(in the patient list: text not read\) \(pressed by the capture script\)\n\s+handlers: jQuery click \(anonymous\) → [^\n]*self\.showReportMenu/, tag + ': the Reports click, marked as the script\'s');
+      has(t, /RECORDS  \[L\] assigned: 0 records\. BY THIS PAGE[\s\S]*RECORDS  \[L\] changed in place \(seen by polling\): 5 records, 38 fields each\. BY THIS PAGE/, tag + ': the records filled at that click, as by hand');
+      has(t, /div\.t4m_rnd_nav_menu_item "ANES ICU w\/ Meds" \(pressed by the capture script\)/, tag + ': the menu item click, marked');
+      has(t, /div\.t4m_rnd_report_dialog_just_print_btn[^\n]* "Just Print" \(pressed by the capture script\)/, tag + ': the Just Print click, marked');
+      check(tag + ': exactly one window.open in the timeline', (t.match(/^\s*[\d.]+  open  /gm) || []).length === 1, t);
+      has(t, new RegExp('^✔ WHO WROTE THE RECORDS: this page \\(the patient list\\)\\. Its own code wrote 5 records: ' + IN_TWO, 'm'), tag + ': verdict: this page');
+      has(t, /^→ skip\?  The records do not need the report window, but they do need a click: they were written \d+ ms after a click on [^\n]*span\.nav_button \(in the patient list: text not read\) \(pressed by the capture script\) \[handlers: /m, tag + ': skip? names the script\'s click');
+      has(t, /stopped by itself, after the capture ended\. Records now: 5/, tag + ': the Trace stopped by itself after the capture');
+      check(tag + ': verdict list_page, 5 records', p.w.coresTrace.verdict.who === 'list_page' && p.w.coresTrace.verdict.records === 5);
+      check(tag + ': nothing that could tell a patient in the Trace', leaks(t).length === 0, leaks(t).join(', '));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length >= 1; }, 'the verdict');
+      check(tag + ': the capture ended in SUCCESS', /✔ SUCCESS: 5 patient rows captured and delivered/.test(hudText(p)));
+      check(tag + ': XHR, fetch and form submit are the browser\'s own again', isNative(p.w.XMLHttpRequest.prototype.open) && isNative(p.w.fetch) && isNative(p.w.HTMLFormElement.prototype.submit) && isNative(p.w.__coresRealOpen));
+    } finally { p.close(); }
+  }
+  tests.auto_then_trace = function () { return autoWithTrace(false); };
+  tests.trace_then_auto = function () { return autoWithTrace(true); };
+
   // ================= selftest.html?capture=1: no tests, one capture of the fake report =================
   // For trying the PC side on a capture with no patient in it (node test/run_selftest.mjs --capture FILE, then
   // cores generate FILE): the second of two captures in a row, so its CORES log comment also carries the first
-  // one's verdict.
+  // one's verdict. Both are made with captureCores({auto: true}), so the log carries the auto events too.
   if (new URLSearchParams(location.search).get('capture')) {
     (async function () {
       try {
-        var p = await loadHud(await openList('fk_mode=opener'));
-        await capture(p, { download: false, clipboard: false });
+        // on the fake page's default mode, with the script pressing the buttons (what `cores capture --auto` pastes)
+        var p = await loadHud(await openList(''));
+        var autoCapture = async function () {
+          p.w.coresCaptured = undefined;
+          p.w.captureCores(withOpts({ auto: true }));
+          await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture', 20000);
+          return p.w.coresCaptured;
+        };
+        await autoCapture();
         await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the first verdict', 15000);
         await sleep(800);   // the first report window has closed
-        var text = await capture(p, { download: false, clipboard: false });
+        var text = await autoCapture();
         await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 2; }, 'the second verdict', 15000);
         p.close();
         document.getElementById('result').textContent = 'fake capture made (' + text.length + ' chars)';

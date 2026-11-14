@@ -39,7 +39,8 @@
       &fk_break=reports   the Reports button's handler does not name showReportMenu (the button cannot be found)
       &fk_break=menu      the Reports click fills the records but no menu shows
       &fk_break=item      the menu has no "ANES ICU w/ Meds" item
-      &fk_break=twins     the menu has a second item that looks like it ("ANES ICU w/ Meds (old)")
+      &fk_break=twins     the menu has two items that look like it and none that is it exactly
+                          ("Anesthesia ICU w/ Meds", "ANES ICU - Meds (old)")
       &fk_break=dialog    the print dialog comes up without a Just Print button
       &fk_break=open      Just Print opens no window
       &fk_role=ask        the Reports click asks a question first (a prompt with buttons), as its role check might
@@ -290,7 +291,7 @@ window.jQuery = (function () {
     var $ = window.jQuery, app = document.getElementById('cores_app');
     var REPORTS = [['ANES ICU w/ Meds', 281], ['I-PASS Detailed', 8], ['Medicine Report +VS/Meds', 7]];
     if (BREAK === 'item') REPORTS.shift();
-    if (BREAK === 'twins') REPORTS.splice(1, 0, ['ANES ICU w/ Meds (old)', 281]);
+    if (BREAK === 'twins') REPORTS.splice(0, 1, ['Anesthesia ICU w/ Meds', 281], ['ANES ICU - Meds (old)', 281]);
     var FEATURES = 'left=100,top=100,width=1250,height=850,menubar=1,toolbar=1,resizeable=1,status=1,scrollbars=1';
     function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text !== undefined) d.textContent = text; return d; }
     function hover(node, cls) {

@@ -4,10 +4,18 @@
 //     captureCores()          ARMED mode (default): now open the report from CORES as you normally do (its own report /
 //                             print button). The window CORES opens is captured as soon as the report has rendered,
 //                             with everything CORES passes it, so it works exactly when CORES's own button works.
+//     captureCores({auto: true})   AUTO: armed as above, and the script then presses CORES's own three buttons for you, as
+//                             a hand would: Reports, the menu item "ANES ICU w/ Meds" (report 281), Just Print. One
+//                             paste captures the report. captureCores({auto: 'I-PASS Detailed'}) chooses another report
+//                             by the text of its menu item. If a step cannot be done (a button is not there, CORES asks
+//                             something first), the script stops, the status box says which button to press, and the
+//                             capture stays armed: press it yourself and the capture goes on.
 //     captureCores(281)       DIRECT mode: the script opens the report itself in a popup (281 = Anesthesia ICU w/ Meds,
 //                             8 = I-PASS Detailed, 7 = Medicine Report +VS/Meds). Quicker, but CORES sometimes answers
 //                             "Can't Load Patient List" to a window it did not open itself.
-//     options, either mode:   captureCores({download: false})  clipboard only, no download / save dialog
+//     options, any mode:      captureCores({download: false})  clipboard only, no download / save dialog
+//                             captureCores({auto: true, download: false})   they go in the same braces
+//                             captureCores({auto: true, autoWait: 10})      seconds each automated step may wait (default 6)
 //                             captureCores({folder: true})     also write the file into a folder you pick once
 //                             captureCores({timeout: 180})     seconds to wait for the report (default 120)
 //                             captureCores({retries: 4})       Reload presses when CORES says it cannot load the list (default 2)
@@ -15,7 +23,9 @@
 //                             captureCores({log: false})       leave the HUD's event log (<!-- CORES log -->) out of the capture
 //                             captureCores(281, {download: false})   direct mode with options
 //
-// (`cores capture` on your PC puts this file on the clipboard with the captureCores(...) line already added.)
+// (`cores capture` on your PC puts this file on the clipboard with the captureCores(...) line already added;
+// `cores capture --auto` adds captureCores({auto: true}).)
+// The automation only clicks CORES's own buttons. It never calls a CORES function and never sends a request itself.
 //
 // How the report HTML is grabbed (same in both modes):
 //   - for PDF-type reports the hidden form the app submits to generate_pdf_2.php is intercepted and its "html" field
@@ -435,7 +445,7 @@
   // capture. captureCores({log: false}) leaves the comment out.
   var LOG_EV = {                               // ev: [the k values it may carry]
     armed: ['window', 'direct'],               // captureCores(): waiting for CORES's own report window / opening the report itself
-    blocked: [],                               // direct mode: the browser blocked the popup
+    blocked: [],                               // the browser blocked the report window (direct mode: the script's own; armed: the one CORES tried to open)
     report_opened: ['window', 'direct'],       // a report window is in hand (opened by CORES / by the script)
     other_window: [],                          // armed: CORES opened a window that is not a report
     report_loaded: [],                         // the report page loaded in it (ms: since the window was in hand)
@@ -453,6 +463,8 @@
     failed: ['dialog', 'timeout'],             // nothing captured, and why
     verdict: ['success', 'problems', 'failed'],    // the capture's verdict line (n: patient rows, ms: on the HUD's clock)
     tool: ['find', 'describe', 'columns', 'map'],  // a HUD tool's result was shown
+    auto: ['reports', 'menu_item', 'just_print', 'opened'],   // captureCores({auto: true}): the script pressed CORES's Reports button / the report's menu item / Just Print; then CORES opened the report window (ms: since the automation started)
+    auto_handed_over: ['no_reports_button', 'prompt', 'no_menu', 'no_menu_item', 'several_menu_items', 'no_just_print', 'no_window', 'blocked'],   // the automation stopped at a step it could not do and said which button to press by hand; the capture stays armed (ms: since it started)
     trace_started: [],
     trace_done: ['report_window', 'list_page', 'unknown', 'not_seen', 'already_there']   // who wrote the records (n: records, ms: how long it was armed)
   };
@@ -977,6 +989,13 @@
     window.open = function (url, name, features) {
       var w = realOpen.apply(window, arguments);
       var u = String(url || '');
+      if (window.__coresArmed && !w && /univ_wa_rnd_build_report|report_id/i.test(u)) {
+        // the browser did not let CORES open its report window: still armed, and said (by the automation when it is
+        // the one that pressed the buttons)
+        hudEvent('blocked');
+        if (!autoSaw('blocked')) log('the browser blocked the report window CORES tried to open. Allow pop-ups for this site (the icon at the right end of the ' +
+          'address bar), then open the report again. The capture is still armed.', 'warn');
+      }
       if (window.__coresArmed && w) {
         if (u && u !== 'about:blank' && !/univ_wa_rnd_build_report|report_id/i.test(u)) {
           log('a window opened that is not the report (' + u.slice(0, 100) + '); still armed');
@@ -986,20 +1005,182 @@
         var o = window.__coresArmed;
         window.__coresArmed = null;
         hudEvent('report_opened', 'window');
+        autoSaw('opened');
         ovStatus('Report window open, waiting\u2026', 'busy');
         log('CORES opened a report window' + (u ? ' (' + u.slice(0, 120) + ')' : '') + '; capturing it when it has rendered…');
         watchReport(w, o, reportIdOf(u) || null);
       }
       return w;
     };
-    ovStart('armed mode', 'Waiting for you to open the report in CORES',
-      'Open the report from CORES as you normally do (its own report / print button). It is captured as soon as it has ' +
-      'rendered, and the report window closes by itself.\n\nIf nothing more happens here after you open it, CORES opened ' +
-      'it another way: run   captureCores(281)   in the Console instead (the script then opens the report itself).');
-    ovStat('rows', '');
-    log('armed: the next report window CORES opens will be captured');
+    if (opts.auto) {
+      ovStart('auto mode', 'Opening the report for you', autoHelp(opts));
+      ovStat('rows', '');
+      log('armed: the script now presses CORES\'s own buttons to open the report: Reports, "' + autoName(opts) + '", Just Print. Leave the mouse alone for a few seconds.');
+    } else {
+      ovStart('armed mode', 'Waiting for you to open the report in CORES', ARMED_HELP);
+      ovStat('rows', '');
+      log('armed: the next report window CORES opens will be captured');
+    }
     hudEvent('armed', 'window');
     return 'armed…';
+  }
+
+  var ARMED_HELP = 'Open the report from CORES as you normally do (its own report / print button). It is captured as soon as it has ' +
+    'rendered, and the report window closes by itself.\n\nIf nothing more happens here after you open it, CORES opened ' +
+    'it another way: run   captureCores(281)   in the Console instead (the script then opens the report itself).';
+
+  // ---- AUTO: captureCores({auto: true}) arms the capture as above, then opens the report the way a hand does, by
+  // pressing CORES's own three buttons (the Trace run in CORES showed them, 2026-11-14; see CORES_PAGE_NOTES.md):
+  //   1. the Reports button on the nav bar: the span.nav_button whose click handler names showReportMenu. The handlers
+  //      are READ from where jQuery keeps them, as the Trace does; the button's text is not used. CORES fills its
+  //      patient records at this click;
+  //   2. the report's item on the menu that opens (div.t4m_rnd_nav_menu_item): auto: true = "ANES ICU w/ Meds" (report
+  //      281), matched loosely on ANES / ICU / Meds; auto: 'some text' = the item with that text;
+  //   3. the Just Print button of CORES's print dialog (div.t4m_rnd_report_dialog_just_print_btn).
+  // CORES then opens the report window itself, half a second later, and the armed capture takes it from there.
+  // Element clicks only: no CORES function is ever called and no address is ever requested by the script. Each step
+  // waits a few seconds for what it needs (autoWait, 6 by default). A step that cannot be done (a button that is not
+  // there, a question CORES asks first, a blocked window) stops the automation: the HUD says which button to press
+  // by hand, and the capture stays armed, so pressing it by hand still captures. Nothing from the page is shown: the
+  // buttons are named by what they are, the menu item by the name asked for.
+  var AUTO_REPORT = 'ANES ICU w/ Meds';
+  var AUTO_DIALOG = '.t4m_rnd_dialog, .t4m_rnd_dialog_content, [class*="prompt"], [role="dialog"], [role="alertdialog"], .x-window, .x-msg-box, .ui-dialog';
+  var autoRun = null;        // the automation under way
+  var autoClicking = null;   // the element the script is pressing right now (so a Trace can say the script pressed it)
+  function autoName(opts) { return opts.auto === true ? AUTO_REPORT : String(opts.auto).replace(/["\s]+/g, ' ').trim().slice(0, 60); }
+  function autoHelp(opts) {
+    return 'The script presses CORES\'s own buttons for you: Reports, then "' + autoName(opts) + '" on its menu, then Just Print. Leave the mouse alone ' +
+      'for a few seconds. The report is captured as soon as it has rendered, and its window closes by itself.\n\nIf a step cannot be done, the script ' +
+      'stops and says here which button to press. The capture stays armed: press it yourself and the capture goes on.';
+  }
+  // the report window opened, or the browser blocked it: told to the automation, when one is under way (true then)
+  function autoSaw(what) {
+    var A = autoRun; if (!A || !A.on) return false;
+    if (what === 'opened') { A.on = false; clearInterval(A.timer); hudEvent('auto', 'opened', null, Date.now() - A.t0); }
+    if (what === 'blocked') A.blocked = true;
+    return true;
+  }
+  function auAll(sel) { try { return [].slice.call(document.querySelectorAll(sel)).filter(function (el) { return !trMine(el); }); } catch (e) { return []; } }
+  function auShown(el) { try { return !!(el && el.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)); } catch (e) { return false; } }
+  function auNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+  // the code of the click handlers on an element: its onclick, and the ones jQuery keeps for it (its own, or
+  // delegated from an ancestor). Read as text; nothing is called
+  function auHandlerCode(el) {
+    var out = [];
+    function add(fn) { try { var s = Function.prototype.toString.call(fn); if (!/\[native code\]/.test(s)) out.push(s); } catch (e) {} }
+    for (var x = el, depth = 0; x && depth < 8; x = x.parentNode, depth++) {
+      try { if (x === el) { var a = x.getAttribute('onclick'); if (a) out.push(String(a)); else if (typeof x.onclick === 'function') add(x.onclick); } } catch (e) {}
+      try {
+        var evs = trJqEvents(window, x);
+        if (evs) ['click', 'mousedown', 'mouseup'].forEach(function (type) {
+          list(evs[type]).forEach(function (h) {
+            if (!h || typeof h.handler !== 'function') return;
+            if (x === el && !h.selector) add(h.handler);
+            else if (h.selector) { var hit = null; try { hit = el.closest(h.selector); } catch (e) {} if (hit && (x.nodeType !== 1 || x.contains(hit))) add(h.handler); }
+          });
+        });
+      } catch (e) {}
+    }
+    return out;
+  }
+  function auReportsButtons() {   // the nav buttons on show whose handler opens the report menu
+    var c = auAll('div.t4m_rnd_nav_bar_container span.nav_button');
+    if (!c.length) c = auAll('.nav_button');
+    return c.filter(auShown).filter(function (el) { return auHandlerCode(el).some(function (s) { return /\bshowReportMenu\b/.test(s); }); });
+  }
+  function auMenuItems() {
+    var c = auAll('div.t4m_rnd_nav_menu div.t4m_rnd_nav_menu_item');
+    if (!c.length) c = auAll('.t4m_rnd_nav_menu_item');
+    return c.filter(auShown);
+  }
+  // which menu item is the report asked for. Its text is read to choose it, never shown
+  function auPick(items, want) {
+    var exact = [], loose = [], w = want === true ? auNorm(AUTO_REPORT) : auNorm(want);
+    items.forEach(function (el) {
+      var t = auNorm(el.textContent);
+      if (t === w) exact.push(el);
+      else if (want === true ? /\banes/.test(t) && /\bicu\b/.test(t) && /\bmed/.test(t) && !/\bw o\b|\bwithout\b|\bno med/.test(t) : w && t.indexOf(w) >= 0) loose.push(el);
+    });
+    var hits = exact.length ? exact : loose;
+    return { el: hits.length === 1 ? hits[0] : null, n: hits.length };
+  }
+  function auJustPrint() {
+    var c = auAll('.t4m_rnd_report_dialog_just_print_btn').filter(auShown);
+    if (!c.length) c = auAll('.t4m_rnd_dialog_content .t4m_rnd_btn').filter(function (el) { return auShown(el) && auNorm(el.textContent) === 'just print'; });
+    return c.length ? c[0] : null;
+  }
+  function auDialogs() { return auAll(AUTO_DIALOG).filter(auShown); }
+  function autoOpen(opts) {
+    var want = opts.auto === true ? true : String(opts.auto), name = autoName(opts);
+    var secs = Math.min(60, Math.max(1, +opts.autoWait || 6)), WAIT = secs * 1000;
+    var A = autoRun = { on: true, timer: null, t0: Date.now(), blocked: false };
+    window.__coresAuto = A;   // a later paste of the script, or a later captureCores(), takes over
+    var step = 0, since = 0, before = [], promptAt = 0;
+    function alive() { return A.on && autoRun === A && window.__coresAuto === A && window.__coresArmed === opts; }
+    function press(el, k, what) {
+      hudEvent('auto', k, null, Date.now() - A.t0);
+      log('auto: pressing ' + what);
+      since = Date.now();
+      autoClicking = el;
+      try { el.click(); } finally { autoClicking = null; }
+    }
+    function handOver(k, why, todo) {
+      A.on = false; clearInterval(A.timer);
+      hudEvent('auto_handed_over', k, null, Date.now() - A.t0);
+      log('auto stopped: ' + why + ' Your turn: ' + todo + '. The capture is still armed: the report is captured when it opens.', 'warn');
+      ovStatus('Your turn: ' + todo, 'warn', false, ARMED_HELP);
+    }
+    var TODO_ALL = 'press Reports in CORES, choose "' + name + '", then press Just Print';
+    function pressItem(el) {
+      step = 2; press(el, 'menu_item', 'the menu item "' + name + '"');
+      if (alive()) ovStatus('Waiting for the print dialog', 'busy', false, autoHelp(opts));
+    }
+    function pressJust(el) {
+      step = 3; press(el, 'just_print', 'Just Print');
+      if (alive()) ovStatus('Waiting for CORES to open the report', 'busy', false, autoHelp(opts));
+    }
+    function begin() {
+      if (!alive()) return;
+      // from where the page is: the print dialog or the Reports menu may be up already
+      var jp = auJustPrint(); if (jp) return pressJust(jp);
+      var pick = auPick(auMenuItems(), want); if (pick.el) return pressItem(pick.el);
+      var btns = auReportsButtons();
+      if (!btns.length) return handOver('no_reports_button', 'could not find CORES\'s Reports button (the nav button that opens the report menu).', TODO_ALL);
+      before = auDialogs();
+      step = 1; press(btns[0], 'reports', 'Reports');
+      if (alive()) ovStatus('Waiting for the Reports menu', 'busy', false, autoHelp(opts));
+    }
+    function tick() {
+      if (!alive()) { A.on = false; clearInterval(A.timer); return; }
+      if (!step) return;
+      var waited = Date.now() - since;
+      if (step === 1) {
+        var items = auMenuItems(), pick = auPick(items, want);
+        if (pick.el) {
+          var rows = null; try { rows = patientRows(); } catch (e) {}
+          log(rows ? 'auto: CORES\'s patient records are on the page after the Reports click (' + rows.length + ')' : 'auto: no patient records on the page after the Reports click');
+          return pressItem(pick.el);
+        }
+        if (pick.n > 1) return handOver('several_menu_items', 'more than one item on the Reports menu matches "' + name + '".', 'choose the right report on the Reports menu, then press Just Print');
+        if (items.length && waited > Math.min(1500, WAIT / 2)) return handOver('no_menu_item', 'the Reports menu has no item that matches "' + name + '".', 'choose the report on the Reports menu, then press Just Print');
+        // something else came up instead of the menu: CORES is asking first (its Reports button checks the user's role)
+        var asked = !items.length && auDialogs().some(function (d) { return before.indexOf(d) < 0; });
+        if (!asked) promptAt = 0;
+        else if (!promptAt) promptAt = Date.now();
+        else if (Date.now() - promptAt > Math.min(1500, WAIT / 2)) return handOver('prompt', 'Reports was pressed, and CORES is asking something first.', 'answer CORES\'s question, then choose "' + name + '" on the Reports menu and press Just Print');
+        if (waited > WAIT) return handOver('no_menu', 'Reports was pressed, but its menu did not show in ' + secs + ' s.', TODO_ALL);
+      } else if (step === 2) {
+        var jp = auJustPrint(); if (jp) return pressJust(jp);
+        if (waited > WAIT) return handOver('no_just_print', '"' + name + '" was pressed, but the Just Print button did not show in ' + secs + ' s (CORES may be asking something first).', 'press Just Print in CORES\'s print dialog');
+      } else if (step === 3) {
+        if (A.blocked) return handOver('blocked', 'the browser blocked the report window CORES tried to open. Allow pop-ups for this site (the icon at the right end of the address bar).', 'allow pop-ups, then ' + TODO_ALL);
+        if (waited > WAIT) return handOver('no_window', 'Just Print was pressed, but CORES opened no report window in ' + secs + ' s.', TODO_ALL);
+      }
+    }
+    // a moment later, not inside captureCores(): a Trace armed by the same paste (captureCores({auto: true});
+    // traceCores();) is then in place before the first button is pressed, and sees the Reports click
+    setTimeout(function () { try { begin(); } catch (e) { console.error('CORES capture: auto failed', e); if (alive()) handOver('no_reports_button', 'the automation hit an error (' + (e && e.name || 'error') + ').', TODO_ALL); } }, 250);
+    A.timer = setInterval(function () { try { tick(); } catch (e) { console.error('CORES capture: auto failed', e); if (alive()) handOver(step === 3 ? 'no_window' : step === 2 ? 'no_just_print' : 'no_menu', 'the automation hit an error (' + (e && e.name || 'error') + ').', TODO_ALL); } }, 100);
   }
 
   // ---- Find in CORES (probeCores): where CORES keeps a word (a team name, a label) or an id, on the page, in its
@@ -2121,7 +2302,7 @@
       if (!T.on) return;
       try {
         var el = e.target; if (!el || el.nodeType !== 1 || trMine(el)) return;
-        var act = trActionable(el), rec = { type: 'click', t: trNow(T), W: W, path: trPath(el), act: act && act !== el ? trDesc(act) : '', raw: null, long: 0, inList: trInPatientList(el), handlers: trHandlers(W, act || el) };
+        var act = trActionable(el), rec = { type: 'click', t: trNow(T), W: W, path: trPath(el), act: act && act !== el ? trDesc(act) : '', raw: null, long: 0, inList: trInPatientList(el), handlers: trHandlers(W, act || el), byScript: !!autoClicking && (autoClicking === el || autoClicking === act) };
         if (act && !rec.inList) {   // the text is kept as it is until the result is written, where it is redacted or dropped
           var tx = String((act.tagName === 'INPUT' ? act.value : act.textContent) || '').replace(/\s+/g, ' ').trim();
           if (tx && tx.length <= 60) rec.raw = tx; else rec.long = tx.length;
@@ -2285,6 +2466,7 @@
       // dropped when it holds an identifier the page knows, or has the shape CORES writes a name in (LAST, FIRST)
       s += r.hit || /[A-Za-z][A-Za-z' -]*,\s*[A-Z]/.test(c.raw) ? ' "<hidden: it may name a patient>"' : ' "' + r.text + '"';
     } else if (c.inList) s += ' (in the patient list: text not read)';
+    if (c.byScript) s += ' (pressed by the capture script)';
     return s;
   }
   function trTimeline(T, scrub) {
@@ -2508,7 +2690,13 @@
   window.captureCores = function (reportId, opts) {
     if (reportId && typeof reportId === 'object') { opts = reportId; reportId = null; }
     opts = opts || {};
-    if (!reportId) return arm(opts);
+    if (!reportId) {
+      var armed = arm(opts);
+      if (!opts.auto) return armed;
+      autoOpen(opts);
+      return 'opening the report…';
+    }
+    if (opts.auto) log('auto is for armed mode; with a report number the script opens the report itself');
     var inPowerChart = false;
     try { inPowerChart = 'DiscernObjectFactory' in window.external; } catch (e) {}
     if (!inPowerChart && !localStorage.getItem('site_code_response')) {
