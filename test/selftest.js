@@ -263,6 +263,22 @@
       restored(p, 'declared');
     } finally { p.close(); }
   };
+  tests.trace_poll_option = async function () {
+    var p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      p.w.traceCores({ poll: true });
+      check('traceCores({poll: true}) leaves the records property alone', !('global_constant_row_info' in p.w));
+      openReport(p);
+      await until(function () { return records(p) === 5; }, 'the records');
+      check('... and the list itself', !Object.prototype.hasOwnProperty.call(p.w.global_constant_row_info, 'push'));
+      await sleep(200);
+      var t = p.w.traceCores('stop').text;
+      has(t, /armed\. Records then: none \(watched by polling only, as asked: no call stacks\)/, 'the result says it only polled');
+      has(t, /RECORDS  \[L\] changed \(seen by polling\): 5 records, 38 fields each\. BY THE REPORT WINDOW \[R1\] \(the code that wrote them could not be read, so this rests on where the list was made; the list itself was made in the report window\)\. Report windows open: 1\./, 'the write is seen, and whose list it is');
+      has(t, /^✔ WHO WROTE THE RECORDS: the report window, probably\./m, 'verdict: the report window, probably');
+      restored(p, 'poll option');
+    } finally { p.close(); }
+  };
   tests.trace_opener_variants = async function () {
     var p = await loadHud(await openList('fk_mode=opener&fk_fill=strict'));
     try {

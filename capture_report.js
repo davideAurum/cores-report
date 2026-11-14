@@ -1618,7 +1618,9 @@
   // page while that happens, to show what fills them and what CORES's report button calls. Arm it BEFORE opening the
   // report (in a fresh CORES session, where the records are not there yet), open the report as usual, then stop it.
   // HUD: the Trace button (press again to stop); Console: traceCores() to arm, traceCores() or traceCores('stop') to
-  // stop. It also stops by itself a moment after a capture ends, and after 15 minutes.
+  // stop. It also stops by itself a moment after a capture ends, and after 15 minutes. traceCores({poll: true}) arms it
+  // without touching the records property or the list at all (polled only: no call stacks), should CORES ever behave
+  // differently with the getter / setter in place.
   //
   // Armed, it ONLY OBSERVES, and puts back everything it wrapped when it stops. It never calls CORES's functions or
   // dwh.transformativemed.com, and lets every call it watches through unchanged. With times since arming, it records:
@@ -1740,7 +1742,10 @@
       return { kind: 'other' };
     } catch (e) { return { kind: 'unreadable' }; }
   }
-  function trWinName(n) { n = String(n == null ? '' : n); return n ? n.replace(/[^\w-]/g, '?').replace(/\d{3,}/g, '#').slice(0, 40) : ''; }
+  function trWinName(n) {   // a window's name, when it looks like a programmer's identifier (long numbers masked)
+    n = String(n == null ? '' : n).replace(/\d{3,}/g, '#');
+    return !n ? '' : /^[A-Za-z_$][\w$#-]{0,39}$/.test(n) && /[a-z]/.test(n) && !/^[A-Z][a-z]+$/.test(n) ? n : '<name>';
+  }
   function trFeatures(f) { f = String(f == null ? '' : f); return f.replace(/[^\w=,.\s-]/g, '').replace(/\d{5,}/g, '#').replace(/\s+/g, '').slice(0, 120); }
 
   // ---- whose code: the windows the Trace knows (this page, its parent and top; every window opened since arming)
@@ -1824,7 +1829,9 @@
     } catch (e) { o.kind = 'unreadable'; }
     return o;
   }
-  function trReportsOpen(T) { var n = 0; T.popups.forEach(function (p) { try { if (!p.closedAt && !p.w.closed) n++; } catch (e) {} }); return n; }
+  function trReportsOpen(T, t) {   // the report windows (opened since arming) that were open at time t
+    var n = 0; T.popups.forEach(function (p) { if (p.report && p.t <= t && (!p.closedAt || p.closedAt > t)) n++; }); return n;
+  }
   // who wrote: from the functions calling (when they can be read), the call stack's addresses, and where the list
   // itself was made
   function trWho(T, v, callerFn, frames) {
@@ -1853,9 +1860,9 @@
     var last = T.lastWrite;
     if (last && last.sig === sig && how !== 'assigned' && t - last.t2 < 1500) { last.times++; last.t2 = t; last.n = sh.n; last.fields = sh.fields; return; }
     var e = { type: 'records', t: t, t2: t, times: 1, how: how, kind: sh.kind, n: sh.n, n0: sh.n, fields: sh.fields, W: W, who: who, frames: frames,
-              reportsOpen: trReportsOpen(T), during: T.inCallback || null, polled: !!polled, sig: sig };
+              during: T.inCallback || null, polled: !!polled, sig: sig };
     T.lastWrite = e; trPush(T, e);
-    if (Array.isArray(v)) trWatchList(T, W, st, v);
+    if (Array.isArray(v) && !T.passive) trWatchList(T, W, st, v);
   }
   // in-place fills: push / unshift / splice on the list itself, wrapped on that one list (hidden from loops and JSON)
   function trWatchList(T, W, st, arr) {
@@ -1886,7 +1893,7 @@
     st.had = !!d;
     try { st.val = w[TR_ROWS]; } catch (e) {}
     st.start = trShape(st.val); st.len = st.start.n; st.fields = st.start.fields;
-    if (!d || (d.configurable && 'value' in d)) {
+    if (!T.passive && (!d || (d.configurable && 'value' in d))) {
       try {
         st.setter = function coresTrSet(v) {
           st.val = v; st.assigned = true;
@@ -1896,7 +1903,7 @@
         st.mode = 'hook';
       } catch (e) { st.mode = 'poll'; st.setter = null; }
     }
-    if (Array.isArray(st.val)) trWatchList(T, W, st, st.val);
+    if (Array.isArray(st.val) && !T.passive) trWatchList(T, W, st, st.val);
     T.undo.push(function () {
       trUnwatchList(st);
       if (st.mode !== 'hook') return;
@@ -2146,10 +2153,11 @@
         var href = ''; try { href = String(p.w.location.href).split('#')[0]; } catch (e) { href = '(another site)'; }
         if (href !== p.href && href !== 'about:blank') {
           var u = href === '(another site)' ? { host: '', file: '(another site)', params: [], report: false, abs: '' } : trUrl(href, p.w);
-          if (p.href) trPush(T, { type: 'moved', t: t, pop: p, u: u });
+          trPush(T, { type: 'moved', t: t, pop: p, u: u });
           p.href = href; if (u.report) p.report = true;
         }
         trSeeRealms(T);
+        if (T.polls % 5 && !T.last) return;   // its requests: five times a second, and once more at the end
         var es = p.w.performance.getEntriesByType('resource'), origin = p.w.performance.timeOrigin;
         for (var i = 0; i < es.length; i++) {
           var en = es[i]; if (en.initiatorType !== 'xmlhttprequest' && en.initiatorType !== 'fetch') continue;
@@ -2165,6 +2173,26 @@
     });
     if (T.polls % 12 === 0) trButton();
   }
+  // what this page loaded since arming that the wrapped XHR and fetch did not carry: script tags (CORES may fetch data
+  // that way), frames, beacons; and XHR / fetch that slipped past (another frame's). From the page's own resource
+  // timings, so: no method, no body names. Pictures, styles and fonts are left out.
+  function trOtherLoads(T) {
+    var W = T.wins[0], known = {};
+    T.ev.forEach(function (e) { if (e.type === 'request' && !e.pop && e.u.abs) known[e.u.abs] = (known[e.u.abs] || 0) + 1; });
+    var es = W.w.performance.getEntriesByType('resource');
+    for (var i = 0; i < es.length; i++) {
+      var en = es[i], it = String(en.initiatorType || '');
+      if (en.startTime < T.t0 || /^(img|image|css|link|font|video|audio|track)$/.test(it)) continue;
+      var name = String(en.name).split('#')[0];
+      if (/\.(png|gif|jpe?g|svg|css|woff2?|ttf|ico)(\?|$)/i.test(name) || /capture_report\.js/.test(name)) continue;
+      if ((it === 'xmlhttprequest' || it === 'fetch') && known[name]) { known[name]--; continue; }
+      var r = { type: 'request', api: 'load (' + (/^[a-z]{1,20}$/.test(it) ? it : 'other') + ')', W: W, method: '', u: trUrl(name, W.w), t: Math.round(en.startTime - T.t0), ms: Math.round(en.duration), timed: true };
+      r.tResp = r.tEnd = r.t + r.ms;
+      if (en.responseStatus) r.status = en.responseStatus;
+      if (en.decodedBodySize) { r.size = en.decodedBodySize; r.unit = 'bytes'; }
+      trPush(T, r);
+    }
+  }
   function trButton() {   // the HUD's Trace button and the note beside the counts
     try {
       if (!ov) return;
@@ -2178,7 +2206,7 @@
   // ---- arming and stopping
   function trArm(opt) {
     var T = { on: true, t0: performance.now(), epoch: 0, ev: [], wins: [], popups: [], undo: [], notes: [], dropped: 0, polls: 0, slowest: 0, inCallback: null, lastWrite: null,
-              hud: !!opt.hud, meta: new WeakMap(), timer: null, killer: null, after: null, auto: '' };
+              hud: !!opt.hud, passive: !!opt.poll, meta: new WeakMap(), timer: null, killer: null, after: null, auto: '' };
     T.epoch = (performance.timeOrigin || Date.now() - performance.now()) + T.t0;
     T.wins.push({ w: window, label: 'this page', st: null });
     [['the parent page', function () { return window.parent; }], ['the top page', function () { return window.top; }]].forEach(function (c) {
@@ -2199,7 +2227,9 @@
   function trStop(opt) {
     var T = TR; opt = opt || {};
     if (!T) return null;
+    T.last = true;
     try { trPoll(T); } catch (e) {}   // a last look
+    try { trOtherLoads(T); } catch (e) {}
     T.tEnd = trNow(T);
     T.on = false; TR = null;
     clearInterval(T.timer); clearTimeout(T.killer); clearTimeout(T.after);
@@ -2259,7 +2289,7 @@
     evs.forEach(function (e) { if (e.type === 'request') e.no = ++no; });
     var st0 = T.wins[0].st, start = st0 ? st0.start : { kind: 'nothing', n: 0 };
     L.push(trSec(0) + '  armed. Records then: ' + (start.kind === 'list' ? start.n + ' already there' : 'none') +
-      (st0 && st0.mode === 'poll' ? ' (the page declares the variable itself, so it is watched by polling: no call stacks)' : ''));
+      (T.passive ? ' (watched by polling only, as asked: no call stacks)' : st0 && st0.mode === 'poll' ? ' (the page declares the variable itself, so it is watched by polling: no call stacks)' : ''));
     for (var i = 0; i < evs.length; i++) {
       var e = evs[i], at = trSec(e.t) + '  ';
       if (e.type === 'click') {
@@ -2290,7 +2320,7 @@
         var how = e.how === 'assigned' ? 'assigned' : e.how === 'changed' ? 'changed (seen by polling)' : e.how === 'resized' ? 'changed in place (seen by polling)' : 'filled in place with ' + e.how + '()';
         L.push(at + 'RECORDS  ' + trTag(e) + ' ' + how + (e.times > 1 ? ' ×' + e.times + ' until ' + trSec(e.t2).trim() + ' s' : '') + ': ' +
           (e.kind === 'list' ? e.n + ' record' + (e.n === 1 ? '' : 's') + (e.fields ? ', ' + e.fields + ' fields each' : '') : e.kind === 'nothing' ? 'emptied (no value)' : 'a value that is not a list (' + e.kind + ')') + '. ' + by +
-          (w.why.length ? ' (' + w.why.join('; ') + ')' : '') + '. Report windows open: ' + e.reportsOpen + '.' +
+          (w.why.length ? ' (' + w.why.join('; ') + ')' : '') + '. Report windows open: ' + trReportsOpen(T, e.t) + '.' +
           (e.during ? ' While the answer to request #' + e.during.no + ' was being handled.' : ''));
         if (e.frames.length) L.push('             call stack: ' + trStackText(e.frames));
       } else if (e.type === 'fields') {
@@ -2380,7 +2410,7 @@
       } else {
         v.who = 'unknown';
         who = '✖ WHO WROTE THE RECORDS: unclear. ' + cap(n) + ' appeared at ' + secs(fill.t) + ', but whose code wrote them could not be told' +
-          (polled ? ' (the page declares the variable itself, so the Trace could only poll it)' : '') + '.';
+          (polled ? ' (the variable was only polled, so there is no call stack)' : '') + '.';
         skip = 'Unclear. The records appeared ' + (openBefore ? secs(fill.t - openBefore.t) + ' after a report window was opened' : 'with no report window opened since arming, which points at this page itself') + '.';
       }
       if (had) who += ' NOTE: ' + start.n + ' records were already there at arming, so this is a rewrite, not the first fill; trace a fresh CORES session (F5) for that.';
@@ -2412,6 +2442,7 @@
     var notes = T.notes.slice();
     if (T.dropped) notes.push(T.dropped + ' more clicks / requests were seen but not kept (over ' + TR_MAX + ')');
     if (T.popups.length) notes.push('the report window\'s requests come from its resource timings: no method, and no body parameter names');
+    notes.push('requests are this page\'s XHR and fetch, plus what its resource timings list ("load (script)" and the like); anything sent through Cerner\'s own channel (window.external, XMLCclRequest) does not show, though a write it leads to still does, with its call stack');
     if (T.slowest > 500) notes.push('the browser slowed this page\'s timers while it was covered (up to ' + (T.slowest / 1000).toFixed(1) + ' s between looks): what is "seen by polling", a window closing, and the report window\'s last requests may be late or missing; writes, requests, window.open and clicks of this page are caught as they happen');
     notes.push('skip? and automate? are hints from this one run; they are about the patient records only (report 281 itself still supplies the full medications, I&O and most labs)');
     notes.push('shown: names of functions, files, parameters and elements, CORES vocabulary, counts and timings; no parameter values except program / report ids');
