@@ -86,7 +86,7 @@
     var rows = JSON.parse(x.responseText);
     fake_render(rows);
     if (MODE === 'opener') setTimeout(function fake_after_render() { fake_fill_opener(rows); }, 200);
-    setTimeout(fake_submit_pdf, 700);
+    setTimeout(fake_submit_pdf, 1200);   // late enough for a capture's 25 ms watch to be in place, even on a slowed timer
     if (q.get('fk_autoclose')) setTimeout(function () { window.close(); }, parseInt(q.get('fk_autoclose'), 10) || 1500);
   };
   x.send();

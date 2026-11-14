@@ -168,6 +168,11 @@
       has(t, /window   \[R1\] went to 127\.0\.0\.1 generate_pdf_2\.php/, 'the report window going on to the PDF');
       has(t, /^\s+0\.00  armed\. Records then: none$/m, 'the state at arming');
       has(t, /stopped\. Records now: 5$/m, 'the state at the end');
+      has(t, /^\u2714 WHO WROTE THE RECORDS: the report window\. Its code put 5 records on this page \(its opener\), [\d.]+ s after it was opened\. The function that wrote them belongs to the report window; the list itself was made in the report window\.$/m, 'verdict: the report window wrote them into its opener');
+      has(t, /^\u2192 skip\?  Not by leaving the report window out: the records came to this page FROM the report window, after 1 request of its own \(the \[R\] request lines\), and this page sent no request in between\./m, 'skip? hint: not without the report window');
+      has(t, /^\u2192 automate\?  Looks possible\. The report window was opened by a plain window\.open call: 127\.0\.0\.1 fake_report\.html \?prg_name=univ_wa_rnd_build_report, options\{report_id:281\}[^\n]*, name "rnd_report_window", features "width=1100,height=800,resizable=yes,scrollbars=yes"\. It came \d+ ms after a click on [^\n]*a\.x-menu-item\.t4m_rnd_report_item\[role=menuitem\] "Anesthesia ICU w\/ Meds" \[handlers: jQuery click \(delegated on div#t4m_reports_menu\.x-menu\) t4m_fake_report_item_click[^\n]*\]\. Called from: t4m_fake_open_report \(fake_cores\.html:\d+:\d+\)/m, 'automate? hint: the click and the window.open call that opened the report');
+      check('the verdict comes before the timeline', t.indexOf('WHO WROTE THE RECORDS') < t.indexOf('TIMELINE') && t.indexOf('automate?') < t.indexOf('TIMELINE'));
+      check('window.coresTrace.verdict', p.w.coresTrace.verdict.who === 'report_window' && p.w.coresTrace.verdict.records === 5);
       check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
       restored(p, 'after stopping');
       check('the records are still there after stopping', records(p) === 5 && p.w.global_constant_row_info[0].mrn === '9990001');
@@ -183,6 +188,8 @@
       check('armed and stopped with nothing written: the property is gone again, as before', !('global_constant_row_info' in p.w));
       restored(p, 'untouched');
       has(p.w.coresTrace.text, /armed\. Records then: none[\s\S]*stopped\. Records now: none/, 'the timeline says there were none');
+      has(p.w.coresTrace.text, /^\u2716 WHO WROTE THE RECORDS: not seen\. Nothing wrote window\.global_constant_row_info in the [\d.]+ s the Trace was armed, and no report window was opened: open the report while the Trace is armed\.\n\u2192 skip\?  No answer from this run\.\n\u2192 automate\?  Not seen: no window\.open call while the Trace was armed\./m, 'verdict: not seen, with what to do');
+      check('verdict: not_seen', p.w.coresTrace.verdict.who === 'not_seen' && p.w.coresTrace.verdict.records === 0);
     } finally { p.close(); }
   };
   tests.trace_xhr = async function () {
@@ -199,6 +206,10 @@
       var m = /request  \[L\] #(\d+) XHR GET 127\.0\.0\.1 fake_rows\.json \?prg_name=univ_wa_rnd_row_info/.exec(t);
       has(t, new RegExp('RECORDS  \\[L\\] assigned: 5 records, 38 fields each\\. BY THIS PAGE \\(the function that wrote them belongs to this page, and no report window code called it; the list itself was made in this page\\)\\. Report windows open: 1\\. While the answer to request #' + (m && m[1]) + ' was being handled\\.'), 'the write: by this page, while that request\'s answer was being handled');
       has(t, /call stack: t4m_fake_set_rows \(fake_cores\.html:\d+:\d+\) \[this page\] ← t4m_fake_rows_loaded/, 'the write\'s call stack');
+      has(t, new RegExp('^✔ WHO WROTE THE RECORDS: this page \\(the patient list\\)\\. Its own code wrote 5 records, while the answer to its request #' + (m && m[1]) + ' was being handled\\. Request #' + (m && m[1]) + ': XHR GET 127\\.0\\.0\\.1 fake_rows\\.json \\?prg_name=univ_wa_rnd_row_info, report_id=281, person_ids, mrn, patient_name  → 200, ', 'm'), 'verdict: this page, after its own request, named');
+      has(t, /^→ skip\?  Maybe\. This page loads the records itself \(the report window does not hand them over\), but it did so [\d.]+ s after the report was opened, with a request it sent \d+ ms after window\.open \(sent from: t4m_fake_get \(fake_cores\.html:\d+:\d+\) ← t4m_fake_load_rows_xhr/m, 'skip? hint: maybe, with the request and where it is sent from');
+      has(t, /^→ automate\?  Looks possible\./m, 'automate? hint');
+      check('verdict: list_page', p.w.coresTrace.verdict.who === 'list_page' && p.w.coresTrace.verdict.records === 5);
       check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
       restored(p, 'xhr');
     } finally { p.close(); }
@@ -216,6 +227,7 @@
       has(t, /request  \[L\] #\d+ fetch POST 127\.0\.0\.1 univ_wa_log\.php  body: JSON program=univ_wa_rnd_log, username, patients, note  → 200/, 'the fetch POST: the JSON body\'s key names');
       has(t, /RECORDS  \[L\] assigned: 0 records\. BY THIS PAGE/, 'the empty list first');
       has(t, /RECORDS  \[L\] filled in place with push\(\) ×5 until [\d.]+ s: 5 records, 38 fields each\. BY THIS PAGE/, 'then five pushes, as one line');
+      has(t, /^✔ WHO WROTE THE RECORDS: this page \(the patient list\)\. Its own code wrote 5 records, \d+ ms after the answer to its request #\d+ came back \(the nearest request before the write(; \d+ more were answered in the 5 s before)?: a hint, not proof\)\. Request #\d+: fetch GET 127\.0\.0\.1 fake_rows\.json \?program=univ_wa_rnd_row_info, report_id=281, person_ids, mrn  → 200/m, 'verdict: this page, after a fetch (the nearest request, as a hint)');
       check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
       restored(p, 'fetch');
     } finally { p.close(); }
@@ -228,7 +240,10 @@
       await sleep(150);
       var t = p.w.traceCores('stop').text;
       has(t, /RECORDS  \[L\] assigned: 5 records, 38 fields each\. BY THIS PAGE [^\n]*Report windows open: 0\.\n\s+call stack: t4m_fake_set_rows \(fake_cores\.html:\d+:\d+\) \[this page\] ← t4m_fake_timer_fill/, 'the control: written by this page on a timer, no report window');
-      check('no window.open in the timeline', !/window\.open/.test(t));
+      check('no window.open in the timeline', !/^\s*[\d.]+  open  /m.test(t));
+      has(t, /^\u2714 WHO WROTE THE RECORDS: this page \(the patient list\)\. Its own code wrote 5 records, with no request of this page answered in the 5 s before\./m, 'verdict: this page, no request');
+      has(t, /^\u2192 skip\?  Yes, by this run: the records were written with no report window opened since the Trace was armed\./m, 'skip? hint: yes (the control)');
+      has(t, /^\u2192 automate\?  Not seen: no window\.open call while the Trace was armed\./m, 'automate? hint: not seen');
       restored(p, 'timer');
     } finally { p.close(); }
   };
@@ -241,7 +256,8 @@
       var t = p.w.traceCores('stop').text;
       note(t.split('\n').join('\n    '));
       has(t, /armed\. Records then: none \(the page declares the variable itself, so it is watched by polling: no call stacks\)/, 'a declared variable is polled, and the result says so');
-      has(t, /RECORDS  \[L\] changed \(seen by polling\): 5 records, 38 fields each\. BY THIS PAGE \(the list itself was made in this page; \(the writing code could not be read, so this rests on where the list was made\)\)\. Report windows open: 0\./, 'the write is still seen, and whose list it is');
+      has(t, /RECORDS  \[L\] changed \(seen by polling\): 5 records, 38 fields each\. BY THIS PAGE \(the code that wrote them could not be read, so this rests on where the list was made; the list itself was made in this page\)\. Report windows open: 0\./, 'the write is still seen, and whose list it is');
+      has(t, /^\u2714 WHO WROTE THE RECORDS: this page \(the patient list\), probably\. Its own code wrote 5 records/m, 'verdict: this page, probably (polled)');
       var d = Object.getOwnPropertyDescriptor(p.w, 'global_constant_row_info');
       check('the page\'s own property was never touched', d.configurable === false && Array.isArray(d.value));
       restored(p, 'declared');
@@ -279,6 +295,46 @@
       await until(function () { return p.w.traceCores('status') === 'not armed'; }, 'the Trace to stop from its button');
       check('stopped: the button says Trace again', btn.textContent === 'Trace');
       check('clicks on the HUD itself are not in the timeline', !/cores-capture-overlay/.test(p.w.coresTrace.text) && !/click /.test(p.w.coresTrace.text), p.w.coresTrace.text);
+    } finally { p.close(); }
+  };
+
+  // ================= M3: the result in the HUD =================
+  tests.trace_result_in_hud = async function () {
+    var p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      var copied = null;
+      p.w.navigator.clipboard.writeText = function (x) { copied = x; return Promise.resolve(); };
+      p.w.traceCores({ hud: true });
+      openReport(p);
+      await until(function () { return records(p) === 5; }, 'the records');
+      p.w.traceCores('stop', { hud: true });
+      var hud = p.d.getElementById('cores-capture-overlay'), box = [].filter.call(hud.querySelectorAll('div'), function (d) { return d.firstChild && d.firstChild.textContent === 'Trace: what loads CORES\'s patient records'; })[0];
+      check('the result is shown in the HUD, title first', !!box);
+      var shown = [].map.call(box.children, function (c) { return c.tagName === 'BUTTON' ? '' : c.textContent; }).join('\n');
+      check('the HUD shows the verdict and the timeline', /WHO WROTE THE RECORDS: the report window/.test(shown) && /skip\?/.test(shown) && /automate\?/.test(shown) && /TIMELINE/.test(shown) && /RECORDS  \[L\] assigned: 5 records/.test(shown));
+      check('nothing that could tell a patient anywhere in the HUD', leaks(hud.textContent).length === 0, leaks(hud.textContent).join(', '));
+      var cb = box.querySelector('button');
+      check('it has a Copy for Claude button', !!cb && cb.textContent === 'Copy for Claude');
+      cb.click();   // swallowed by the page; caught by the HUD on window
+      await until(function () { return copied !== null; }, 'the copy');
+      check('Copy for Claude puts the whole result on the clipboard', copied === p.w.coresTrace.text && /TIMELINE/.test(copied));
+      await until(function () { return /^Copied for Claude/.test(cb.textContent); }, 'the button to say Copied');
+      check('nothing that could tell a patient in what is copied', leaks(copied).length === 0, leaks(copied).join(', '));
+    } finally { p.close(); }
+  };
+  tests.trace_already_there = async function () {
+    var p = await loadHud(await openList('fk_mode=timer&fk_delay=100'));
+    try {
+      await until(function () { return records(p) === 5; }, 'the records');
+      await sleep(600);   // the columns have loaded too
+      p.w.traceCores();
+      await sleep(200);
+      var t = p.w.traceCores('stop').text;
+      has(t, /^\u2716 WHO WROTE THE RECORDS: not seen\. They were already on the page when the Trace was armed \(5 records\) and nothing rewrote them\. For the answer: press F5 in CORES/m, 'armed too late: says so, and what to do');
+      check('verdict: already_there', p.w.coresTrace.verdict.who === 'already_there');
+      check('the HUD warned at arming', /the patient records are already on this page \(5\)/.test(p.d.getElementById('cores-capture-overlay').textContent));
+      restored(p, 'already there');
+      check('the records are untouched', records(p) === 5 && Object.getOwnPropertyDescriptor(p.w, 'global_constant_row_info').writable === true);
     } finally { p.close(); }
   };
 

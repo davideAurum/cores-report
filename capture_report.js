@@ -213,6 +213,13 @@
         catch (err) { console.error('CORES capture: Describe failed', err); ovLog('Describe failed: ' + (err && (err.name + ': ' + err.message) || err) + '. Copy this line for Claude.', 'err'); }
       }, 30);
     }, true);
+    // a result's Copy for Claude button (showResult gives it its action)
+    window.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t || typeof t.__coresClick !== 'function' || !root.contains(t)) return;
+      e.stopPropagation();
+      try { t.__coresClick(); } catch (err) { console.error('CORES capture: Copy failed', err); }
+    }, true);
     // Trace: arm it, or stop it and show what it saw
     window.addEventListener('click', function (e) {
       if (e.target !== ftrace) return;
@@ -1300,7 +1307,8 @@
         /^[A-Z][A-Z' \/,()\-]+(\(|\[|$)/.test(line) ? 'color:#1f4e79;font-weight:700;margin-top:3px' : '', line || ' '));
     });
     var cb = ovEl('button', 'margin-top:5px;font:600 11px Segoe UI,Arial,sans-serif;padding:2px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Copy for Claude');
-    cb.onclick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
+    // run by the HUD's click catcher on window (capture phase), which a page that swallows clicks cannot stop
+    cb.__coresClick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
     box.appendChild(cb);
     ovAppend(box);
     ov.expand();
@@ -1729,13 +1737,8 @@
     else if (frames.some(function (f) { return f.tag === 'report'; })) { who = 'report'; sure = true; why.push('the report window\'s own script is on the call stack'); }
     else if (kinds[0] === 'list') { who = 'list'; sure = true; why.push('the function that wrote them belongs to this page, and no report window code called it'); }
     else if (frames.length && frames[0].tag === 'list') { who = 'list'; sure = true; why.push('the call came from this page\'s own script'); }
-    if (vr && vr.kind === 'report') {
-      why.push('the list itself was made in the report window');
-      if (!who) { who = 'report'; why.push('(the writing code could not be read, so this rests on where the list was made)'); }
-    } else if (vr && vr.kind === 'list') {
-      why.push('the list itself was made in this page');
-      if (!who) { who = 'list'; why.push('(the writing code could not be read, so this rests on where the list was made)'); }
-    }
+    if (!who && vr) { who = vr.kind; why.push('the code that wrote them could not be read, so this rests on where the list was made'); }
+    if (vr) why.push('the list itself was made in ' + (vr.kind === 'report' ? 'the report window' : 'this page'));
     if (who === 'report') pop = popOf();
     return { who: who || 'unknown', sure: sure, why: why, pop: pop, madeIn: vr ? vr.kind : '' };
   }
@@ -2022,6 +2025,8 @@
   // windows opened since arming (gone to another page, closed; their requests, read from their resource timings)
   function trPoll(T) {
     var t = trNow(T);
+    if (T.lastPoll !== undefined && t - T.lastPoll > T.slowest) T.slowest = t - T.lastPoll;   // a browser slows a covered window's timers
+    T.lastPoll = t;
     T.wins.forEach(function (W) {
       var st = W.st; if (!st) return;
       try {
@@ -2071,7 +2076,7 @@
 
   // ---- arming and stopping
   function trArm(opt) {
-    var T = { on: true, t0: performance.now(), epoch: 0, ev: [], wins: [], popups: [], undo: [], notes: [], dropped: 0, polls: 0, inCallback: null, lastWrite: null,
+    var T = { on: true, t0: performance.now(), epoch: 0, ev: [], wins: [], popups: [], undo: [], notes: [], dropped: 0, polls: 0, slowest: 0, inCallback: null, lastWrite: null,
               hud: !!opt.hud, meta: new WeakMap(), timer: null, killer: null, after: null, auto: '' };
     T.epoch = (performance.timeOrigin || Date.now() - performance.now()) + T.t0;
     T.wins.push({ w: window, label: 'this page', st: null });
@@ -2197,19 +2202,120 @@
     L.push(trSec(T.tEnd) + '  stopped' + (T.auto ? ' ' + T.auto : '') + '. Records now: ' + (function () { var s = trShape(st0 ? st0.val : undefined); return s.kind === 'list' ? s.n : 'none'; })());
     return { lines: L, evs: evs, start: start };
   }
+  // the short answer on top of the timeline: who wrote the records, and two hints. "skip?": could the records load
+  // without the report window; "automate?": which click and which window.open call opened the report, so a script
+  // could do the same. Hints, from one run's timing: the timeline under them is the evidence.
+  function trVerdict(T, tl, scrub) {
+    var evs = tl.evs, start = tl.start, v = { who: 'not_seen', records: 0 };
+    var secs = function (ms) { return (ms / 1000).toFixed(2) + ' s'; }, cap = function (s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; };
+    var fill = null, opens = [], forms = [], repOpen = null;
+    evs.forEach(function (e) {
+      if (e.type === 'records' && !fill && e.kind === 'list' && e.n > 0) fill = e;   // the first write that put records there
+      if (e.type === 'open' && !e.blocked) { opens.push(e); if (!repOpen && (e.u.report || (e.opened && e.opened.report))) repOpen = e; }
+      if (e.type === 'form') forms.push(e);
+    });
+    var st0 = T.wins[0].st, polled = !!(st0 && st0.mode === 'poll'), had = start.kind === 'list' && start.n > 0;
+    var openBefore = null;   // the report window opened last before the write (the writer's own, when that is known)
+    if (fill) opens.forEach(function (e) { if (e.t <= fill.t && (e.u.report || (e.opened && e.opened.report) || e.opened === fill.who.pop)) openBefore = e; });
+    // the request of this page whose answer the write followed: surely (it was being handled), probably (the Trace saw
+    // the answer arrive just after the write, the page's handler having run first), or only the nearest one before
+    function reqFor(e) {
+      if (e.during) return { r: e.during, how: 'during' };
+      var before = null, late = null, others = 0;
+      evs.forEach(function (r) {
+        if (r.type !== 'request' || r.pop || r.t === undefined || r.tResp === undefined) return;
+        // an XHR whose handler was set before the Trace's listener: the page handles the answer first, the Trace sees it after
+        if (r.api === 'XHR' && r.t <= e.t && r.tResp >= e.t && r.tResp - e.t <= 150 && (!late || r.tResp < late.tResp)) late = r;
+        if (r.tResp <= e.t && e.t - r.tResp <= 5000) { others++; if (!before || r.tResp > before.tResp) before = r; }
+      });
+      return late ? { r: late, how: 'late', gap: late.tResp - e.t } : before ? { r: before, how: 'after', gap: e.t - before.tResp, others: others - 1 } : null;
+    }
+    var who, skip, auto, rq = null;
+    if (!fill) {
+      if (had) {
+        v.who = 'already_there';
+        who = '✖ WHO WROTE THE RECORDS: not seen. They were already on the page when the Trace was armed (' + start.n + ' records) and nothing rewrote them. ' +
+          'For the answer: press F5 in CORES, open your list, paste the script, press Trace BEFORE opening any report, then open the report.';
+        skip = 'No answer from this run: the records were loaded before the Trace was armed.';
+      } else {
+        who = '✖ WHO WROTE THE RECORDS: not seen. Nothing wrote window.' + TR_ROWS + ' in the ' + secs(T.tEnd) + ' the Trace was armed' +
+          (repOpen ? ', although a report window was opened at ' + secs(repOpen.t) + '. Keep the Trace armed until the report has rendered, then stop it.' :
+            opens.length ? ', and the window that was opened is not a report by its address.' : ', and no report window was opened: open the report while the Trace is armed.');
+        skip = 'No answer from this run.';
+      }
+    } else {
+      var w = fill.who, n = fill.n + ' record' + (fill.n === 1 ? '' : 's'), why = cap(w.why.join('; '));
+      v.records = fill.n;
+      if (w.who === 'report') {
+        v.who = 'report_window';
+        var own = 0, mine = 0;   // requests before the write: the report window's own, and this page's since the window opened
+        evs.forEach(function (r) { if (r.type === 'request' && r.t <= fill.t) { if (r.pop && r.pop === w.pop) own++; else if (!r.pop && openBefore && r.t >= openBefore.t) mine++; } });
+        who = '✔ WHO WROTE THE RECORDS: the report window' + (w.sure ? '' : ', probably') + '. Its code put ' + n + ' on this page (its opener)' +
+          (openBefore ? ', ' + secs(fill.t - openBefore.t) + ' after it was opened' : '') + '. ' + why + '.';
+        skip = 'Not by leaving the report window out: the records came to this page FROM the report window' +
+          (own ? ', after ' + own + ' request' + (own === 1 ? '' : 's') + ' of its own (the [R] request lines)' : '') +
+          (openBefore ? mine ? '; this page sent ' + mine + ' request' + (mine === 1 ? '' : 's') + ' of its own in between, which do not look like their source' : ', and this page sent no request in between' : '') +
+          '. Without a report window nothing seen here would load them. What is left to try is a report window that nobody has to look at: see automate.';
+      } else if (w.who === 'list') {
+        v.who = 'list_page';
+        rq = reqFor(fill);
+        who = '✔ WHO WROTE THE RECORDS: this page (the patient list)' + (w.sure ? '' : ', probably') + '. Its own code wrote ' + n +
+          (!rq ? ', with no request of this page answered in the 5 s before' :
+            rq.how === 'during' ? ', while the answer to its request #' + rq.r.no + ' was being handled' :
+            rq.how === 'late' ? ', ' + rq.gap + ' ms before the Trace saw the answer to its request #' + rq.r.no + ' arrive: probably while handling that answer' :
+            ', ' + rq.gap + ' ms after the answer to its request #' + rq.r.no + ' came back (the nearest request before the write' +
+              (rq.others ? '; ' + rq.others + ' more were answered in the 5 s before' : '') + ': a hint, not proof)') + '.' +
+          (rq ? ' Request #' + rq.r.no + ': ' + trReqText(rq.r) + '  ' + trReqEnd(rq.r) + '.' : '') + ' ' + why + '.';
+        if (!openBefore) {
+          skip = 'Yes, by this run: the records were written with no report window opened since the Trace was armed' + (rq ? ' (see request #' + rq.r.no + ')' : '') +
+            '. If a report had been opened earlier in this CORES session, check once more in a fresh one (F5): CORES may load them only after a first report.';
+        } else {
+          skip = 'Maybe. This page loads the records itself (the report window does not hand them over), but it did so ' + secs(fill.t - openBefore.t) + ' after the report was opened' +
+            (rq && rq.r.t >= openBefore.t ? ', with a request it sent ' + (rq.r.t - openBefore.t) + ' ms after window.open' + (rq.r.frames && rq.r.frames.length ? ' (sent from: ' + trStackText(rq.r.frames.slice(0, 3)) + ')' : '') :
+              rq ? ', with a request it had sent before the report was opened' : '') +
+            '. So opening the report seems to set the loading off, not the report window as such: if what sends that request can be run without opening a report, the report window is not needed for the records. Watching cannot tell that; it is the next thing to try.';
+        }
+      } else {
+        v.who = 'unknown';
+        who = '✖ WHO WROTE THE RECORDS: unclear. ' + cap(n) + ' appeared at ' + secs(fill.t) + ', but whose code wrote them could not be told' +
+          (polled ? ' (the page declares the variable itself, so the Trace could only poll it)' : '') + '.';
+        skip = 'Unclear. The records appeared ' + (openBefore ? secs(fill.t - openBefore.t) + ' after a report window was opened' : 'with no report window opened since arming, which points at this page itself') + '.';
+      }
+      if (had) who += ' NOTE: ' + start.n + ' records were already there at arming, so this is a rewrite, not the first fill; trace a fresh CORES session (F5) for that.';
+    }
+    if (repOpen) {
+      var c = repOpen.click;
+      auto = 'Looks possible. The report window was opened by a plain window.open call: ' + trAddr(repOpen.u) + (repOpen.name ? ', name "' + repOpen.name + '"' : '') +
+        (repOpen.features ? ', features "' + repOpen.features + '"' : '') + '. ' +
+        (c ? 'It came ' + (repOpen.t - c.t) + ' ms after a click on ' + trClickText(c, scrub) + (c.handlers.length ? ' [handlers: ' + c.handlers.join('; ') + ']' : '') + '. ' : 'No click was seen in the 5 s before it. ') +
+        (repOpen.frames.length ? 'Called from: ' + trStackText(repOpen.frames.slice(0, 4)) + '. ' : '') +
+        'A script can make the same call (captureCores(281) opens that address itself) or click that element; whether the records then load the same way is what a Trace of such a run shows.';
+    } else if (opens.length) {
+      auto = 'Unclear: window.open was called ' + opens.length + ' time' + (opens.length === 1 ? '' : 's') + ', but not for a report address (see the timeline).';
+    } else {
+      auto = 'Not seen: no window.open call while the Trace was armed' +
+        (forms.length ? '; ' + forms.length + ' form submit' + (forms.length === 1 ? ' was' : 's were') + ' (see the timeline): CORES may open the report through a form with a target.' :
+          '. If a report did open, CORES opens it another way (a link, or a form with a target).');
+    }
+    return { v: v, lines: [who, '→ skip?  ' + skip, '→ automate?  ' + auto] };
+  }
   function trReport(T) {
     var rows = null; try { rows = patientRows(); } catch (e) {}
     var scrub = coresScrubber(rows, trListNames());
-    var tl = trTimeline(T, scrub);
+    var tl = trTimeline(T, scrub), vd = trVerdict(T, tl, scrub);
     var L = ['Trace: what loads CORES\'s patient records'];
+    vd.lines.forEach(function (x) { L.push(x); });
     L.push('', 'TIMELINE (seconds since arming; [L] this page, [R1] a report window it opened; requests are numbered)');
     tl.lines.forEach(function (x) { L.push(x); });
     var notes = T.notes.slice();
     if (T.dropped) notes.push(T.dropped + ' more clicks / requests were seen but not kept (over ' + TR_MAX + ')');
     if (T.popups.length) notes.push('the report window\'s requests come from its resource timings: no method, and no body parameter names');
+    if (T.slowest > 500) notes.push('the browser slowed this page\'s timers while it was covered (up to ' + (T.slowest / 1000).toFixed(1) + ' s between looks): what is "seen by polling", a window closing, and the report window\'s last requests may be late or missing; writes, requests, window.open and clicks of this page are caught as they happen');
+    notes.push('skip? and automate? are hints from this one run; they are about the patient records only (report 281 itself still supplies the full medications, I&O and most labs)');
     notes.push('shown: names of functions, files, parameters and elements, CORES vocabulary, counts and timings; no parameter values except program / report ids');
-    L.push('', 'NOTES', notes.map(function (x) { return '• ' + x; }).join('\n'));
-    return { lines: L, text: L.join('\n'), verdict: { who: 'unknown', records: 0 }, timeline: tl };
+    L.push('', 'NOTES');
+    notes.forEach(function (x) { L.push('• ' + x); });
+    return { lines: L, text: L.join('\n'), verdict: vd.v };
   }
   function traceCores(cmd, opt) {
     if (cmd && typeof cmd === 'object') { opt = cmd; cmd = ''; }
@@ -2231,7 +2337,9 @@
     var rep = trReport(T);
     window.coresTrace = { text: rep.text, verdict: rep.verdict };
     console.log(rep.text);
-    ovLog('Trace stopped' + (T.auto ? ' ' + T.auto : '') + ': ' + T.ev.length + ' things seen in ' + (T.tEnd / 1000).toFixed(1) + ' s. The timeline is in the Console (window.coresTrace.text).');
+    ovLog('Trace stopped' + (T.auto ? ' ' + T.auto : '') + ': ' + T.ev.length + ' things seen in ' + (T.tEnd / 1000).toFixed(1) + ' s.');
+    if (ov) showResult(rep.lines, rep.text, 'Trace');   // with its Copy for Claude button
+    else probeCopy(rep.text).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
     return { text: rep.text };
   }
   window.traceCores = traceCores;
