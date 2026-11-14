@@ -269,6 +269,12 @@ def parse_meds(td):
     return out
 
 
+def parse_identity(tr):
+    """Where and who only, for a row the rest of which could not be read (see unreadable_record)."""
+    c = {td['column_name']: td for td in tr.find_all('td', attrs={'column_name': True})}
+    return parse_patient_info(c['Illness Severity'])
+
+
 def parse_row(tr):
     c = {td['column_name']: td for td in tr.find_all('td', attrs={'column_name': True})}
     rec = parse_patient_info(c['Illness Severity'])
@@ -289,19 +295,77 @@ def parse_header(soup):
             'report_date': raw.get('print_date', ''), 'printed_by': raw.get('name', ''), 'printed_by_id': raw.get('username', '')}
 
 
-def row_parser(rows, header):
-    """parse_row() of the layout whose columns the rows have (all rows together, so a capture cut short mid-row still
-    matches); UnsupportedLayout when none has them all."""
+def row_module(rows, header):
+    """The module (its parse_row() and parse_identity()) of the layout whose columns the rows have (all rows together,
+    so a capture cut short mid-row still matches); UnsupportedLayout when none has them all."""
     found = []
     for tr in rows:
         found += [td['column_name'] for td in tr.find_all('td', attrs={'column_name': True}) if td['column_name'] not in found]
     for _, columns, module in LAYOUTS:
         if set(columns) <= set(found):
-            return importlib.import_module(module).parse_row
+            return importlib.import_module(module)
     for _, columns, module in LAYOUTS:
         if set(found) <= set(columns):  # only some of a known layout's columns: cut short inside its first row
-            return importlib.import_module(module).parse_row
+            return importlib.import_module(module)
     raise UnsupportedLayout(header.get('report_format', ''), found)
+
+
+def row_parser(rows, header):
+    """parse_row() of the layout whose columns the rows have."""
+    return row_module(rows, header).parse_row
+
+
+class NoRowReadable(ValueError):
+    """Every patient row failed in its parser: not one odd row but a report the parser does not fit. The message
+    holds counts and the kinds of error only, never their text (which can quote a row)."""
+
+    def __init__(self, rows, kinds):
+        self.rows, self.kinds = rows, kinds
+        super().__init__(f'none of the {rows} patient rows could be read ({", ".join(kinds)})')
+
+
+NOT_READ = ('NOT READ: cores could not read this patient\'s row of the CORES report. Only the bed and the name, where shown, '
+            'are from it. Look this patient up in CORES.')
+IDENTITY_KEYS = ('unit', 'room', 'bed', 'location', 'patient_name', 'mrn', 'dob', 'age', 'sex')  # all an unreadable row keeps
+
+
+def unreadable_record(number, identity=None):
+    """The stand-in for a patient row its parser could not read: a record with every key the Daily Report needs, empty
+    but for a line saying so and whatever of the bed and the name could still be read (`identity`, of which only
+    IDENTITY_KEYS are taken). One odd row then costs one patient's block, clearly marked, and not the whole report;
+    and no patient is dropped without a word. Nothing else of the row is kept, not even what did parse: half a row's
+    values would read as "the rest is normal"."""
+    rec = {'unit': '', 'room': '', 'bed': '', 'location': '', 'code_status': '', 'isolation': '', 'covid': '', 'severity': '',
+           'patient_name': '', 'mrn': '', 'dob': '', 'age': '', 'sex': '', 'los_days': None, 'allergies': '', 'diet': ''}
+    for k in IDENTITY_KEYS:
+        v = (identity or {}).get(k)
+        if isinstance(v, str):
+            rec[k] = v
+    rec['patient_name'] = rec['patient_name'] or f'ROW {number} NOT READ'
+    rec.update({'admit_diagnosis': '', 'summary': {'narrative': [NOT_READ], 'status': {}, 'lines': [NOT_READ]}, 'tld': [], 'vent': None,
+                'vitals': {}, 'o2_delivery': '', 'gases': [], 'labs': {}, 'io': None, 'handoff': {}, 'tasks': [], 'sit_awareness': [],
+                'meds': {}, 'notes': [], 'unreadable': True})
+    return rec
+
+
+def parse_rows(rows, module):
+    """Each row through the layout's parse_row(), on its own: (records, [the numbers, from 1, of the rows that could
+    not be read], the kinds of error met). NoRowReadable when none could."""
+    records, bad, kinds = [], [], []
+    for number, tr in enumerate(rows, 1):
+        try:
+            records.append(module.parse_row(tr))
+        except Exception as ex:  # whatever an unusual row trips over; its text stays out of every message
+            kinds += [type(ex).__name__] if type(ex).__name__ not in kinds else []
+            try:
+                identity = module.parse_identity(tr)
+            except Exception:
+                identity = None
+            records.append(unreadable_record(number, identity))
+            bad.append(number)
+    if rows and len(bad) == len(rows):
+        raise NoRowReadable(len(rows), kinds)
+    return records, bad, kinds
 
 
 # Each patient's rounding team, read by captureCores() from the CORES patient list and written into the capture as
@@ -382,17 +446,20 @@ def attach_clinical(raw, header, records):
 def parse_file(path):
     # Captures are UTF-8, but CORES's <meta> says windows-1250 and lxml obeys it on a large file (a 1.5 MB capture came
     # out with every bullet as 'â€˘'), so the encoding is given outright.
-    raw = open(path, encoding='utf-8', errors='replace').read()
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        raw = fh.read()
     soup = BeautifulSoup(raw.encode('utf-8'), 'lxml', from_encoding='utf-8')
     for s in soup.find_all('script'):
         s.decompose()
     header = parse_header(soup)
     rows = [tr for tr in soup.select('tr.row_template') if tr.find('td', attrs={'column_name': True})]
-    parse_row_fn = row_parser(rows, header) if rows else None
-    records = [parse_row_fn(tr) for tr in rows]
+    records, bad, kinds = parse_rows(rows, row_module(rows, header)) if rows else ([], [], [])
     attach_teams(raw, header, records)
     attach_clinical(raw, header, records)
-    return {'header': header, 'source': path, 'records': records}
+    data = {'header': header, 'source': path, 'records': records}
+    if bad:  # rows shown as "NOT READ" (unreadable_record): their numbers in the report, and the kinds of error
+        data['unreadable'] = {'rows': bad, 'errors': kinds}
+    return data
 
 
 if __name__ == '__main__':
@@ -403,3 +470,5 @@ if __name__ == '__main__':
     with open(out, 'w', encoding='utf-8') as fh:
         json.dump(data, fh, indent=1, ensure_ascii=False)
     print(f"{len(data['records'])} records -> {out}")
+    if data.get('unreadable'):
+        print(f"{len(data['unreadable']['rows'])} of them could not be read and are marked NOT READ")

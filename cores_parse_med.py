@@ -109,6 +109,12 @@ def parse_tasks_plan(td):
             'sit_awareness': sit}
 
 
+def parse_identity(tr):
+    """Where and who only, for a row the rest of which could not be read (cores_parse.unreadable_record)."""
+    c = {td['column_name']: td for td in tr.find_all('td', attrs={'column_name': True})}
+    return parse_pt_info(c['Pt Info'])
+
+
 def parse_row(tr):
     c = {td['column_name']: td for td in tr.find_all('td', attrs={'column_name': True})}
     rec = parse_pt_info(c['Pt Info'])

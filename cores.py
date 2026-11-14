@@ -99,41 +99,92 @@ def rel(p):
 
 # ---------------------------------------------------------------- config
 
-def load_config():
-    cfg = dict(DEFAULTS)
-    if CONFIG_FILE.exists():
+CHOICES = {'import_mode': ('move', 'copy'), 'paper': ('legal', 'letter'), 'orientation': ('landscape', 'portrait')}
+YES, NO = ('1', 'true', 'yes', 'on', 'y'), ('0', 'false', 'no', 'off', 'n', '', 'none')
+
+
+def setting_value(key, value):
+    """One setting's value as cores uses it, from cores.config.json or from `cores config --set`. ValueError, whose
+    text names what is allowed, when the value is not usable. The one place a setting is checked, so that a value is
+    refused before it is saved by the same rule that would refuse it afterwards."""
+    default = DEFAULTS[key]
+    if key in CHOICES:
+        v = str(value).strip().lower()
+        if v not in CHOICES[key]:
+            raise ValueError(' or '.join(CHOICES[key]))
+        return v
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        v = '' if value is None else str(value).strip().lower()
+        if v not in YES + NO:
+            raise ValueError('true or false')
+        return v in YES
+    if isinstance(default, int):
         try:
-            user = json.loads(CONFIG_FILE.read_text(encoding='utf-8-sig'))
-        except ValueError as ex:
-            raise CoresError(f'{CONFIG_FILE.name} is not valid JSON: {ex}')
-        if not isinstance(user, dict):
-            raise CoresError(f'{CONFIG_FILE.name} must contain a JSON object')
-        unknown = sorted(set(user) - set(DEFAULTS))
-        if unknown:
-            say(f'note: ignoring unknown setting(s) in {CONFIG_FILE.name}: {", ".join(unknown)}')
-        cfg.update({k: v for k, v in user.items() if k in DEFAULTS})
-    if isinstance(cfg['inbox_dirs'], str):
-        cfg['inbox_dirs'] = [cfg['inbox_dirs']]
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            raise ValueError('a whole number, 0 or more')
+    if isinstance(default, list):
+        value = [value] if isinstance(value, str) else value
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError('a folder, or a list of folders')
+        return value
+    if value is None:
+        return ''
+    if not isinstance(value, str):
+        raise ValueError('text')
+    return value.strip() if key == 'log_dir' else value
+
+
+def as_typed(key, value):
+    """A setting's value the way it is typed after `cores config --set KEY`."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    text = ';'.join(value) if isinstance(value, list) else str(value)
+    return f'"{text}"' if not text or ' ' in text or ';' in text else text
+
+
+def read_user_config():
+    """The settings as cores.config.json has them: {} when there is no file. A file that is not JSON is refused: it
+    has to be repaired by hand, or deleted."""
+    if not CONFIG_FILE.exists():
+        return {}
+    by_hand = f'Open {CONFIG_FILE} in a text editor to repair it, or delete it to go back to the defaults.'
     try:
-        cfg['keep'] = max(0, int(cfg['keep']))
-    except (TypeError, ValueError):
-        raise CoresError('"keep" in the config must be a whole number')
-    if cfg['import_mode'] not in ('move', 'copy'):
-        raise CoresError('"import_mode" in the config must be "move" or "copy"')
-    cfg['paper'] = str(cfg['paper']).strip().lower()
-    if cfg['paper'] not in ('legal', 'letter'):
-        raise CoresError('"paper" in the config must be "legal" or "letter"')
-    cfg['orientation'] = str(cfg['orientation']).strip().lower()
-    if cfg['orientation'] not in ('landscape', 'portrait'):
-        raise CoresError('"orientation" in the config must be "landscape" or "portrait"')
-    for key in ('black_and_white', 'log'):
-        if not isinstance(cfg[key], bool):
-            v = str(cfg[key]).strip().lower()
-            if v not in ('1', 'true', 'yes', 'on', 'y', '0', 'false', 'no', 'off', 'n', '', 'none'):
-                raise CoresError(f'"{key}" in the config must be true or false')
-            cfg[key] = v in ('1', 'true', 'yes', 'on', 'y')
-    cfg['log_dir'] = str(cfg['log_dir'] or '').strip()
+        user = json.loads(CONFIG_FILE.read_text(encoding='utf-8-sig'))
+    except ValueError as ex:
+        raise CoresError(f'{CONFIG_FILE.name} is not valid JSON: {ex}. {by_hand}')
+    if not isinstance(user, dict):
+        raise CoresError(f'{CONFIG_FILE.name} must contain a JSON object. {by_hand}')
+    return user
+
+
+def load_config(problems=None, notes=True):
+    """The settings: the defaults, with what cores.config.json changes. A value that is not usable stops the command
+    with what is allowed and the `cores config --set` line that repairs it. With `problems` (a list), it is added
+    there as (key, value, what is allowed) and the setting stays at its default: `cores config`, `help` and `doctor`
+    run this way, so that a bad value cannot lock the very commands that show and repair it."""
+    cfg = dict(DEFAULTS)
+    user = read_user_config()
+    unknown = sorted(set(user) - set(DEFAULTS))
+    if unknown and notes:
+        say(f'note: ignoring unknown setting(s) in {CONFIG_FILE.name}: {", ".join(unknown)}')
+    for key in DEFAULTS:
+        if key not in user:
+            continue
+        try:
+            cfg[key] = setting_value(key, user[key])
+        except ValueError as ex:
+            if problems is None:
+                raise CoresError(f'{bad_setting(key, user[key], ex)} No other command runs until it is repaired.')
+            problems.append((key, user[key], str(ex)))
     return cfg
+
+
+def bad_setting(key, value, allowed):
+    return (f'"{key}" in {CONFIG_FILE.name} is {json.dumps(value)[:60]}, but it must be {allowed}. '
+            f'Repair it with:  cores config --set {key} {as_typed(key, DEFAULTS[key])}')
 
 
 def save_config(cfg_user):
@@ -397,8 +448,29 @@ def describe(data):
     h = data.get('header') or {}
     fmt = re.sub(r'^UAB Core Work Mgr\s*', '', h.get('report_format', '')).strip() or 'unknown format'
     team = ' / '.join(x for x in (h.get('service'), h.get('team')) if x) or '? / ?'  # the Medicine report has a team only
-    return (f"{len(data['records'])} patients, {fmt}, {team}, "
+    bad = len(unreadable_rows(data))
+    return (f"{len(data['records'])} patients, " + (f'{bad} of them NOT READ, ' if bad else '') + f"{fmt}, {team}, "
             f"data as of {h.get('report_date') or '?'}")
+
+
+def unreadable_rows(data):
+    """The numbers (from 1, in the report's order) of the patient rows the parser could not read; they are in the
+    records as blocks marked NOT READ (cores_parse.unreadable_record)."""
+    rows = (data.get('unreadable') or {}).get('rows') if isinstance(data.get('unreadable'), dict) else None
+    return [n for n in rows if isinstance(n, int)] if isinstance(rows, list) else []
+
+
+def warn_unreadable(data):
+    """Say how many rows could not be read, by number only: no name, no text of a row, no text of an error."""
+    bad, total = unreadable_rows(data), len(data.get('records') or [])
+    if not bad:
+        return
+    one = len(bad) == 1
+    which = ', '.join(str(n) for n in bad[:12]) + (f' and {len(bad) - 12} more' if len(bad) > 12 else '')
+    say(f'Warning:  {len(bad)} of {total} patient rows could not be read (row{"" if one else "s"} {which} of the report).')
+    say(f'          {"That patient is" if one else "Those patients are"} in the Daily Report as {"a block" if one else "blocks"} marked NOT READ, '
+        'with the bed and name where they could be read.')
+    say(f'          The other {total - len(bad)} {"is" if total - len(bad) == 1 else "are"} complete. Look {"that patient" if one else "those patients"} up in CORES.')
 
 
 def parse_capture(capture):
@@ -472,6 +544,7 @@ def do_render(src, out=None, data=None, cfg=None):
     missing = sorted({r['unit'] for r in data.get('records', []) if r.get('unit') and r['unit'].strip().upper() not in locs})
     if missing:
         say(f'Note:     no location yet for {", ".join(missing)}; add {"it" if len(missing) == 1 else "them"} to unit_locations.json')
+    warn_unreadable(data)
     return data, out
 
 
@@ -1170,25 +1243,123 @@ def unrendered_capture(cfg):
     return newest([p for p in files_of_kind(reports_dir(cfg, create=False), 'capture') if not derived(p, 'report').exists()])
 
 
+OLD_CAPTURE_HOURS = 6  # a capture older than this is not this morning's: `generate` builds it, with a warning
+
+
+def stamp_time(name):
+    """When captureCores() took a capture, from the date and time in its file name; None when the name has none."""
+    m = STAMP_RE.search(str(name))
+    try:
+        return dt.datetime(*map(int, m.groups())).timestamp() if m else None
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def capture_time(p):
+    """When a capture file was taken: the date and time in its name, else when the file was last written."""
+    return stamp_time(Path(p).name) or Path(p).stat().st_mtime
+
+
+def ago(taken, now=None):
+    """'just now', '12 minutes ago', '3 hours ago', '2 days ago'. A time in the future (the CORES session's clock and
+    this PC's can differ) counts as just now."""
+    s = max(0, (time.time() if now is None else now) - taken)
+    for limit, unit, size in ((90, None, 1), (5400, 'minute', 60), (36 * 3600, 'hour', 3600), (float('inf'), 'day', 86400)):
+        if s < limit:
+            n = round(s / size)
+            return 'just now' if unit is None else f'{n} {unit}{"" if n == 1 else "s"} ago'
+
+
+def warn_old(taken, now=None):
+    if (time.time() if now is None else now) - taken > OLD_CAPTURE_HOURS * 3600:
+        say(f'Warning:  this capture is old: taken {ago(taken, now)} ({dt.datetime.fromtimestamp(taken):%Y-%m-%d %H:%M}).')
+        say('          The Daily Report will show the patients as they were then. For today\'s report, capture again in')
+        say('          CORES (`cores capture` shows the steps).')
+
+
+def cut_short(p):
+    """True when a capture file does not end with </html>: a download that was interrupted."""
+    try:
+        with open(p, 'rb') as fh:
+            fh.seek(max(0, p.stat().st_size - 512))
+            return not CAPTURE_END_RE.search(fh.read())
+    except OSError:
+        return False
+
+
+def pick_source(cfg, clipboard_only=False):
+    """What `cores generate` (without FILE) works on. Nothing is saved or changed here. Returns (kind, path, taken, other):
+      kind   'inbox'      path = the newest capture in the inbox folders (Downloads)
+             'clipboard'  the report on the clipboard; path is None until it is saved
+             'saved'      path = the capture in the reports folder that the line on the clipboard names (SAVED_NOTE)
+             None         neither
+      taken  when it was captured (capture_time)
+      other  the one passed over, when both are there and they are not the same capture: (what, taken, path or None),
+             what = 'clipboard' (an older report there), 'inbox' (an older capture there) or 'cut short' (the download
+             of this very capture is cut short, so the clipboard's whole copy is used).
+    The newer one wins; the same capture in both places is taken from the file, which no clipboard size limit can have
+    cut. So an old or refused capture left in Downloads no longer hides a fresh one on the clipboard."""
+    text, name = clipboard_report()
+    clip = None
+    if text is not None:
+        clip = ('clipboard', None, stamp_time(name) or time.time())
+    else:
+        noted = noted_capture(cfg)[0]
+        if noted:
+            clip, name = ('saved', noted, capture_time(noted)), noted.name
+    caps = [] if clipboard_only else [p for d in inbox_dirs(cfg) for p in files_of_kind(d, 'capture')]
+    newest_cap = max(caps, key=capture_time, default=None)
+    if newest_cap is None:
+        return clip + (None,) if clip else (None, None, None, None)
+    inbox = ('inbox', newest_cap, capture_time(newest_cap))
+    if clip is None:
+        return inbox + (None,)
+    # the same capture: the same name, give or take the " (1)" a browser adds to a second download
+    same = bool(name) and re.fullmatch(re.escape(Path(name).stem) + r'( \(\d+\))?' + re.escape(Path(name).suffix), newest_cap.name, re.I)
+    if same:
+        if clip[0] == 'clipboard' and cut_short(newest_cap) and CAPTURE_END_RE.search(text[-512:].encode('utf-8', 'replace')):
+            return clip + (('cut short', inbox[2], newest_cap),)
+        return inbox + (None,)
+    if clip[2] > inbox[2]:
+        return clip + (('inbox', inbox[2], newest_cap),)
+    return inbox + ((('clipboard', clip[2], clip[1]) if clip[0] == 'clipboard' else None),)
+
+
 def generate_source(a, cfg):
-    """What `generate` works on: FILE if given; else the newest capture in Downloads; else the clipboard."""
+    """What `generate` works on: FILE if given; else the newer of the newest capture in Downloads and the report on
+    the clipboard (pick_source); it says which, how old it is, and warns when that is more than a few hours."""
     if a.file:
         return resolve_file(a.file, 'capture', cfg)
+    kind, src, taken, other = pick_source(cfg, clipboard_only=a.clipboard)
+    inbox = ' or '.join(str(d) for d in inbox_dirs(cfg))
+    if kind == 'inbox':
+        say(f'Source:   the newest capture in {src.parent}, taken {ago(taken)}')
+        if other:
+            say(f'          (the clipboard holds an older report, taken {ago(other[1])}; `cores generate --clipboard` uses that one)')
+    elif kind:
+        if other and other[0] == 'cut short':
+            say(f'Source:   the clipboard; the downloaded copy of this capture in {other[2].parent} is cut short, the clipboard has it whole')
+        elif other:
+            say(f'Source:   the clipboard, taken {ago(taken)}: newer than the newest capture in {other[2].parent}')
+            say(f'          ({other[2].name}, taken {ago(other[1])}), which is left where it is')
+        elif not a.clipboard:
+            say(f'No capture in {inbox}; using the clipboard.')
+        if kind == 'clipboard':
+            src, _, saved_now = clipboard_capture(cfg)
+            if src is None:
+                raise CoresError('the clipboard changed while it was being read; run this again.')
+            say(f'Clipboard: {rel(src)}' + ('' if saved_now else '  (this report was saved before)') + ('' if other else f', taken {ago(taken)}'))
+            if release_clipboard(src):
+                say('          saved, so the report was taken off the clipboard (a line naming the file is there instead)')
+        else:
+            say(f'Clipboard: {rel(src)}  (this report was saved before, and taken off the clipboard then)'
+                + ('' if other else f', taken {ago(taken)}'))
+    if kind:
+        warn_old(taken)
+        return src
     if not a.clipboard:
-        src = newest([p for d in inbox_dirs(cfg) for p in files_of_kind(d, 'capture')])
-        if src:
-            return src
-        say(f'No capture in {" or ".join(str(d) for d in inbox_dirs(cfg))}; using the clipboard.')
-    src, _, saved_now = clipboard_capture(cfg)
-    if src:
-        say(f'Clipboard: {rel(src)}' + ('' if saved_now else '  (this report was saved before)'))
-        if release_clipboard(src):
-            say('          saved, so the report was taken off the clipboard (a line naming the file is there instead)')
-        return src
-    src, noted = noted_capture(cfg)
-    if src:
-        say(f'Clipboard: {rel(src)}  (this report was saved before, and taken off the clipboard then)')
-        return src
+        say(f'No capture in {inbox}; using the clipboard.')
+    noted = noted_capture(cfg)[1]
     if noted:
         raise CoresError(f'the clipboard holds the line cores left when it saved "{noted}", but that file is no longer in '
                          f'{rel(reports_dir(cfg, create=False))}. Capture the report again (`cores capture` shows the steps).')
@@ -1196,6 +1367,7 @@ def generate_source(a, cfg):
         src = unrendered_capture(cfg)
         if src:
             say(f'The clipboard holds the capture script; using the report `cores capture` saved before it: {rel(src)}')
+            warn_old(capture_time(src))
             return src
         raise CoresError('the clipboard holds the capture script (from `cores capture`), not a report. Open the report in '
                          'CORES with the script running, then run this again.')
@@ -1272,7 +1444,7 @@ def cmd_capture(a, cfg):
     if a.trace:
         say('     The Trace stops by itself a moment after the capture: read its result in the HUD, then press Copy for Claude.')
     say('  4. Back on this PC:')
-    say(f'       cores generate --print              newest capture in {inbox}, else the clipboard -> Daily Report -> print')
+    say(f'       cores generate --print              newest capture ({inbox} or the clipboard) -> Daily Report -> print')
     say('       cores watch --clipboard --print     ... automatically for every capture, until Ctrl+C')
     if a.auto:
         say('  Options with --auto: --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once),')
@@ -1288,6 +1460,7 @@ def cmd_parse(a, cfg):
     cap, data = take_capture(src, cfg, copy=a.copy)
     data, out = do_parse(cap, a.out, data=data)
     say(f'Parsed:   {rel(out)}  ({describe(data)})')
+    warn_unreadable(data)
 
 
 def cmd_compare(a, cfg):
@@ -1428,8 +1601,10 @@ def cmd_latest(a, cfg):
     for kind in ('capture', 'json', 'report', 'pdf'):
         n = find_newest(kind, cfg)
         say(f'  newest {KIND_NAMES[kind]:<12} {rel(n) if n else "-"}')
-    use = newest([p for d in inbox_dirs(cfg) for p in files_of_kind(d, 'capture')])
-    say(f'`cores generate` would use: {use or "the clipboard (no capture in Downloads)"}')
+    kind, use, taken, _ = pick_source(cfg)  # the newer of Downloads and the clipboard; nothing is saved by looking
+    what = {'inbox': str(use), 'clipboard': 'the report on the clipboard', 'saved': f'{use} (the report cores took off the clipboard)',
+            None: 'nothing yet: no capture in Downloads and no report on the clipboard'}[kind]
+    say(f'`cores generate` would use: {what}' + (f', taken {ago(taken)}' if kind else ''))
 
 
 def cmd_clean(a, cfg):
@@ -1560,7 +1735,10 @@ def cmd_doctor(a, cfg):
         line(d.is_dir(), f'Inbox {d}', f'{len(files_of_kind(d, "capture"))} capture(s)' if d.is_dir() else 'folder not found', required=False)
     rd = reports_dir(cfg, create=False)
     line(True, f'Reports folder {rd}', f'{len(capture_sets(cfg))} capture set(s)' if rd.is_dir() else 'will be created on first run')
-    line(True, 'Config', f'{CONFIG_FILE}' if CONFIG_FILE.exists() else 'defaults (create with `cores config --init`)')
+    bad = []
+    load_config(bad, notes=False)
+    line(not bad, 'Config', ' '.join(bad_setting(*b) for b in bad) if bad else
+         f'{CONFIG_FILE}' if CONFIG_FILE.exists() else 'defaults (create with `cores config --init`)')
     history = clipboard_history_on()
     if history is not None:
         line(not history, 'Windows clipboard history (Win+V)',
@@ -2005,9 +2183,7 @@ def cmd_help(a, cfg):
 
 
 def cmd_config(a, cfg):
-    user = {}
-    if CONFIG_FILE.exists():
-        user = json.loads(CONFIG_FILE.read_text(encoding='utf-8-sig'))
+    user = read_user_config()
     if a.init:
         if CONFIG_FILE.exists():
             say(f'{CONFIG_FILE.name} already exists.')
@@ -2019,21 +2195,21 @@ def cmd_config(a, cfg):
         key, val = a.set
         if key not in DEFAULTS:
             raise CoresError(f'unknown setting "{key}"; settings: {", ".join(DEFAULTS)}')
-        if isinstance(DEFAULTS[key], list):
-            parsed = [v.strip() for v in val.split(';') if v.strip()]
-        elif isinstance(DEFAULTS[key], bool):
-            parsed = val.strip().lower() in ('1', 'true', 'yes', 'on')
-        elif isinstance(DEFAULTS[key], int):
-            try:
-                parsed = int(val)
-            except ValueError:
-                raise CoresError(f'"{key}" must be a whole number')
-        else:
-            parsed = val
+        # checked first, by the rule every command loads the settings with, and saved only when it passes: a value saved
+        # unchecked (paper a4) used to stop every command, this one included, until the file was edited by hand
+        typed = [v.strip() for v in val.split(';') if v.strip()] if isinstance(DEFAULTS[key], list) else val
+        try:
+            parsed = setting_value(key, typed)
+        except ValueError as ex:
+            raise CoresError(f'"{key}" must be {ex}; "{val}" is not. Nothing was changed.')
         user[key] = parsed
         save_config(user)
         say(f'Set {key} = {json.dumps(parsed)} in {CONFIG_FILE.name}')
-    cfg = load_config()
+    problems = []
+    cfg = load_config(problems)
+    for key, value, allowed in problems:
+        say(f'Problem:  {bad_setting(key, value, allowed)}')
+        say(f'          Until then every other command refuses to run. Shown below with its default, {json.dumps(DEFAULTS[key])}.')
     say(f'Config file: {CONFIG_FILE}' + ('' if CONFIG_FILE.exists() else ' (not present; using defaults)'))
     show = dict(cfg)
     show['reports_dir'] = f'{cfg["reports_dir"]}  -> {reports_dir(cfg, create=False)}'
@@ -2041,6 +2217,7 @@ def cmd_config(a, cfg):
     if cores_log is not None:
         show['log_dir'] = f'{cfg["log_dir"] or "(automatic)"}  -> {log_folder(cfg)[0]}'
     say(json.dumps(show, indent=2))
+    return 1 if problems else 0
 
 
 # ---------------------------------------------------------------- main
@@ -2082,11 +2259,12 @@ def build_parser():
     def copy_opt(sp):
         sp.add_argument('--copy', action='store_true', help='copy the capture into the reports folder instead of moving it')
 
-    sp = add('generate', cmd_generate, 'make the Daily Report from the newest capture in Downloads, or from the clipboard when '
-                                       'Downloads has none, and open it. FILE may also be a .json or a Daily Report.',
-             listed='make the Daily Report from the newest capture in Downloads, else the clipboard')
-    sp.add_argument('file', nargs='?', metavar='FILE', help='capture to process (default: newest in Downloads, else the clipboard)')
-    sp.add_argument('--clipboard', action='store_true', help='use the clipboard even when Downloads has a capture')
+    sp = add('generate', cmd_generate, 'make the Daily Report from the newest capture in Downloads or the report on the clipboard, '
+                                       'whichever was captured later, and open it. It says which it used and how old it is. '
+                                       'FILE may also be a .json or a Daily Report.',
+             listed='make the Daily Report from the newest capture: Downloads or the clipboard, whichever is newer')
+    sp.add_argument('file', nargs='?', metavar='FILE', help='capture to process (default: the newer of the newest in Downloads and the clipboard)')
+    sp.add_argument('--clipboard', action='store_true', help='use the clipboard even when Downloads has a newer capture')
     sp.add_argument('--print', action='store_true', help='print the Daily Report: browser print dialog, or no dialog with --to / --kiosk or a "printer" in the config')
     print_opts(sp, implies=True)
     sp.add_argument('--pdf', action='store_true', help='also write "<capture> - Daily Report.pdf" with headless Edge/Chrome')
@@ -2198,6 +2376,7 @@ HELP_ALIASES = {'-help', '-?', '/?', '/help'}  # what Windows users tend to type
 NEEDS_PACKAGES = {'generate', 'capture', 'parse', 'watch'}  # the commands that import cores_parse (bs4 + lxml)
 UPDATE_NOTICE = {'generate', 'capture'}  # the everyday commands, which end by saying when a newer release is out
 NOT_LOGGED = {'log'}  # looking at the log is not something to log: it would fill the log with its own readings
+REPAIRS_CONFIG = {None, 'config', 'help', 'doctor'}  # run even when cores.config.json has a value that is not allowed
 
 
 def missing_packages():
@@ -2246,7 +2425,9 @@ def main(argv=None):
     parser = build_parser()
     a = parser.parse_args(argv)
     try:
-        cfg = load_config()
+        # a setting with a value that is not allowed stops a command before it starts; `config`, `help`, `doctor` and the
+        # bare overview run all the same (that setting at its default), so the way to see and repair it is never locked
+        cfg = load_config([] if a.cmd in REPAIRS_CONFIG else None)
         if not a.cmd:
             parser.print_help()
             return 0
