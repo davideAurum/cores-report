@@ -367,6 +367,118 @@
   tests.trace_then_capture = function () { return traceWithCapture(true); };
   tests.capture_then_trace = function () { return traceWithCapture(false); };
 
+  // ================= M4: the HUD's event log, carried by each capture =================
+  var LOG_KEY = 'cores-capture-log';
+  function logOf(capture) {   // the capture's CORES log comment, and where it sits
+    var m = /<!-- CORES log (\{.*\}) -->\n<\/html>$/.exec(capture);
+    return m ? { json: m[1], data: JSON.parse(m[1]), afterData: /<!-- CORES data \{.*\} -->\n<!-- CORES log \{.*\} -->\n<\/html>$/.test(capture) } : null;
+  }
+  function badEvents(events) {   // the shared contract with the PC side: these keys, these shapes, nothing else
+    return events.filter(function (e) {
+      var ks = Object.keys(e).filter(function (k) { return ['id', 't', 'ev', 'k', 'n', 'ms'].indexOf(k) < 0; });
+      return ks.length || typeof e.id !== 'string' || !/^[a-z0-9-]{3,40}$/.test(e.id) || typeof e.t !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(e.t) || isNaN(Date.parse(e.t)) ||
+        typeof e.ev !== 'string' || !/^[a-z_]{2,30}$/.test(e.ev) || (e.k !== undefined && (typeof e.k !== 'string' || !/^[a-z0-9_]{1,30}$/.test(e.k))) ||
+        (e.n !== undefined && !(Number.isInteger(e.n) && e.n >= 0)) || (e.ms !== undefined && !(Number.isInteger(e.ms) && e.ms >= 0));
+    });
+  }
+  function find(events, ev, k) { return events.filter(function (e) { return e.ev === ev && (k === undefined || e.k === k); }); }
+  async function capture(p, opts) {
+    var before = p.w.coresCaptured;
+    p.w.coresCaptured = undefined;
+    p.w.captureCores(opts);
+    openReport(p);
+    await until(function () { return typeof p.w.coresCaptured === 'string'; }, 'the capture', 15000);
+    void before;
+    return p.w.coresCaptured;
+  }
+  tests.log_comment = async function () {
+    localStorage.removeItem(LOG_KEY);
+    var p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      var cap = await capture(p, { download: false, clipboard: false });
+      var lg = logOf(cap);
+      check('the capture ends with a CORES log comment, just before </html>', !!lg, cap.slice(-300));
+      check('it comes after the CORES data comment', lg.afterData);
+      check('{"v":1,"events":[...]}', lg.data.v === 1 && Array.isArray(lg.data.events) && Object.keys(lg.data).join() === 'v,events');
+      var ev = lg.data.events;
+      note(lg.json);
+      check('every event keeps to the contract (id, t, ev, optional k / n / ms; nothing else)', badEvents(ev).length === 0, JSON.stringify(badEvents(ev)));
+      check('ids are unique, one session prefix + a counter', new Set(ev.map(function (e) { return e.id; })).size === ev.length && new Set(ev.map(function (e) { return e.id.split('-')[0]; })).size === 1);
+      check('key order as in the contract', /^\{"v":1,"events":\[\{"id":"[a-z0-9]{6}-1","t":"[^"]+","ev":"armed","k":"window"\}/.test(lg.json), lg.json.slice(0, 200));
+      check('armed (window), report_opened (window), report_loaded with ms', find(ev, 'armed', 'window').length === 1 && find(ev, 'report_opened', 'window').length === 1 && find(ev, 'report_loaded').length === 1 && find(ev, 'report_loaded')[0].ms >= 0);
+      var r = find(ev, 'rendered', 'form_submit')[0];
+      check('rendered: how, patient rows, duration', !!r && r.n === 5 && r.ms > 0, JSON.stringify(r));
+      check('teams and clinical: found, 5 patients', find(ev, 'teams', 'found')[0].n === 5 && find(ev, 'clinical', 'found')[0].n === 5);
+      check('this capture\'s own verdict is not in it yet (it travels in the next one)', find(ev, 'verdict').length === 0);
+      check('escaped like the CORES data comment: no <, > or -- inside', !/[<>]|--/.test(lg.json));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 1; }, 'the verdict event');
+      var v = find(p.w.captureCores.events(), 'verdict')[0];
+      check('verdict: success, 5 rows, ms', v.k === 'success' && v.n === 5 && v.ms > 0, JSON.stringify(v));
+      check('the events are kept in localStorage', JSON.parse(localStorage.getItem(LOG_KEY)).events.length === p.w.captureCores.events().length);
+
+      // a HUD tool, then a second capture in the same session, with the clipboard on
+      p.w.mapCores({ hud: true });
+      var copied = null; p.w.navigator.clipboard.writeText = function (x) { copied = x; return Promise.resolve(); };
+      await sleep(700);   // the first report window has closed
+      var cap2 = await capture(p, { download: false });
+      var ev2 = logOf(cap2).data.events;
+      check('the next capture carries the first one\'s verdict and the tool use', find(ev2, 'verdict', 'success').length === 1 && find(ev2, 'tool', 'map').length === 1 && find(ev2, 'armed').length === 2);
+      check('still to the contract', badEvents(ev2).length === 0, JSON.stringify(badEvents(ev2)));
+      await until(function () { return find(p.w.captureCores.events(), 'copied').length === 1; }, 'the copied event');
+      check('copied: which way', ['popup', 'window', 'exec'].indexOf(find(p.w.captureCores.events(), 'copied')[0].k) >= 0);
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 2; }, 'the second verdict');
+
+      // log: false leaves the comment out
+      await sleep(700);
+      var cap3 = await capture(p, { download: false, clipboard: false, log: false });
+      check('captureCores({log: false}) leaves the comment out', !/CORES log/.test(cap3) && /<!-- CORES data \{.*\} -->\n<\/html>$/.test(cap3));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 3; }, 'the third verdict');
+    } finally { p.close(); }
+
+    // a new session (a new paste of the script): the stored events travel on, under a second session prefix
+    var stored = JSON.parse(localStorage.getItem(LOG_KEY)).events.length;
+    p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      var cap4 = await capture(p, { download: false, clipboard: false, data: false });
+      var ev4 = logOf(cap4).data.events;
+      check('a later session carries the earlier sessions\' events', ev4.length > stored && new Set(ev4.map(function (e) { return e.id.split('-')[0]; })).size === 2, ev4.length + ' vs ' + stored);
+      check('data: false is logged as clinical off, and the log comment stands alone before </html>', find(ev4, 'clinical', 'off').length === 1 && !/CORES data/.test(cap4));
+      check('oldest first', ev4.every(function (e, i) { return !i || ev4[i - 1].t <= e.t; }));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length === 4; }, 'the fourth verdict');
+    } finally { p.close(); }
+
+    // what is stored is never trusted: anything off the contract is dropped, and only the newest 300 travel
+    var old = [], junk = [
+      { id: 'junk-1', t: '2026-11-14T07:00:00.000Z', ev: 'verdict', k: 'success', text: 'ZZTEST, ALPHA' },        // an extra key
+      { id: 'junk-2', t: '2026-11-14T07:00:00.000Z', ev: 'dialog', k: 'ZZTEST said no' },                          // free text as k
+      { id: 'junk-3', t: '2026-11-14T07:00:00.000Z', ev: 'searched_for_zztest' },                                  // not in the vocabulary
+      { id: 'junk-4', t: '2026-11-14T07:00:00.000Z', ev: 'rendered', n: -1 }, { id: 'junk-5', t: '2026-11-14T07:00:00.000Z', ev: 'rendered', n: '9990001' },
+      { id: 'JUNK 6', t: '2026-11-14T07:00:00.000Z', ev: 'armed' }, { id: 'junk-7', t: 'ZZTEST', ev: 'armed' }, 'ZZTEST, ALPHA', null];
+    for (var i = 0; i < 310; i++) old.push({ id: 'oldone-' + i, t: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString(), ev: 'reload', n: i });
+    localStorage.setItem(LOG_KEY, JSON.stringify({ v: 1, events: junk.concat(old) }));
+    p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      var cap5 = await capture(p, { download: false, clipboard: false });
+      var l5 = logOf(cap5), ev5 = l5.data.events;
+      check('only the newest 300 events travel', ev5.length === 300 && ev5[ev5.length - 1].ev === 'clinical' && ev5[0].id.indexOf('oldone-') === 0, ev5.length);
+      check('stored events off the contract are dropped', badEvents(ev5).length === 0 && !/junk|JUNK|ZZTEST|9990001|searched/.test(l5.json), l5.json.slice(0, 300));
+      await until(function () { return find(p.w.captureCores.events(), 'verdict').length >= 1; }, 'the verdict');
+      check('the stored log is capped at 300 too', JSON.parse(localStorage.getItem(LOG_KEY)).events.length === 300);
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
+  tests.log_trace_events = async function () {
+    localStorage.removeItem(LOG_KEY);
+    var p = await loadHud(await openList('fk_mode=opener'));
+    try {
+      p.w.traceCores(); openReport(p);
+      await until(function () { return records(p) === 5; }, 'the records');
+      p.w.traceCores('stop');
+      var ev = p.w.captureCores.events();
+      check('trace_started, then trace_done with who, records and duration', ev.length === 2 && ev[0].ev === 'trace_started' && ev[1].ev === 'trace_done' && ev[1].k === 'report_window' && ev[1].n === 5 && ev[1].ms > 0, JSON.stringify(ev));
+      check('to the contract', badEvents(ev).length === 0);
+    } finally { p.close(); localStorage.removeItem(LOG_KEY); }
+  };
+
   // ================= run =================
   (async function () {
     var names = Object.keys(tests).filter(function (n) { return !only || only.split(',').indexOf(n) >= 0; });

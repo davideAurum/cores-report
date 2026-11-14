@@ -11,6 +11,8 @@
 //                             captureCores({folder: true})     also write the file into a folder you pick once
 //                             captureCores({timeout: 180})     seconds to wait for the report (default 120)
 //                             captureCores({retries: 4})       Reload presses when CORES says it cannot load the list (default 2)
+//                             captureCores({data: false})      leave CORES's clinical data (<!-- CORES data -->) out of the capture
+//                             captureCores({log: false})       leave the HUD's event log (<!-- CORES log -->) out of the capture
 //                             captureCores(281, {download: false})   direct mode with options
 //
 // (`cores capture` on your PC puts this file on the clipboard with the captureCores(...) line already added.)
@@ -32,6 +34,8 @@
 // written automatically (the CORES page keeps the focus away from it), a banner at the top of the patient list offers
 // a "Copy to clipboard" button; one click does it. The HTML is also kept in window.coresCaptured.
 // While a capture runs, a small status box (draggable, collapsible) in the patient list shows its progress and messages.
+// Its magnifier opens the tools that look at the CORES page without showing patient data: Find, Describe, Columns, Map
+// and Trace (traceCores(): what loads CORES's patient records; see CORES_PAGE_NOTES.md).
 (function () {
   var BASE = location.origin + '/cores/uab/prod/cores.4.11.0/base/public_web/';
   var DB = 'cores-capture', STORE = 'kv';
@@ -326,7 +330,7 @@
       ov.root.style.display = 'flex';
       ov.mode.textContent = mode;
       ov.rows.textContent = ''; ov.reloads.textContent = '';
-      ov.warns = 0; ov.errs = 0;
+      ov.warns = 0; ov.errs = 0; ov.capRows = undefined;
       if (ov.list.childNodes.length) ovLog('──── new capture ────', 'mute');
       ov.list.scrollTop = ov.list.scrollHeight;
       ov.started = Date.now();
@@ -388,6 +392,7 @@
     line.textContent = head + ': ' + text;
     ovAppend(line);
     ov.list.scrollTop = ov.list.scrollHeight;   // always in view
+    hudEvent('verdict', kind === 'ok' ? 'success' : kind === 'warn' ? 'problems' : 'failed', ov.capRows, ov.started ? Date.now() - ov.started : undefined);
     try { trAfterCapture(); } catch (e) {}   // a Trace armed for this capture stops by itself now
   }
   function ovStat(which, text) { if (ov && ov[which] && ov[which].textContent !== text) ov[which].textContent = text; }
@@ -413,6 +418,79 @@
       line.appendChild(document.createTextNode(icon + msg));
       ovAppend(line);
     } catch (e) {}
+  }
+
+  // ---- the HUD's event log: what the HUD did, step by step, kept across sessions in this browser (localStorage, the
+  // newest 300) and carried by every capture in a comment of its own, so the PC side (cores log) can show both ends of
+  // a run. Just before the capture's closing </html>, after the CORES data comment, escaped the same way:
+  //     <!-- CORES log {"v":1,"events":[{"id":"k3f9a2-17","t":"2026-11-14T07:01:02.345Z","ev":"verdict","k":"success","n":57,"ms":8123}]} -->
+  //   id   unique per event: this session's random prefix + a counter ([a-z0-9-], 3-40 long); the PC side drops repeats by it
+  //   t    when, ISO 8601 UTC
+  //   ev   what happened, from the fixed list below
+  //   k    optional: which kind, from that event's fixed list
+  //   n    optional: a count (a non-negative whole number);  ms  optional: a duration in milliseconds
+  // Nothing else, and NEVER free text: no dialog text, no search words, no names, no addresses. An event that is not
+  // in the list, or carries anything else, is dropped, both when it is written and when the stored ones are read back.
+  // A capture carries the events up to its own delivery: how its copy, download and verdict went travels in the next
+  // capture. captureCores({log: false}) leaves the comment out.
+  var LOG_EV = {                               // ev: [the k values it may carry]
+    armed: ['window', 'direct'],               // captureCores(): waiting for CORES's own report window / opening the report itself
+    blocked: [],                               // direct mode: the browser blocked the popup
+    report_opened: ['window', 'direct'],       // a report window is in hand (opened by CORES / by the script)
+    other_window: [],                          // armed: CORES opened a window that is not a report
+    report_loaded: [],                         // the report page loaded in it (ms: since the window was in hand)
+    dialog: ['cant_load'],                     // CORES's "Can't Load Patient List" came up
+    reload: [],                                // OK and Reload pressed for it (n: which attempt)
+    rendered: ['form_submit', 'print', 'idle', 'timeout'],   // the report's HTML taken, and how (n: patient rows, ms: since the window was in hand)
+    unrendered: [],                            // ... with no patient rows in it
+    teams: ['found', 'none'],                  // each patient's team read from the list (n: patients)
+    clinical: ['found', 'none', 'off', 'error'],   // CORES's clinical data read from the list (n: patients)
+    copied: ['devtools', 'popup', 'window', 'exec', 'button'],   // on the clipboard, and which way (n: which attempt)
+    copy_failed: [],                           // not copied automatically: the banner's button is offered (n: attempts)
+    downloaded: [], download_failed: [],
+    folder_saved: [], folder_failed: [],
+    window_closed: [],                         // the report window closed before anything was captured
+    failed: ['dialog', 'timeout'],             // nothing captured, and why
+    verdict: ['success', 'problems', 'failed'],    // the capture's verdict line (n: patient rows, ms: on the HUD's clock)
+    tool: ['find', 'describe', 'columns', 'map'],  // a HUD tool's result was shown
+    trace_started: [],
+    trace_done: ['report_window', 'list_page', 'unknown', 'not_seen', 'already_there']   // who wrote the records (n: records, ms: how long it was armed)
+  };
+  var LOG_KEY = 'cores-capture-log', LOG_MAX = 300;
+  var logSession = (Math.random().toString(36).slice(2) + '000000').replace(/[^a-z0-9]/g, '').slice(0, 6), logSeq = 0, logMem = [];
+  function logWhole(x) { return typeof x === 'number' && isFinite(x) && x >= 0 && Math.floor(x) === x; }
+  function logClean(e) {   // an event rebuilt from the keys it may have, or null when anything about it is off
+    try {
+      if (!e || typeof e !== 'object') return null;
+      if (typeof e.id !== 'string' || !/^[a-z0-9-]{3,40}$/.test(e.id)) return null;
+      if (typeof e.t !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,3})?Z$/.test(e.t)) return null;
+      if (typeof e.ev !== 'string' || !Object.prototype.hasOwnProperty.call(LOG_EV, e.ev)) return null;
+      for (var key in e) if (key !== 'id' && key !== 't' && key !== 'ev' && key !== 'k' && key !== 'n' && key !== 'ms') return null;
+      var o = { id: e.id, t: e.t, ev: e.ev };
+      if (e.k !== undefined) { if (typeof e.k !== 'string' || LOG_EV[e.ev].indexOf(e.k) < 0) return null; o.k = e.k; }
+      if (e.n !== undefined) { if (!logWhole(e.n)) return null; o.n = e.n; }
+      if (e.ms !== undefined) { if (!logWhole(e.ms)) return null; o.ms = e.ms; }
+      return o;
+    } catch (x) { return null; }
+  }
+  function hudEvents() {   // the newest 300: what this browser has stored plus this session's, oldest first, each one checked
+    var all = [], seen = {}, out = [];
+    try { var st = JSON.parse(localStorage.getItem(LOG_KEY) || 'null'); if (st && st.v === 1 && Array.isArray(st.events)) all = st.events.slice(-2 * LOG_MAX); } catch (e) {}
+    all.concat(logMem).forEach(function (e) { var c = logClean(e); if (c && !seen[c.id]) { seen[c.id] = 1; out.push(c); } });
+    out.sort(function (a, b) { return a.t < b.t ? -1 : a.t > b.t ? 1 : 0; });
+    return out.length > LOG_MAX ? out.slice(-LOG_MAX) : out;
+  }
+  function hudEvent(ev, k, n, ms) {   // never throws, never stops the step it reports
+    try {
+      var e = { id: logSession + '-' + (++logSeq), t: new Date().toISOString(), ev: ev };
+      if (k !== undefined && k !== null && k !== '') e.k = String(k);
+      if (typeof n === 'number' && isFinite(n) && n >= 0) e.n = Math.floor(n);
+      if (typeof ms === 'number' && isFinite(ms) && ms >= 0) e.ms = Math.floor(ms);
+      e = logClean(e); if (!e) return;
+      logMem.push(e); if (logMem.length > LOG_MAX) logMem = logMem.slice(-LOG_MAX);
+      var all = hudEvents();   // with what another CORES window may have stored meanwhile
+      try { localStorage.setItem(LOG_KEY, JSON.stringify({ v: 1, events: all })); } catch (x) {}
+    } catch (x) {}
   }
 
   // ---- a small banner at the top of the patient list, for the steps that need a click
@@ -481,7 +559,7 @@
     var done = 'report HTML is on the clipboard (' + text.length.toLocaleString() + ' chars); on your PC run   cores generate';
     var why = [];
     if (devtoolsCopy) {
-      try { devtoolsCopy(text); log(done + ' (DevTools copy)', 'ok'); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }
+      try { devtoolsCopy(text); log(done + ' (DevTools copy)', 'ok'); hudEvent('copied', 'devtools', attempt); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }
     } else why.push('no DevTools copy() helper (the page has its own "copy")');
     // the report window is the focused one right after the capture (it was just opened by your click), and the clipboard
     // API only writes from a focused document: try from there first, then from this window
@@ -499,7 +577,7 @@
       if (!(navigator.clipboard && navigator.clipboard.writeText)) throw new Error('no clipboard API on this page');
       return navigator.clipboard.writeText(text).then(function () { return 'this window'; });
     });
-    return p.then(function (via) { log(done + ' (via ' + via + ')', 'ok'); return true; }, function (e) {
+    return p.then(function (via) { log(done + ' (via ' + via + ')', 'ok'); hudEvent('copied', via === 'this window' ? 'window' : 'popup', attempt); return true; }, function (e) {
       why.push('clipboard API: ' + (e && e.message || e));
       var ok = false;
       try {
@@ -508,16 +586,17 @@
         document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove();
         if (!ok) why.push('execCommand copy refused');
       } catch (e2) { why.push('execCommand: ' + (e2 && e2.message || e2)); }
-      if (ok) { log(done, 'ok'); return true; }
+      if (ok) { log(done, 'ok'); hudEvent('copied', 'exec', attempt); return true; }
       if (attempt < 4) {   // the report window has the focus: close it, so this window gets it back, and try again
         try { if (popup && !popup.closed) (popup.__realClose || popup.close).call(popup); } catch (e) {}
         try { window.focus(); } catch (e) {}
         return new Promise(function (res) { setTimeout(function () { res(copyText(text, name, attempt + 1, null)); }, 2000); });
       }
       showBanner('CORES capture "' + name + '" is ready.', [['Copy to clipboard', function (el) {
-        navigator.clipboard.writeText(text).then(function () { el.textContent = 'Copied'; log(done, 'ok'); },
+        navigator.clipboard.writeText(text).then(function () { el.textContent = 'Copied'; log(done, 'ok'); hudEvent('copied', 'button'); },
           function (e3) { el.textContent = 'Copy failed: ' + e3.message; });
       }]]);
+      hudEvent('copy_failed', null, attempt);
       log('could not copy automatically (' + why.join('; ') + '). Click "Copy to clipboard" in the banner at the top of the ' +
         'patient list (one click; that always works).', 'warn');
       return false;
@@ -534,14 +613,14 @@
     return dir.getFileHandle(name, { create: true })
       .then(function (fh) { return fh.createWritable(); })
       .then(function (w) { return w.write(text).then(function () { return w.close(); }); })
-      .then(function () { log('saved ' + name + ' into the folder "' + dir.name + '"', 'ok'); showBanner('CORES capture: saved ' + name + ' into "' + dir.name + '".'); return true; });
+      .then(function () { log('saved ' + name + ' into the folder "' + dir.name + '"', 'ok'); hudEvent('folder_saved'); showBanner('CORES capture: saved ' + name + ' into "' + dir.name + '".'); return true; });
   }
   function saveToFolder(text, name) {
     if (!window.showDirectoryPicker) {
       log('this browser has no folder picker (File System Access API); the folder option is ignored', 'warn');
       return Promise.resolve(false);
     }
-    var failed = function (el) { return function (e) { el.textContent = 'Failed: ' + e.message; log('folder save failed: ' + e.message, 'warn'); }; };
+    var failed = function (el) { return function (e) { el.textContent = 'Failed: ' + e.message; log('folder save failed: ' + e.message, 'warn'); hudEvent('folder_failed'); }; };
     return idbGet('dir').catch(function () { return null; }).then(function (dir) {
       if (!dir) {
         showBanner('CORES capture "' + name + '" is ready. Choose the folder for captures (remembered next time):',
@@ -558,7 +637,7 @@
         ]);
         return false;
       });
-    }).catch(function (e) { log('folder save failed: ' + e.message, 'warn'); return false; });
+    }).catch(function (e) { log('folder save failed: ' + e.message, 'warn'); hudEvent('folder_failed'); return false; });
   }
 
   // ---- deliver the captured HTML every way that is switched on
@@ -655,10 +734,14 @@
     html = String(html).replace(/\r\n/g, '\n');   // so the clipboard, download and folder copies are byte-identical
     var text = '<!-- CORES capture ' + name + ' -->\n';   // the name travels with the text (used by cores --clipboard)
     if (opts.teams) text += '<!-- CORES teams ' + JSON.stringify(opts.teams).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
-    if (opts.clinical) {
-      var dataComment = '<!-- CORES data ' + (opts.clinicalText || JSON.stringify(opts.clinical)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
-      html = /<\/html>\s*$/i.test(html) ? html.replace(/<\/html>\s*$/i, function () { return dataComment + '</html>'; }) : html + '\n' + dataComment;
+    // before the closing </html>: the CORES data comment, then the HUD's event log (see LOG_EV), escaped alike
+    var tail = '';
+    if (opts.clinical) tail += '<!-- CORES data ' + (opts.clinicalText || JSON.stringify(opts.clinical)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
+    if (opts.log !== false) {
+      var evs = []; try { evs = hudEvents(); } catch (e) {}
+      if (evs.length) tail += '<!-- CORES log ' + JSON.stringify({ v: 1, events: evs }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
     }
+    if (tail) html = /<\/html>\s*$/i.test(html) ? html.replace(/<\/html>\s*$/i, function () { return tail + '</html>'; }) : html + '\n' + tail;
     text += html;
     window.coresCaptured = text;
     var jobs = [];
@@ -670,8 +753,8 @@
         a.href = URL.createObjectURL(new Blob([text], { type: 'text/html' }));
         a.download = name;
         document.body.appendChild(a); a.click(); a.remove();
-        log('download started: ' + name, 'ok');
-      } catch (e) { log('download failed: ' + e.message, 'warn'); }
+        log('download started: ' + name, 'ok'); hudEvent('downloaded');
+      } catch (e) { log('download failed: ' + e.message, 'warn'); hudEvent('download_failed'); }
     }
     return Promise.all(jobs);
   }
@@ -720,6 +803,8 @@
   function watchReport(popup, opts, reportId) {
     var retries = opts.retries === undefined ? 2 : opts.retries;
     var done = false, lastRows = 0, lastChange = Date.now(), timer, killer, reloadTimer = null, ticks = 0, reloads = 0, dialogSeen = '';
+    var watchT0 = Date.now();   // for the event log's durations
+    var HOW_KEY = { 'form submit intercepted': 'form_submit', 'window.print intercepted': 'print', 'rendered and idle': 'idle', 'timeout with rows present': 'timeout' };
 
     function wrap(inner) { return '<html>' + inner + '</html>'; }
     function stop() { done = true; clearInterval(timer); clearTimeout(killer); if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null; } }
@@ -734,17 +819,24 @@
       var rows = (html.match(/id="row_template_\d+"/g) || []).length;
       log('captured (' + how + '): ' + html.length.toLocaleString() + ' chars, ' + rows + ' patient rows -> ' + name, rows ? 'ok' : 'warn');
       ovStat('rows', rows + ' patient row' + (rows === 1 ? '' : 's'));
+      hudEvent('rendered', HOW_KEY[how], rows, Date.now() - watchT0);
+      if (ov) ov.capRows = rows;
       if (rows === 0) {
         log('no rendered patient rows in it: CORES did not render the report. The capture is delivered anyway, marked in its name.', 'warn');
         name = name.replace(/\.html$/, ' UNRENDERED.html');
+        hudEvent('unrendered');
       }
       ovStatus('Delivering ' + rows + ' patient rows (clipboard' + (opts.download !== false ? ', download' : '') + (opts.folder ? ', folder' : '') + ')\u2026', 'busy');
       var o = {}; for (var k in opts) o[k] = opts[k]; o.popup = popup;   // the report window is still open and focused now
       try { o.teams = teamsFromCores(); } catch (e) { o.teams = null; }
       if (o.teams) log('teams from the CORES patient list: ' + Object.keys(o.teams.teams).map(function (t) { return t + ' (' + o.teams.teams[t] + ')'; }).join(', '), 'ok');
       else log('no team data found in this CORES window: each patient\'s Team is left for you to type');
+      hudEvent('teams', o.teams ? 'found' : 'none', o.teams ? o.teams.patients.length : 0);
+      if (opts.data === false) hudEvent('clinical', 'off');
       if (opts.data !== false) {
-        try { o.clinical = clinicalFromCores(); } catch (e) { o.clinical = null; log('could not read CORES\'s clinical data (' + (e && e.message || e) + '); the report alone is captured', 'warn'); }
+        var clinicalErr = false;
+        try { o.clinical = clinicalFromCores(); } catch (e) { o.clinical = null; clinicalErr = true; log('could not read CORES\'s clinical data (' + (e && e.message || e) + '); the report alone is captured', 'warn'); }
+        hudEvent('clinical', clinicalErr ? 'error' : o.clinical ? 'found' : 'none', o.clinical ? o.clinical.counts.patients : 0);
         if (o.clinical) {
           o.clinicalText = JSON.stringify(o.clinical);
           var kb = Math.round(o.clinicalText.length / 1024);
@@ -769,9 +861,10 @@
       return name;
     }
 
-    function fail(msg) {
+    function fail(msg, why) {
       if (done) return;
       stop();
+      hudEvent('failed', why);
       console.error('CORES capture: ' + msg + ' The report window is left open so you can look at it.');
       ovLog(msg + ' The report window is left open so you can look at it.', 'err');
       ovVerdict('err', 'nothing captured. Press F5 in the CORES patient list window, open your list again, then paste the script again.');
@@ -786,6 +879,7 @@
       log('CORES says "' + text + '" - pressing OK and Reload (attempt ' + reloads + ' of ' + retries + ')', 'warn');
       ovStatus('Reloading report (' + reloads + ' of ' + retries + ')', 'warn');
       ovStat('reloads', reloads + ' reload' + (reloads === 1 ? '' : 's'));
+      hudEvent('reload', null, reloads);
       var ok = buttonNamed(d, 'OK');
       if (ok) { try { ok.click(); } catch (e) {} }
       reloadTimer = setTimeout(function () {
@@ -804,6 +898,7 @@
       if (w.closed) {
         stop();
         if (!done) {
+          hudEvent('window_closed');
           console.error('CORES capture: the report window closed before anything was captured.');
           ovLog('the report window closed before anything was captured.', 'err');
           ovVerdict('err', 'the report window closed before anything was captured. Open the report again.');
@@ -820,6 +915,7 @@
         if (!reportId) reportId = reportIdOf(d.location.href) || null;   // for the file name (a Reload may drop it from the URL)
         ovLog('report page loaded' + (reportId ? ' (report ' + reportId + ')' : '') + '; waiting for the patient rows');
         ovStatus('Report loading\u2026', 'busy');
+        hudEvent('report_loaded', null, null, Date.now() - watchT0);
         // PDF-type reports: the app builds <form><input name=options><input name=html></form> and calls form.submit().
         // While the capture is pending that submit is taken instead; afterwards (captured, or given up) CORES's own flow
         // is let through, so its PDF still appears
@@ -843,7 +939,8 @@
         var t = dialogText(d);
         if (t && t !== dialogSeen) {
           dialogSeen = t;
-          if (!recover(w, d, t)) fail('CORES could not load the report: "' + t + '" (after ' + reloads + ' reload' + (reloads === 1 ? '' : 's') + ').');
+          hudEvent('dialog', 'cant_load');
+          if (!recover(w, d, t)) fail('CORES could not load the report: "' + t + '" (after ' + reloads + ' reload' + (reloads === 1 ? '' : 's') + ').', 'dialog');
           return;
         }
       }
@@ -868,7 +965,7 @@
       var rows = d ? renderedRows(d) : 0;
       if (rows) finish(wrap(d.documentElement.innerHTML), 'timeout with rows present');
       else fail('timed out after ' + (opts.timeout || 120) + ' s with no rendered patient rows. The report window shows: ' +
-        (d ? describePopup(d) : '(not readable: cross-origin or closed)') + '.');
+        (d ? describePopup(d) : '(not readable: cross-origin or closed)') + '.', 'timeout');
     }, (opts.timeout || 120) * 1000);
   }
 
@@ -883,10 +980,12 @@
       if (window.__coresArmed && w) {
         if (u && u !== 'about:blank' && !/univ_wa_rnd_build_report|report_id/i.test(u)) {
           log('a window opened that is not the report (' + u.slice(0, 100) + '); still armed');
+          hudEvent('other_window');
           return w;
         }
         var o = window.__coresArmed;
         window.__coresArmed = null;
+        hudEvent('report_opened', 'window');
         ovStatus('Report window open, waiting\u2026', 'busy');
         log('CORES opened a report window' + (u ? ' (' + u.slice(0, 120) + ')' : '') + '; capturing it when it has rendered…');
         watchReport(w, o, reportIdOf(u) || null);
@@ -899,6 +998,7 @@
       'it another way: run   captureCores(281)   in the Console instead (the script then opens the report itself).');
     ovStat('rows', '');
     log('armed: the next report window CORES opens will be captured');
+    hudEvent('armed', 'window');
     return 'armed…';
   }
 
@@ -1068,7 +1168,7 @@
     try {
       var st = window.localStorage;
       for (var s = 0; s < st.length; s++) {
-        if (st.key(s) === OV_KEY) continue;   // the Find box's own words
+        if (st.key(s) === OV_KEY || st.key(s) === LOG_KEY) continue;   // the Find box's own words; the HUD's event log
         var t2 = hit(st.getItem(st.key(s))); if (t2) out.notes.push('browser storage "' + safe(st.key(s)) + '" contains ' + t2);
       }
     } catch (e) {}
@@ -1300,6 +1400,7 @@
   // a Find or Describe answer in the HUD's console: the first line as a title, verdict lines coloured, section titles
   // bold, a Copy for Claude button; scrolled into view, the HUD opened if it was collapsed, lit up for a moment
   function showResult(lines, forClaude, what) {
+    if (what !== 'Trace') hudEvent('tool', String(what).toLowerCase());   // the Trace has its own events
     var box = ovEl('div', 'margin:5px 0;padding:5px 7px;border:1px solid #c9d6e3;border-radius:5px;background:#f6f9fc;color:#1b1b1b;white-space:pre-wrap;word-break:break-word');
     lines.forEach(function (line, i) {
       box.appendChild(ovEl('div', i === 0 ? 'font:600 12px Segoe UI,Arial,sans-serif;color:#1f4e79;margin-bottom:2px' :
@@ -2092,6 +2193,7 @@
     T.killer = setTimeout(function () { if (TR === T) { T.auto = 'by itself after 15 minutes'; trStop({ hud: T.hud }); } }, 15 * 60000);
     TR = T;
     window.__coresTraceStop = function () { if (TR === T) trStop({ quiet: true }); };
+    hudEvent('trace_started');
     return T;
   }
   function trStop(opt) {
@@ -2336,6 +2438,7 @@
     if (opt.quiet) return 'stopped';
     var rep = trReport(T);
     window.coresTrace = { text: rep.text, verdict: rep.verdict };
+    hudEvent('trace_done', rep.verdict.who, rep.verdict.records, T.tEnd);
     console.log(rep.text);
     ovLog('Trace stopped' + (T.auto ? ' ' + T.auto : '') + ': ' + T.ev.length + ' things seen in ' + (T.tEnd / 1000).toFixed(1) + ' s.');
     if (ov) showResult(rep.lines, rep.text, 'Trace');   // with its Copy for Claude button
@@ -2357,6 +2460,8 @@
     var url = BASE + '?prg_name=univ_wa_rnd_build_report&options=report_id:' + reportId +
       '&mode=pcedge&emr_type=CERNER-CCL-V4&report_name=univ_wa_rnd_api';
     var popup = (opts.open || window.__coresRealOpen || function (u, n, f) { return window.open(u, n, f); })(url, 'cores_capture_' + reportId, 'width=1400,height=900');
+    hudEvent('armed', 'direct');
+    hudEvent(popup ? 'report_opened' : 'blocked', popup ? 'direct' : null);
     if (!popup) {
       console.error('CORES capture: window.open was blocked. Allow popups for this site and try again.');
       ovStart('direct mode, report ' + reportId, 'Opening the report\u2026');
@@ -2381,4 +2486,5 @@
     }]]);
   };
   window.captureCores.deliver = deliver;
+  window.captureCores.events = hudEvents;   // the HUD's event log as the next capture would carry it
 })();
