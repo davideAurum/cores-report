@@ -20,7 +20,7 @@ command: `cores generate`.
    drag it by its title bar, collapse it with –, or hide it with ×. Its **Find in CORES** box finds where CORES keeps
    something: type words with a comma between (`pulm, interv`, or a number for an id) and press Find. It answers in
    plain words where they are on the page, in which list rows, and in the page's data with the names of the fields
-   beside them, never their values or any patient data, and **Copy for Claude** copies that answer to paste into a
+   beside them (a name that does not look like a programmer's field name shows as `<name>`), never their values, and **Copy for Claude** copies that answer to paste into a
    chat. In the Console the same search is `probeCores('pulm', 'interv')`. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
 3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the

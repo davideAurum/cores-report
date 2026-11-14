@@ -564,8 +564,9 @@
 
   // ---- Find in CORES (probeCores): where CORES keeps a word (a team name, a label) or an id, on the page, in its
   // frames and in its JavaScript data, WITHOUT reporting patient data: only the words searched for, element tags and
-  // classes, the NAMES of the fields beside a match (never their values), counts, and the paths (no query strings) of
-  // what the page has loaded; numbers of 3 or more digits show as #. Used by the Find box in the status box, or in the
+  // classes, the NAMES of the fields beside a match (never their values), counts, and the file names (no folders) of
+  // what the page has loaded (other sites by name only). Any name that does not look like a programmer's
+  // identifier (it could be a patient's name or number used as a key or an id) shows as <name>. Used by the Find box in the status box, or in the
   // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
   var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
     localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, captureCores: 1, probeCores: 1, __coresRealOpen: 1 };
@@ -585,21 +586,32 @@
       if (/^\d+$/.test(x)) ids.push(x); else if (x) terms.push(x.toLowerCase());
     });
     if (!terms.length && !ids.length) { console.log("probeCores: e.g. probeCores('pulm') or probeCores('pulm', 'interv') or probeCores(1234)"); return { text: '' }; }
-    var searched = terms.concat(ids.map(function (i) { return 'id ' + i; }));
+    var searched = terms.concat(ids.map(function (i) { return 'id ' + i; })), asked = ids.length;
     function scrub(x) { return String(x).replace(/\d{3,}/g, '#'); }
-    var out = { searched: searched, page: scrub(location.pathname).slice(0, 200), optionValues: [], dom: [], data: [], loads: [], notes: [] };
+    // names (field names, element ids and classes, path pieces) are reported only when they look like a programmer's
+    // identifier: letters, digits and _ $ - only, at most 30 long, with no long number. Anything else could be a
+    // patient's name or number used as a key, and shows as <name>.
+    function safe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,29}$/.test(x) && !/\d{3,}/.test(x) ? x : '<name>'; }
+    function safePath(pth) { return pth.split('.').map(function (seg) { var m = seg.match(/^([^\[]*)((?:\[i\])*)$/); return m ? (m[1] === '<name>' ? m[1] : m[1] ? safe(m[1]) : '') + m[2] : '<name>'; }).join('.'); }
+    var optionIds = [];   // the matched menu choices' own values, kept here for matching ids, never reported
+    var out = { searched: searched, page: '', menuChoiceValues: 0, dom: [], data: [], loads: [], notes: [] };
+    out.page = location.pathname.split('/').filter(Boolean).slice(-2).map(safe).join('/');
     function hit(x) {   // every search word a text or value matches, joined ('' for none)
       x = String(x);
       var m = [], l = x.toLowerCase();
-      for (var i = 0; i < ids.length; i++) if (x.trim() === ids[i]) m.push('id ' + ids[i]);
+      for (var i = 0; i < ids.length; i++) if (x.trim() === ids[i]) m.push(i < asked ? 'id ' + ids[i] : 'id of a menu choice found');
       for (var j = 0; j < terms.length; j++) if (l.indexOf(terms[j]) >= 0) m.push(terms[j]);
       return m.join(', ');
     }
     function desc(el) {
-      var d = el.tagName.toLowerCase();
-      if (el.id) d += '#' + el.id;
-      if (typeof el.className === 'string' && el.className.trim()) d += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
-      return scrub(d);
+      // an id is shown only off the list rows (a row's id is often the patient's) and when it is not all capitals (CORES
+      // writes names in capitals); a class only when more than one element has it (one on a single row could be a name)
+      var d = el.tagName.toLowerCase(), doc = el.ownerDocument;
+      if (el.id && /[a-z]/.test(el.id) && !up(el, ['TR', 'LI'])) d += '#' + safe(el.id);
+      if (typeof el.className === 'string' && el.className.trim())
+        d += el.className.trim().split(/\s+/).filter(function (c) { try { return doc.getElementsByClassName(c).length > 1; } catch (e) { return false; } })
+          .slice(0, 3).map(function (c) { return '.' + safe(c); }).join('');
+      return d;
     }
     function path(el) { var q = []; while (el && el.nodeType === 1 && q.length < 7) { q.unshift(desc(el)); el = el.parentElement; } return q.join(' > '); }
     function up(el, tags) { while (el && el.nodeType === 1) { if (tags.indexOf(el.tagName) >= 0) return el; el = el.parentElement; } return null; }
@@ -616,20 +628,21 @@
         var t = hit(own);
         if (!t) for (var a = 0; a < el.attributes.length; a++) if ((t = hit(el.attributes[a].value))) { attr = el.attributes[a].name; break; }
         if (!t || mine(el)) continue;
-        if (/^(OPTION|INPUT)$/.test(el.tagName) && el.value && el.value.length < 40 && out.optionValues.indexOf(el.value) < 0) out.optionValues.push(el.value);
+        if (/^(OPTION|INPUT)$/.test(el.tagName) && /^\d{1,12}$/.test(el.value || '') && optionIds.indexOf(el.value) < 0) optionIds.push(el.value);
         var row = up(el, ['TR', 'LI']), list = row && row.parentElement, pth = path(el), key = where + '|' + t + '|' + pth + '|' + attr;
         if (domKeys[key]) { domKeys[key].count++; continue; }
         out.dom.push(domKeys[key] = { found: t, where: where, via: attr ? 'attribute ' + attr : 'text', tag: el.tagName.toLowerCase(), path: pth, count: 1,
           selected: !!(el.selected || el.checked), visible: !!(el.offsetWidth || el.offsetHeight),
           row: row ? desc(row) : '', rowsInList: list ? list.children.length : 0,
-          rowAttributes: row ? [].map.call(row.attributes, function (x) { return x.name; }).slice(0, 15) : [] });
+          rowAttributes: row ? [].map.call(row.attributes, function (x) { return safe(x.name); }).slice(0, 15) : [] });
       }
     }
     scanDoc(document, 'this window');
     for (var f = 0; f < window.frames.length; f++) {
       try { scanDoc(window.frames[f].document, 'frame ' + f); } catch (e) { out.notes.push('frame ' + f + ' could not be read (another site)'); }
     }
-    ids = ids.concat(out.optionValues.filter(function (v) { return /^\d+$/.test(v) && ids.indexOf(v) < 0; }));
+    out.menuChoiceValues = optionIds.length;
+    ids = ids.concat(optionIds.filter(function (v) { return ids.indexOf(v) < 0; }));
 
     // 2. the page's JavaScript data
     var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null, objs = 0, found = {};
@@ -639,10 +652,10 @@
       if (ty === 'string' || ty === 'number') {
         var t = hit(o); if (!t) return;
         var key = pth.replace(/\[\d+\]/g, '[i]');
-        if (!found[key]) found[key] = { path: scrub(key), found: [], count: 0, inList: /\[\d+\]/.test(pth), fieldsBeside: [] };
+        if (!found[key]) found[key] = { path: safePath(key), found: [], count: 0, inList: /\[\d+\]/.test(pth), fieldsBeside: [] };
         t.split(', ').forEach(function (w) { if (found[key].found.indexOf(w) < 0) found[key].found.push(w); });
         found[key].count++;
-        if (parent && !found[key].fieldsBeside.length) try { found[key].fieldsBeside = Object.keys(parent).slice(0, 40).map(scrub); } catch (e) {}
+        if (parent && !found[key].fieldsBeside.length) try { var pk = Object.keys(parent); found[key].fieldsBeside = pk.length > 25 ? ['(a table of ' + pk.length + ' entries)'] : pk.map(safe); } catch (e) {}
         return;
       }
       if (ty !== 'object' || o.nodeType || o.window === o) return;
@@ -652,7 +665,7 @@
       var arr = Array.isArray(o);
       for (var i = 0; i < ks.length && i < 3000; i++) {
         var v; try { v = o[ks[i]]; } catch (e) { continue; }
-        walk(v, pth + (arr ? '[' + ks[i] + ']' : '.' + ks[i]), d + 1, o);
+        walk(v, pth + (arr ? '[' + ks[i] + ']' : '.' + (ks.length > 25 ? '<name>' : ks[i])), d + 1, o);
       }
     }
     function walkWin(w, name) {
@@ -671,14 +684,18 @@
       var st = window.localStorage;
       for (var s = 0; s < st.length; s++) {
         if (st.key(s) === OV_KEY) continue;   // the Find box's own words
-        var t2 = hit(st.getItem(st.key(s))); if (t2) out.notes.push('browser storage "' + scrub(st.key(s)) + '" contains ' + t2);
+        var t2 = hit(st.getItem(st.key(s))); if (t2) out.notes.push('browser storage "' + safe(st.key(s)) + '" contains ' + t2);
       }
     } catch (e) {}
     try {
       var seenL = {};
       performance.getEntriesByType('resource').forEach(function (r) {
-        var u = r.name.split('?')[0].split('#')[0], key = scrub(u.replace(location.origin, ''));
-        if (/\.(png|gif|jpe?g|svg|css|woff2?|ttf|ico)$/i.test(u) || seenL[key]) return;
+        var u = r.name.split('?')[0].split('#')[0];
+        if (/\.(png|gif|jpe?g|svg|css|woff2?|ttf|ico)$/i.test(u)) return;
+        var a = document.createElement('a'); a.href = u;
+        var key = a.host !== location.host ? 'another site: ' + a.hostname :
+          a.pathname.split('/').filter(Boolean).slice(-1).map(function (seg) { return /^[a-z_][a-z_.-]{0,39}$/.test(seg) ? seg : '<name>'; }).join('/');
+        if (seenL[key]) return;
         seenL[key] = 1; out.loads.push(r.initiatorType + ' ' + key);
       });
     } catch (e) {}
@@ -712,9 +729,10 @@
       return !out.dom.some(function (h) { return h.found.split(', ').indexOf(w) >= 0; }) && !out.data.some(function (h) { return h.found.indexOf(w) >= 0; });
     });
     if (none.length) L.push('', 'Not found anywhere: ' + none.join(', ') + '. Try a shorter piece of the word, spelled as CORES shows it.');
-    if (out.optionValues.length) L.push('', 'The menu choices found have the values ' + out.optionValues.map(scrub).join(', ') + '; those were also looked for in the data, as ids.');
+    if (out.menuChoiceValues) L.push('', out.menuChoiceValues + ' menu choice(s) found have a number as their value; it was also looked for in the data, as an id.');
     if (out.notes.length) L.push('', 'Notes: ' + out.notes.join('; '));
-    L.push('', 'Searched ' + document.getElementsByTagName('*').length + ' page elements and ' + objs + ' data objects. No patient data is in this summary.');
+    L.push('', 'Searched ' + document.getElementsByTagName('*').length + ' page elements and ' + objs + ' data objects. Names that do not look like ' +
+      'a programmer\'s field name show as <name>, and no values are included.');
     var text = L.join('\n');
     var forClaude = text + '\n\n---- details ----\n' + JSON.stringify(out, null, 1);
     window.coresProbe = { result: out, text: text, forClaude: forClaude };
