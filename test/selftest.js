@@ -46,6 +46,18 @@
     p.d.querySelector('a.t4m_rnd_report_item[data-report="' + (id || 281) + '"]').click();
   }
   function records(p) { var r = p.w.global_constant_row_info; return r && typeof r.length === 'number' ? r.length : 0; }
+  // fk_mode=cores (the default): CORES's own three buttons, and pressing them by hand
+  var FEATURES = 'left=100,top=100,width=1250,height=850,menubar=1,toolbar=1,resizeable=1,status=1,scrollbars=1';
+  function navReports(p) { return p.d.querySelector('#fake_nav div.t4m_rnd_nav_bar_container').querySelectorAll('span.nav_button')[1]; }
+  function menuItems(p) { return [].slice.call(p.d.querySelectorAll('div.t4m_rnd_nav_menu > div.t4m_rnd_menu_report_item_container > div.t4m_rnd_nav_menu_item')); }
+  function menuItem(p, text) { return menuItems(p).filter(function (x) { return x.textContent === (text || 'ANES ICU w/ Meds'); })[0]; }
+  function justPrint(p) { return p.d.querySelector('div.t4m_rnd_dialog_content div.t4m_rnd_report_dialog_just_print_btn'); }
+  async function openReportCores(p, text) {
+    navReports(p).click();
+    menuItem(p, text).click();
+    (await until(function () { return justPrint(p); }, 'the Just Print button')).click();
+    return until(function () { return p.w.fakeCores.lastReport; }, 'the report window');
+  }
 
   var tests = {};
 
@@ -112,6 +124,50 @@
       check('fk_decl=var: declared up front, not redefinable', !!d && d.configurable === false && d.value === undefined);
       await until(function () { return records(p) === 5; }, 'the records');
       check('the records appear with no report window', p.w.fakeCores.opened === 0);
+    } finally { p.close(); }
+  };
+
+  // the default mode: the report opens the way the Trace run in CORES showed (Reports, the menu item, Just Print)
+  tests.fake_cores_mode = async function () {
+    var p = await openList('');
+    try {
+      check('cores is the default mode', p.w.fakeCores.mode === 'cores' && p.w.fakeCores.fill === 'index');
+      check('the nav bar: span.nav_button in div.t4m_rnd_nav_section_dark in div.t4m_rnd_nav_bar_container, inside the list\'s container',
+        p.d.querySelectorAll('div.t4m_rnd_pt_list_main > div.t4m_rnd_nav_bar_relative_anchor > div.t4m_rnd_nav_bar_container > div.t4m_rnd_nav_section_dark > span.nav_button').length === 6);
+      check('the older modes\' Reports button and menu are not on the page', !p.d.querySelector('button.t4m_rnd_reports_btn') && !p.d.getElementById('t4m_reports_menu'));
+      check('no records, no menu and no dialog to begin with', !('global_constant_row_info' in p.w) && !menuItems(p).length && !justPrint(p));
+      navReports(p).click();
+      var rows = p.w.global_constant_row_info;
+      check('the Reports click fills the records at once: 5, made in this page, no report window', records(p) === 5 && rows instanceof p.w.Array && rows[0].patient_name === 'ZZTEST, ALPHA' && p.w.fakeCores.opened === 0);
+      check('... and shows the menu: three items, "ANES ICU w/ Meds" first', menuItems(p).length === 3 && menuItems(p)[0].textContent === 'ANES ICU w/ Meds');
+      menuItem(p).click();
+      check('the menu item removes the menu; the dialog waits for its template', !p.d.querySelector('div.t4m_rnd_nav_menu') && !justPrint(p));
+      var jp = await until(function () { return justPrint(p); }, 'the Just Print button');
+      check('the dialog: div.t4m_rnd_dialog_content > div > div > the Just Print button',
+        p.d.querySelector('div.t4m_rnd_dialog_content > div > div > div.t4m_rnd_report_dialog_just_print_btn.t4m_rnd_btn.t4m_rnd_btn_flat_blue_filled').textContent === 'Just Print');
+      var t1 = performance.now();
+      jp.click();
+      check('Just Print closes the dialog; no window yet', !p.d.querySelector('div.t4m_rnd_dialog') && p.w.fakeCores.opened === 0);
+      var pop = await until(function () { return p.w.fakeCores.lastReport; }, 'the report window');
+      var dt = Math.round(performance.now() - t1);
+      check('the report window opens about half a second after Just Print', dt >= 450 && dt < 2000, dt + ' ms');
+      check('... by window.open with CORES\'s features', p.w.fakeCores.lastFeatures === FEATURES && p.w.fakeCores.opened === 1);
+      await until(function () { return /univ_wa_rnd_build_report/.test(pop.location.href) && pop.document.querySelectorAll('tr.row_template[id]').length === 5; }, 'the report rows');
+      check('the report window has CORES\'s address shape', /prg_name=univ_wa_rnd_build_report&options=report_id:281&mode=pcedge&emr_type=[^&]+&report_name=/.test(pop.location.search));
+      await until(function () { return p.w.fakeCores.logPosts === 1; }, 'the usage log line');
+      check('the records are the list\'s own: filled once, not by the report window', p.w.fakeCores.fills === 1 && p.w.global_constant_row_info instanceof p.w.Array);
+      check('the hidden copy of the nav bar was not used', p.w.fakeCores.hiddenClicks === 0);
+    } finally { p.close(); }
+    p = await openList('fk_role=ask');
+    try {
+      navReports(p).click();
+      check('fk_role=ask: the Reports click asks first: a prompt, no menu, no records', !!p.d.querySelector('div.t4m_rnd_prompt') && !menuItems(p).length && records(p) === 0);
+      [].filter.call(p.d.querySelectorAll('div.t4m_rnd_prompt div.t4m_rnd_btn'), function (b) { return b.textContent === 'Provider'; })[0].click();
+      check('... and goes on when it is answered', !p.d.querySelector('div.t4m_rnd_prompt') && menuItems(p).length === 3 && records(p) === 5);
+    } finally { p.close(); }
+    p = await openList('fk_mode=opener');
+    try {
+      check('an older mode has its plain Reports button and no nav bar', !!p.d.querySelector('button.t4m_rnd_reports_btn') && !p.d.querySelector('.nav_button'));
     } finally { p.close(); }
   };
 
@@ -329,6 +385,34 @@
       check('verdict: list_page, 5 records', p.w.coresTrace.verdict.who === 'list_page' && p.w.coresTrace.verdict.records === 5);
       check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
       restored(p, 'click fill');
+    } finally { p.close(); }
+  };
+  // the whole of it on the fake page's default mode: the three clicks by hand, and a Trace that reads like the one
+  // from CORES
+  tests.trace_cores_mode = async function () {
+    var p = await loadHud(await openList(''));
+    try {
+      p.w.traceCores();
+      await sleep(100);
+      var pop = await openReportCores(p);
+      await until(function () { try { return /generate_pdf/.test(pop.location.href); } catch (e) { return false; } }, 'the fake PDF page');
+      await sleep(200);
+      var t = p.w.traceCores('stop').text;
+      note(t.split('\n').join('\n    '));
+      has(t, /click    \[L\] div\.t4m_rnd_nav_bar_relative_anchor > div\.t4m_rnd_nav_bar_container > div\.t4m_rnd_nav_section_dark > span\.nav_button \(in the patient list: text not read\)\n\s+handlers: jQuery click \(anonymous\) → [^\n]*self\.checkRequiredRoles, [^\n]*t4m\.cores\.ui\.simplePrompt, [^\n]*self\.showReportMenu/, 'the Reports click: the nav button, no text, its jQuery handler\'s calls');
+      has(t, /RECORDS  \[L\] assigned: 0 records\. BY THIS PAGE [^\n]*Report windows open: 0\.\n\s+call stack: t4m_fake_set_rows \(fake_cores\.html:\d+:\d+\) \[this page\] ← \S*printReportLegacy [^\n]*onPrintReport [^\n]*broadcast [^\n]*showReportMenu /, 'the empty list: printReportLegacy < onPrintReport < broadcast < showReportMenu');
+      has(t, /RECORDS  \[L\] changed in place \(seen by polling\): 5 records, 38 fields each\. BY THIS PAGE [^\n]*Report windows open: 0\./, 'the fill by index, no report window open');
+      has(t, /click    \[L\] [^\n]*div\.t4m_rnd_nav_menu > div\.t4m_rnd_menu_report_item_container > div\.t4m_rnd_nav_menu_item "ANES ICU w\/ Meds"\n\s+handlers: jQuery click \(anonymous\) → t4m\.cores\.PrintReportDialog, oPrintReportDialog\.render, domReportMenu\.remove; jQuery click \(anonymous\) → oDialog\.close/, 'the menu item click, with both handlers');
+      has(t, /request  \[L\] #\d+ XHR GET 127\.0\.0\.1 fake_report_template\.html \?<name>  → 200, \d+ chars, \d+ ms/, 'the template request before the dialog');
+      has(t, /click    \[L\] div\.t4m_rnd_dialog_content > div > div > div\.t4m_rnd_report_dialog_just_print_btn\.t4m_rnd_btn\.t4m_rnd_btn_flat_blue_filled "Just Print"\n\s+handlers: jQuery click \(anonymous\) → _printReport\.call, oPrintReportDialog\.close/, 'the Just Print click');
+      has(t, new RegExp('open     \\[L\\] window\\.open 127\\.0\\.0\\.1 fake_report\\.html \\?prg_name=univ_wa_rnd_build_report, options\\{report_id:281\\}, mode, emr_type, report_name, fk_mode, fk_fill  name "<name>"  features "' + FEATURES + '"  → the report window \\[R1\\]'), 'window.open with CORES\'s features');
+      has(t, new RegExp('^✔ WHO WROTE THE RECORDS: this page \\(the patient list\\)\\. Its own code wrote 5 records: ' + IN_TWO + 't4m_fake_set_rows \\(fake_cores\\.html:\\d+:\\d+\\) \\[this page\\] ← \\S*printReportLegacy ', 'm'), 'verdict: this page, by the assignment\'s stack');
+      has(t, /^→ skip\?  The records do not need the report window, but they do need a click: they were written \d+ ms after a click on [^\n]*span\.nav_button \(in the patient list: text not read\) \[handlers: jQuery click \(anonymous\) → [^\n]*self\.showReportMenu\], before any report window was opened \(the first opened [\d.]+ s later\)\./m, 'skip?: the Reports click, not the report window');
+      has(t, /^→ automate\?  Looks possible\. [^\n]*It came \d+ ms after a click on [^\n]*div\.t4m_rnd_report_dialog_just_print_btn[^\n]* "Just Print" \[handlers: jQuery click \(anonymous\) → _printReport\.call, oPrintReportDialog\.close\]/m, 'automate?: the Just Print click and window.open');
+      var m = /It came (\d+) ms after a click/.exec(t);
+      check('window.open came about half a second after Just Print', m && +m[1] >= 450 && +m[1] < 2000, m && m[1]);
+      check('nothing that could tell a patient, and no parameter values', leaks(t).length === 0, leaks(t).join(', '));
+      restored(p, 'cores mode');
     } finally { p.close(); }
   };
   tests.trace_index_fill_variants = async function () {

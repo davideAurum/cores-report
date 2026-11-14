@@ -498,14 +498,26 @@ The list lives in `LOG_EV` in capture_report.js; add to both when the HUD gains 
 ## Trying the HUD outside Citrix (`test/`, 2026-11-14)
 
 Only a pasted script reaches CORES, so the HUD is tried on a **fake CORES page** with invented patients
-("ZZTEST, ALPHA", MRN 9990001 ...): `test/fake_cores.html` (the list: `table.rnd_tbl_pt_list` rows, a Reports
-menu that calls `window.open`, the page's own global `copy`, swallowed clicks and keys) and
-`test/fake_report.html` (the report window: I-PASS style rows that cores_parse reads, then the `html` form
-submit like CORES's PDF reports). How the records get filled is a switch, because it is the unknown:
-`?fk_mode=opener` (the report window writes into its opener), `xhr` / `fetch` (the list fills them after the
-report opens), `timer` (the list fills them with no report: the control), `click` (the list fills them when its
-Reports button is clicked, as the Trace in CORES showed); `&fk_fill=push|index|strict` (`index`: an empty list,
-then filled by index, as CORES does it), `&fk_decl=var`.
+("ZZTEST, ALPHA", MRN 9990001 ...): `test/fake_cores.html` (the list: `table.rnd_tbl_pt_list` rows, the page's
+own global `copy`, swallowed clicks and keys) and `test/fake_report.html` (the report window: I-PASS style rows
+that cores_parse reads, then the `html` form submit like CORES's PDF reports).
+
+**By default the fake page opens its report the way CORES does** (`fk_mode=cores`, built from the Trace run in
+CORES): a nav bar whose Reports button (`span.nav_button`, a jQuery click handler that names `showReportMenu`)
+fills the records at the click, by assigning an empty list and filling it by index; a menu
+(`div.t4m_rnd_nav_menu_item` "ANES ICU w/ Meds"); a print dialog that shows after a short XHR, with a **Just
+Print** button (`div.t4m_rnd_report_dialog_just_print_btn`); and `window.open` half a second after Just Print,
+with CORES's features. A Trace of it reads like the one from CORES. What the Trace did not show is invented
+(the buttons' labels, the other buttons, a hidden second copy of the nav bar). Switches break one step at a
+time, for trying what the capture's automation does then: `&fk_break=reports|menu|item|twins|dialog|open` and
+`&fk_role=ask` (the Reports click asks a question first); the top of `test/fake_cores.html` explains each.
+
+The older modes, stage 1's guesses at what fills the records, are kept behind the same switch for the Trace's
+self-test; they use a plain Reports button and menu: `?fk_mode=opener` (the report window writes into its
+opener), `xhr` / `fetch` (the list fills them after the report opens), `timer` (the list fills them with no
+report: the control), `click` (the list fills them when its Reports button is clicked). With any mode:
+`&fk_fill=assign|push|index|strict` (`index`: an empty list, then filled by index, as CORES does it),
+`&fk_decl=var`.
 
 - Serve it with `python test/serve.py` (only `test/` and capture_report.js, only to this computer), then open
   `http://127.0.0.1:8765/fake_cores.html` and paste the script, or press "Load the HUD". **Not** `python -m
@@ -513,7 +525,8 @@ then filled by index, as CORES does it), `&fk_decl=var`.
 - `node test/run_selftest.mjs` runs `test/selftest.html` in headless Edge and prints PASS / FAIL: the fake page,
   the Trace in every mode (who wrote, the hints, the redaction, everything restored), the Trace with a capture
   in both orders of arming, and the event log's contract. It proves the tools on the fake page; what the real
-  page does is what the Trace run in CORES is for.
+  page does is what a run in CORES shows. `node test/run_selftest.mjs trace_cores_mode` runs one test (several:
+  commas between).
 - `node test/run_selftest.mjs --capture FILE` writes a capture of the fake report (invented patients, with its
   `CORES teams`, `CORES data` and `CORES log` comments) for trying the PC side: `cores generate FILE`.
 
