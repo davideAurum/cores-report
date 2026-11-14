@@ -36,23 +36,33 @@
   var BASE = location.origin + '/cores/uab/prod/cores.4.11.0/base/public_web/';
   var DB = 'cores-capture', STORE = 'kv';
 
-  function log(msg, ok) {
-    console.log('%cCORES capture: ' + msg, ok === false ? 'color:#b00020;font-weight:bold' : 'color:green;font-weight:bold');
-    ovLog(msg, ok === false ? 'err' : 'ok');
+  // kind: none for a neutral message, 'ok' (done), 'warn' (a problem worked around), 'err' or false (failed)
+  function log(msg, kind) {
+    var k = kind === false ? 'err' : kind || 'info';
+    console.log('%cCORES capture: ' + msg, k === 'err' ? 'color:#b00020;font-weight:bold' : k === 'warn' ? 'color:#9a6400;font-weight:bold' :
+      k === 'ok' ? 'color:#1e7b34;font-weight:bold' : '');
+    ovLog(msg, k);
   }
 
-  // ---- status overlay: a small box in the patient list (bottom right; drag it by its title bar, collapse it with –)
-  // that follows the capture from arming to delivery, mirroring the console messages. Its position and collapsed state
-  // are remembered in this browser. It only ever shows the script's own messages, never report or patient text.
+  // ---- the CORES Capture HUD: a small box in the patient list (bottom right) that follows the capture from arming to
+  // delivery, mirroring the console messages, and holds Find in CORES. Drag it by its title bar, resize it from any
+  // edge or corner, collapse it with –, hide it with ×; its place, size and collapsed state are remembered in this
+  // browser. It only ever shows the script's own messages, never report or patient text.
+  // Messages are neutral (gray-black) unless they say how something went: green done, yellow a problem worked around,
+  // red failed. A step under way shows as a spinner line at the bottom; a capture ends in one verdict line: SUCCESS
+  // (green), CAPTURED WITH PROBLEMS (yellow) or FAILED (red).
   var OV_KEY = 'cores-capture-overlay';
   var ov = null;
-  var OV_COLORS = { idle: '#6b7a8c', busy: '#c98a00', warn: '#c75b00', ok: '#2e7d32', err: '#b00020' };
+  var OV_C = { info: '#1b1b1b', ok: '#1e7b34', warn: '#9a6400', err: '#b00020', mute: '#7a8794' };
+  var OV_BG = { ok: '#e3f4e6', warn: '#fff3d6', err: '#fde4e7' };
+  var SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
   function ovPrefs(save) {
     try {
       if (save) { localStorage.setItem(OV_KEY, JSON.stringify(save)); return save; }
       return JSON.parse(localStorage.getItem(OV_KEY) || '{}') || {};
     } catch (e) { return {}; }
   }
+  function ovSave(k, v) { var p = ovPrefs(); p[k] = v; ovPrefs(p); }
   function ovEl(tag, css, text) {
     var el = document.createElement(tag);
     if (css) el.style.cssText = css;
@@ -64,58 +74,52 @@
     var old = document.getElementById('cores-capture-overlay');
     if (old) old.remove();   // left over from an earlier paste of the script
     var prefs = ovPrefs();
-    var root = ovEl('div', 'position:fixed;z-index:2147483646;width:340px;background:#fff;color:#1b1b1b;' +
-      'font:12px/1.4 Segoe UI,Arial,sans-serif;border:1px solid #1f4e79;border-radius:6px;' +
-      'box-shadow:0 4px 16px rgba(0,0,0,.35);overflow:hidden;user-select:none');
+    var FONT = 'Segoe UI,Arial,sans-serif', MONO = 'Consolas,Menlo,monospace';
+    var root = ovEl('div', 'position:fixed;z-index:2147483646;display:flex;flex-direction:column;box-sizing:border-box;' +
+      'background:#fff;color:#1b1b1b;font:12px/1.4 ' + FONT + ';border:1px solid #1f4e79;border-radius:7px;' +
+      'box-shadow:0 6px 22px rgba(0,0,0,.32);overflow:hidden;user-select:none;min-width:280px;min-height:96px');
     root.id = 'cores-capture-overlay';
-    var head = ovEl('div', 'display:flex;align-items:center;gap:6px;background:#1f4e79;color:#fff;padding:5px 6px 5px 8px;cursor:move');
-    var dot = ovEl('span', 'flex:none;width:9px;height:9px;border-radius:50%;background:' + OV_COLORS.idle);
-    var title = ovEl('span', 'flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600', 'CORES capture');
-    var clock = ovEl('span', 'flex:none;font-variant-numeric:tabular-nums;opacity:.85', '');
-    var btnCss = 'flex:none;width:20px;height:20px;padding:0;border:0;border-radius:3px;background:rgba(255,255,255,.15);' +
-      'color:#fff;font:bold 13px/20px Segoe UI,Arial,sans-serif;cursor:pointer';
+    root.style.width = (prefs.w || 380) + 'px';
+    root.style.height = (prefs.h || 320) + 'px';
+
+    // title bar: name, Find, collapse, hide
+    var head = ovEl('div', 'flex:none;display:flex;align-items:center;gap:6px;background:#1f4e79;color:#fff;padding:5px 6px 5px 10px;cursor:move');
+    var title = ovEl('span', 'flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;letter-spacing:.2px', 'CORES Capture HUD');
+    var btnCss = 'flex:none;width:22px;height:22px;padding:0;border:0;border-radius:4px;background:rgba(255,255,255,.14);' +
+      'color:#fff;font:bold 13px/22px ' + FONT + ';cursor:pointer;display:flex;align-items:center;justify-content:center';
+    var findBtn = ovEl('button', btnCss); findBtn.title = 'Find in CORES: where CORES keeps a word, with no patient data';
+    findBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>';
     var fold = ovEl('button', btnCss); fold.title = 'collapse / expand';
-    var shut = ovEl('button', btnCss, '\u00d7'); shut.title = 'hide (it comes back on the next capture)';
-    head.appendChild(dot); head.appendChild(title); head.appendChild(clock); head.appendChild(fold); head.appendChild(shut);
-    var body = ovEl('div', 'padding:6px 8px 8px');
-    var stats = ovEl('div', 'display:flex;gap:12px;margin-bottom:5px;color:#444');
-    var rowsEl = ovEl('span', '', ''), reloadEl = ovEl('span', '', ''), modeEl = ovEl('span', '', '');
+    var shut = ovEl('button', btnCss, '×'); shut.title = 'hide (it comes back on the next capture)';
+    head.appendChild(title); head.appendChild(findBtn); head.appendChild(fold); head.appendChild(shut);
+
+    // status bar: spinner or result mark, the current step, the clock; then counts
+    var bar = ovEl('div', 'flex:none;display:flex;align-items:center;gap:7px;padding:5px 9px;border-bottom:1px solid #e3e8ee;background:#f7f9fb');
+    var mark = ovEl('span', 'flex:none;width:14px;text-align:center;font:bold 13px/1 ' + MONO + ';color:' + OV_C.mute, '○');
+    var status = ovEl('span', 'flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600', 'Idle');
+    var clock = ovEl('span', 'flex:none;font-variant-numeric:tabular-nums;color:' + OV_C.mute, '');
+    bar.appendChild(mark); bar.appendChild(status); bar.appendChild(clock);
+    var stats = ovEl('div', 'flex:none;display:flex;gap:12px;padding:3px 9px;color:#5b6773;font-size:11px;border-bottom:1px solid #eef1f4');
+    var modeEl = ovEl('span'), rowsEl = ovEl('span'), reloadEl = ovEl('span');
     stats.appendChild(modeEl); stats.appendChild(rowsEl); stats.appendChild(reloadEl);
-    var list = ovEl('div', 'max-height:170px;overflow-y:auto;border-top:1px solid #dde3ea;padding-top:4px;' +
-      'font:11px/1.4 Consolas,Menlo,monospace;user-select:text;cursor:text');
-    body.appendChild(stats); body.appendChild(list);
-    // Find in CORES: type words, press Find; the answer (no patient data) shows here and is copied for Claude
-    var find = ovEl('div', 'border-top:1px solid #dde3ea;margin-top:6px;padding-top:6px');
-    find.appendChild(ovEl('div', 'font-weight:600;color:#1f4e79;margin-bottom:3px', 'Find in CORES'));
-    var frow = ovEl('div', 'display:flex;gap:4px');
-    var fin = ovEl('input', 'flex:1;min-width:0;font:12px Segoe UI,Arial,sans-serif;padding:2px 4px;border:1px solid #9aa8b6;border-radius:3px;user-select:text');
-    fin.placeholder = 'words, comma between: pulm, interv'; fin.value = prefs.find || '';
-    var fbtn = ovEl('button', 'flex:none;font:12px Segoe UI,Arial,sans-serif;padding:2px 10px;cursor:pointer', 'Find');
-    frow.appendChild(fin); frow.appendChild(fbtn); find.appendChild(frow);
-    var fout = ovEl('div', 'display:none;max-height:220px;overflow-y:auto;margin-top:5px;white-space:pre-wrap;word-break:break-word;' +
-      'font:11px/1.4 Consolas,Menlo,monospace;user-select:text;cursor:text;background:#f4f7fa;border-radius:3px;padding:4px 5px');
-    var fcopy = ovEl('button', 'display:none;margin-top:4px;font:12px Segoe UI,Arial,sans-serif;padding:2px 10px;cursor:pointer', 'Copy for Claude');
-    find.appendChild(fout); find.appendChild(fcopy); body.appendChild(find);
-    function runFind() {
-      var words = fin.value.split(/[,;\n]+/).map(function (w) { return w.trim(); }).filter(Boolean);
-      var p = ovPrefs(); p.find = fin.value; ovPrefs(p);
-      fout.style.display = '';
-      if (!words.length) { fout.textContent = 'Type one or more words first, with a comma between them.'; return; }
-      var r = probeCores.apply(null, words.concat([{ quiet: true }]));
-      fout.textContent = r.text + '\n\nPress "Copy for Claude" and paste it into the chat (it is also in window.coresProbe).';
-      fcopy.style.display = ''; fcopy.textContent = 'Copy for Claude';
-    }
-    fbtn.onclick = runFind;
-    fin.onkeydown = function (e) { e.stopPropagation(); if (e.key === 'Enter') runFind(); };
-    fcopy.onclick = function () {
-      var t = window.coresProbe && window.coresProbe.forClaude; if (!t) return;
-      copyText(t).then(function (ok) { fcopy.textContent = ok ? 'Copied for Claude ✓' : 'Could not copy: select the text above'; });
-    };
-    root.appendChild(head); root.appendChild(body);
+
+    // Find bar (shown by the magnifying glass)
+    var findBar = ovEl('div', 'flex:none;display:none;gap:4px;padding:6px 8px;border-bottom:1px solid #e3e8ee;background:#eef4fa');
+    var fin = ovEl('input', 'flex:1;min-width:0;font:12px ' + FONT + ';padding:3px 6px;border:1px solid #9aa8b6;border-radius:4px;user-select:text');
+    fin.placeholder = 'words to find, comma between (pulm, interv)'; fin.value = prefs.find || '';
+    var fgo = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 12px;border:1px solid #1f4e79;border-radius:4px;background:#1f4e79;color:#fff;cursor:pointer', 'Find');
+    findBar.appendChild(fin); findBar.appendChild(fgo);
+
+    // the console: the script's messages, Find results, and the live spinner line at the bottom
+    var list = ovEl('div', 'flex:1;min-height:0;overflow-y:auto;padding:5px 9px 7px;font:11px/1.45 ' + MONO + ';user-select:text;cursor:text');
+    var body = ovEl('div', 'flex:1;min-height:0;display:flex;flex-direction:column');
+    body.appendChild(stats); body.appendChild(findBar); body.appendChild(list);
+    root.appendChild(head); root.appendChild(bar); root.appendChild(body);
     document.body.appendChild(root);
 
-    ov = { root: root, head: head, dot: dot, title: title, clock: clock, fold: fold, body: body, list: list,
-           rows: rowsEl, reloads: reloadEl, mode: modeEl, started: 0, tick: null, collapsed: !!prefs.collapsed };
+    ov = { root: root, head: head, mark: mark, status: status, clock: clock, list: list, live: null, find: findBar, input: fin,
+           rows: rowsEl, reloads: reloadEl, mode: modeEl, started: 0, tick: null, spin: null, spinKind: '', frame: 0,
+           collapsed: !!prefs.collapsed, warns: 0, errs: 0 };
 
     function place(x, y) {   // keep the title bar on screen
       var w = root.offsetWidth, h = head.offsetHeight;
@@ -126,30 +130,83 @@
     }
     function setCollapsed(c) {
       ov.collapsed = c;
-      body.style.display = c ? 'none' : '';
-      fold.textContent = c ? '+' : '\u2013';
+      body.style.display = c ? 'none' : 'flex';
+      root.style.height = c ? 'auto' : (ovPrefs().h || 320) + 'px';
+      fold.textContent = c ? '+' : '–';
+    }
+    function showFind(on) {
+      findBar.style.display = on ? 'flex' : 'none';
+      findBtn.style.background = on ? 'rgba(255,255,255,.38)' : 'rgba(255,255,255,.14)';
+      ovSave('findOpen', on);
+      if (on) { if (ov.collapsed) setCollapsed(false); fin.focus(); fin.select(); }
     }
     setCollapsed(ov.collapsed);
+    showFind(!!prefs.findOpen);
     if (typeof prefs.x === 'number') place(prefs.x, prefs.y);
     else { root.style.right = '16px'; root.style.bottom = '16px'; }
 
-    fold.onclick = function (e) { e.stopPropagation(); setCollapsed(!ov.collapsed); var p = ovPrefs(); p.collapsed = ov.collapsed; ovPrefs(p); };
+    fold.onclick = function (e) { e.stopPropagation(); setCollapsed(!ov.collapsed); ovSave('collapsed', ov.collapsed); };
     shut.onclick = function (e) { e.stopPropagation(); root.style.display = 'none'; };
+    findBtn.onclick = function (e) { e.stopPropagation(); showFind(findBar.style.display === 'none'); };
     head.ondblclick = function (e) { if (e.target === head || e.target === title) fold.onclick(e); };
+    function runFind() {
+      var words = fin.value.split(/[,;\n]+/).map(function (w) { return w.trim(); }).filter(Boolean);
+      ovSave('find', fin.value);
+      if (!words.length) { ovLog('Find: type one or more words first, with a comma between them.', 'warn'); return; }
+      probeCores.apply(null, words.concat([{ hud: true }]));
+    }
+    fgo.onclick = runFind;
+    fin.onkeydown = function (e) { e.stopPropagation(); if (e.key === 'Enter') runFind(); if (e.key === 'Escape') showFind(false); };
 
+    // moving: drag the title bar
     head.onmousedown = function (e) {
-      if (e.button !== 0 || e.target === fold || e.target === shut) return;
+      if (e.button !== 0 || e.target !== head && e.target !== title) return;
       e.preventDefault();
       var r = root.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top, last = null;
-      function move(ev) { last = place(ev.clientX - dx, ev.clientY - dy); }
-      function up() {
-        document.removeEventListener('mousemove', move, true);
-        document.removeEventListener('mouseup', up, true);
-        if (last) { var p = ovPrefs(); p.x = last.x; p.y = last.y; ovPrefs(p); }
-      }
-      document.addEventListener('mousemove', move, true);
-      document.addEventListener('mouseup', up, true);
+      drag(function (ev) { last = place(ev.clientX - dx, ev.clientY - dy); }, function () { if (last) { ovSave('x', last.x); ovSave('y', last.y); } });
     };
+    // resizing: pull any edge or corner (the cursor shows where)
+    var EDGE = 6;
+    function edgeAt(e) {
+      var r = root.getBoundingClientRect(), x = e.clientX, y = e.clientY, s = '';
+      if (y - r.top < EDGE) s += 'n'; else if (r.bottom - y < EDGE) s += 's';
+      if (x - r.left < EDGE) s += 'w'; else if (r.right - x < EDGE) s += 'e';
+      return ov.collapsed ? s.replace(/[ns]/, '') : s;
+    }
+    root.addEventListener('mousemove', function (e) {
+      if (root.__resizing) return;
+      var s = edgeAt(e);
+      root.style.cursor = s ? s + '-resize' : '';
+    });
+    root.addEventListener('mousedown', function (e) {
+      var s = edgeAt(e);
+      if (!s || e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      var r = root.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
+      root.__resizing = true; place(r.left, r.top);
+      drag(function (ev) {
+        var dx = ev.clientX - x0, dy = ev.clientY - y0, w = r.width, h = r.height, x = r.left, y = r.top;
+        if (s.indexOf('e') >= 0) w = r.width + dx;
+        if (s.indexOf('w') >= 0) { w = r.width - dx; x = r.left + dx; }
+        if (s.indexOf('s') >= 0) h = r.height + dy;
+        if (s.indexOf('n') >= 0) { h = r.height - dy; y = r.top + dy; }
+        w = Math.max(280, Math.min(w, window.innerWidth)); h = Math.max(96, Math.min(h, window.innerHeight));
+        if (s.indexOf('w') >= 0) x = r.right - w;
+        if (s.indexOf('n') >= 0) y = r.bottom - h;
+        root.style.width = w + 'px'; if (!ov.collapsed) root.style.height = h + 'px';
+        place(x, y);
+      }, function () {
+        root.__resizing = false;
+        ovSave('w', root.offsetWidth); if (!ov.collapsed) ovSave('h', root.offsetHeight);
+        ovSave('x', parseFloat(root.style.left)); ovSave('y', parseFloat(root.style.top));
+      });
+    }, true);
+    function drag(move, up) {
+      function mv(ev) { move(ev); }
+      function done() { document.removeEventListener('mousemove', mv, true); document.removeEventListener('mouseup', done, true); up(); }
+      document.addEventListener('mousemove', mv, true);
+      document.addEventListener('mouseup', done, true);
+    }
     window.addEventListener('resize', function () {
       if (root.style.left) place(parseFloat(root.style.left), parseFloat(root.style.top));
     });
@@ -160,40 +217,91 @@
     var s = Math.floor((Date.now() - ov.started) / 1000);
     ov.clock.textContent = Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
   }
-  // a new capture: clear the box, show it again, start the clock
-  function ovStart(mode, status) {
+  // the spinner, in the status bar and on the live line, while a step is under way
+  function ovSpin(on) {
+    if (!ov) return;
+    if (on && !ov.spin) ov.spin = setInterval(function () {
+      ov.frame = (ov.frame + 1) % SPIN.length;
+      var ch = SPIN.charAt(ov.frame);
+      ov.mark.textContent = ch;
+      if (ov.live) ov.live.firstChild.textContent = ch + ' ';
+    }, 80);
+    if (!on && ov.spin) { clearInterval(ov.spin); ov.spin = null; }
+  }
+  // a new capture: show the HUD again, start the clock, reset the tallies
+  function ovStart(mode, text) {
     try {
       ovBuild();
       ov.root.style.display = '';
-      ov.list.innerHTML = '';
       ov.mode.textContent = mode;
       ov.rows.textContent = ''; ov.reloads.textContent = '';
+      ov.warns = 0; ov.errs = 0;
+      if (ov.list.childNodes.length) ovLog('──── new capture ────', 'mute');
+      ov.list.scrollTop = ov.list.scrollHeight;
       ov.started = Date.now();
       clearInterval(ov.tick); ov.tick = setInterval(ovClock, 1000); ovClock();
-      ovStatus(status, 'busy');
+      ovStatus(text, 'busy');
     } catch (e) {}
   }
-  // the one-line status in the title bar; ok / err (or final) end the clock
+  // the current step. busy (or warn while still working): spinner, and the same text on the live line at the bottom of
+  // the console; ok / err (or final): a mark instead, the clock stops
   function ovStatus(text, kind, final) {
     if (!ov) return;
-    ov.title.textContent = text;
-    ov.title.title = text;
-    ov.dot.style.background = OV_COLORS[kind] || OV_COLORS.idle;
-    if (final || kind === 'ok' || kind === 'err') { clearInterval(ov.tick); ov.tick = null; ovClock(); }
+    var working = !final && (kind === 'busy' || kind === 'warn');
+    ov.status.textContent = text; ov.status.title = text;
+    ov.status.style.color = kind === 'busy' ? OV_C.info : OV_C[kind] || OV_C.info;
+    ov.mark.style.color = kind === 'busy' ? '#1f4e79' : OV_C[kind] || OV_C.mute;
+    if (working) {
+      if (!ov.live) {
+        ov.live = ovEl('div', 'padding:1px 0;white-space:pre-wrap;word-break:break-word');
+        ov.live.appendChild(ovEl('span', 'font-weight:bold', SPIN.charAt(ov.frame) + ' '));
+        ov.live.appendChild(document.createTextNode(''));
+        ov.list.appendChild(ov.live);
+      }
+      ov.live.style.color = kind === 'warn' ? OV_C.warn : '#1f4e79';
+      ov.live.lastChild.nodeValue = text;
+      ov.list.scrollTop = ov.list.scrollHeight;
+      ovSpin(true);
+    } else {
+      ovSpin(false);
+      if (ov.live) { ov.live.remove(); ov.live = null; }
+      ov.mark.textContent = kind === 'ok' ? '✔' : kind === 'err' ? '✖' : kind === 'warn' ? '!' : '○';
+      clearInterval(ov.tick); ov.tick = null; ovClock();
+    }
+  }
+  // the capture's outcome: one coloured verdict line, and the status bar to match
+  function ovVerdict(kind, text) {
+    if (!ov) return;
+    var head = kind === 'ok' ? '✔ SUCCESS' : kind === 'warn' ? '⚠ CAPTURED WITH PROBLEMS' : '✖ FAILED';
+    ovStatus(head.slice(2) + ' - ' + text, kind, true);
+    var line = ovEl('div', 'margin:5px 0 3px;padding:4px 7px;border-radius:4px;white-space:pre-wrap;word-break:break-word;' +
+      'font:600 12px/1.4 Segoe UI,Arial,sans-serif;color:' + OV_C[kind] + ';background:' + OV_BG[kind] + ';border-left:4px solid ' + OV_C[kind]);
+    line.textContent = head + ': ' + text;
+    ovAppend(line);
+    ov.list.scrollTop = ov.list.scrollHeight;   // always in view
   }
   function ovStat(which, text) { if (ov && ov[which] && ov[which].textContent !== text) ov[which].textContent = text; }
+  // add a line to the console, above the live spinner line, keeping the view at the bottom if it was there
+  function ovAppend(el) {
+    var atEnd = ov.list.scrollHeight - ov.list.scrollTop - ov.list.clientHeight < 12;
+    if (ov.live) ov.list.insertBefore(el, ov.live); else ov.list.appendChild(el);
+    while (ov.list.childNodes.length > 400) ov.list.removeChild(ov.list.firstChild);
+    if (atEnd) ov.list.scrollTop = ov.list.scrollHeight;
+  }
+  // kind: info (neutral), ok (green), warn (yellow), err (red), mute (gray)
   function ovLog(msg, kind) {
     if (!ov) return;
     try {
+      kind = kind || 'info';
+      if (kind === 'warn') ov.warns++;
+      if (kind === 'err') ov.errs++;
       var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
-      var line = ovEl('div', 'padding:1px 0;white-space:pre-wrap;word-break:break-word;color:' +
-        (kind === 'err' ? '#b00020' : kind === 'warn' ? '#a14a00' : '#1b1b1b'));
-      line.appendChild(ovEl('span', 'color:#8a96a3', pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ' '));
-      line.appendChild(document.createTextNode(msg));
-      var atEnd = ov.list.scrollHeight - ov.list.scrollTop - ov.list.clientHeight < 8;
-      ov.list.appendChild(line);
-      while (ov.list.childNodes.length > 200) ov.list.removeChild(ov.list.firstChild);
-      if (atEnd) ov.list.scrollTop = ov.list.scrollHeight;
+      var icon = kind === 'ok' ? '✔ ' : kind === 'warn' ? '⚠ ' : kind === 'err' ? '✖ ' : '';
+      var line = ovEl('div', 'padding:1px 0;white-space:pre-wrap;word-break:break-word;color:' + (OV_C[kind] || OV_C.info) +
+        (kind === 'err' || kind === 'ok' ? ';font-weight:600' : ''));
+      line.appendChild(ovEl('span', 'color:' + OV_C.mute + ';font-weight:normal', pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ' '));
+      line.appendChild(document.createTextNode(icon + msg));
+      ovAppend(line);
     } catch (e) {}
   }
 
@@ -263,7 +371,7 @@
     var done = 'report HTML is on the clipboard (' + text.length.toLocaleString() + ' chars); on your PC run   cores generate';
     var why = [];
     if (devtoolsCopy) {
-      try { devtoolsCopy(text); log(done + ' (DevTools copy)'); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }
+      try { devtoolsCopy(text); log(done + ' (DevTools copy)', 'ok'); return Promise.resolve(true); } catch (e) { why.push('DevTools copy(): ' + (e && e.message || e)); }
     } else why.push('no DevTools copy() helper (the page has its own "copy")');
     // the report window is the focused one right after the capture (it was just opened by your click), and the clipboard
     // API only writes from a focused document: try from there first, then from this window
@@ -281,7 +389,7 @@
       if (!(navigator.clipboard && navigator.clipboard.writeText)) throw new Error('no clipboard API on this page');
       return navigator.clipboard.writeText(text).then(function () { return 'this window'; });
     });
-    return p.then(function (via) { log(done + ' (via ' + via + ')'); return true; }, function (e) {
+    return p.then(function (via) { log(done + ' (via ' + via + ')', 'ok'); return true; }, function (e) {
       why.push('clipboard API: ' + (e && e.message || e));
       var ok = false;
       try {
@@ -290,16 +398,16 @@
         document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove();
         if (!ok) why.push('execCommand copy refused');
       } catch (e2) { why.push('execCommand: ' + (e2 && e2.message || e2)); }
-      if (ok) { log(done); return true; }
+      if (ok) { log(done, 'ok'); return true; }
       if (attempt < 4) {   // the report window (which had the focus) closes 1.5 s after the capture: try again once it is gone
         return new Promise(function (res) { setTimeout(function () { res(copyText(text, name, attempt + 1, null)); }, 2000); });
       }
       showBanner('CORES capture "' + name + '" is ready.', [['Copy to clipboard', function (el) {
-        navigator.clipboard.writeText(text).then(function () { el.textContent = 'Copied'; log(done); },
+        navigator.clipboard.writeText(text).then(function () { el.textContent = 'Copied'; log(done, 'ok'); },
           function (e3) { el.textContent = 'Copy failed: ' + e3.message; });
       }]]);
       log('could not copy automatically (' + why.join('; ') + '). Click "Copy to clipboard" in the banner at the top of the ' +
-        'patient list (one click; that always works).', false);
+        'patient list (one click; that always works).', 'warn');
       return false;
     });
   }
@@ -314,14 +422,14 @@
     return dir.getFileHandle(name, { create: true })
       .then(function (fh) { return fh.createWritable(); })
       .then(function (w) { return w.write(text).then(function () { return w.close(); }); })
-      .then(function () { log('saved ' + name + ' into the folder "' + dir.name + '"'); showBanner('CORES capture: saved ' + name + ' into "' + dir.name + '".'); return true; });
+      .then(function () { log('saved ' + name + ' into the folder "' + dir.name + '"', 'ok'); showBanner('CORES capture: saved ' + name + ' into "' + dir.name + '".'); return true; });
   }
   function saveToFolder(text, name) {
     if (!window.showDirectoryPicker) {
-      log('this browser has no folder picker (File System Access API); the folder option is ignored', false);
+      log('this browser has no folder picker (File System Access API); the folder option is ignored', 'warn');
       return Promise.resolve(false);
     }
-    var failed = function (el) { return function (e) { el.textContent = 'Failed: ' + e.message; log('folder save failed: ' + e.message, false); }; };
+    var failed = function (el) { return function (e) { el.textContent = 'Failed: ' + e.message; log('folder save failed: ' + e.message, 'warn'); }; };
     return idbGet('dir').catch(function () { return null; }).then(function (dir) {
       if (!dir) {
         showBanner('CORES capture "' + name + '" is ready. Choose the folder for captures (remembered next time):',
@@ -338,7 +446,7 @@
         ]);
         return false;
       });
-    }).catch(function (e) { log('folder save failed: ' + e.message, false); return false; });
+    }).catch(function (e) { log('folder save failed: ' + e.message, 'warn'); return false; });
   }
 
   // ---- deliver the captured HTML every way that is switched on
@@ -356,8 +464,8 @@
         a.href = URL.createObjectURL(new Blob([text], { type: 'text/html' }));
         a.download = name;
         document.body.appendChild(a); a.click(); a.remove();
-        log('download started: ' + name);
-      } catch (e) { log('download failed: ' + e.message, false); }
+        log('download started: ' + name, 'ok');
+      } catch (e) { log('download failed: ' + e.message, 'warn'); }
     }
     return Promise.all(jobs);
   }
@@ -418,15 +526,26 @@
       var stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + pad(d.getMinutes());
       var name = (opts.name || ('CORES report' + (id ? ' ' + id : ''))) + ' ' + stamp + '.html';
       var rows = (html.match(/id="row_template_\d+"/g) || []).length;
-      log('captured (' + how + '): ' + html.length.toLocaleString() + ' chars, ' + rows + ' patient rows -> ' + name);
+      log('captured (' + how + '): ' + html.length.toLocaleString() + ' chars, ' + rows + ' patient rows -> ' + name, rows ? 'ok' : 'warn');
       ovStat('rows', rows + ' patient row' + (rows === 1 ? '' : 's'));
       if (rows === 0) {
-        log('no rendered patient rows in it: CORES did not render the report. The capture is delivered anyway, marked in its name.', false);
+        log('no rendered patient rows in it: CORES did not render the report. The capture is delivered anyway, marked in its name.', 'warn');
         name = name.replace(/\.html$/, ' UNRENDERED.html');
-        ovStatus('Captured, but UNRENDERED', 'warn', true);
-      } else ovStatus('Captured ' + rows + ' patient rows', 'ok');
+      }
+      ovStatus('Delivering ' + rows + ' patient rows (clipboard' + (opts.download !== false ? ', download' : '') + (opts.folder ? ', folder' : '') + ')\u2026', 'busy');
       var o = {}; for (var k in opts) o[k] = opts[k]; o.popup = popup;   // the report window is still open and focused now
-      try { deliver(html, name, o); } catch (e) { console.error('CORES capture: delivery failed', e); ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovStatus('Delivery failed', 'err'); }
+      // the verdict once every delivery has settled: green when all went through, yellow when the capture is in hand
+      // but something needs a hand (a click on the banner, an unrendered report, a reload, a warning above), red when
+      // the delivery itself broke
+      var settle = function (results) {
+        var held = (results || []).some(function (r) { return r === false; });
+        if (rows === 0) ovVerdict('warn', 'captured, but CORES had not rendered the report (0 patient rows). Try again.');
+        else if (held) ovVerdict('warn', rows + ' patient rows captured, but not every delivery went through: see the yellow lines (a banner at the top may need a click).');
+        else if (ov && ov.warns) ovVerdict('warn', rows + ' patient rows captured and delivered, after the problems in yellow above. On your PC run   cores generate');
+        else ovVerdict('ok', rows + ' patient rows captured and delivered. On your PC run   cores generate');
+      };
+      try { deliver(html, name, o).then(settle, function (e) { ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovVerdict('err', 'the report was captured but could not be delivered. It is kept in window.coresCaptured.'); }); }
+      catch (e) { console.error('CORES capture: delivery failed', e); ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovVerdict('err', 'the report was captured but could not be delivered. It is kept in window.coresCaptured.'); }
       setTimeout(function () { try { (popup.__realClose || popup.close).call(popup); } catch (e) {} }, 1500);
       return name;
     }
@@ -436,8 +555,8 @@
       stop();
       console.error('CORES capture: ' + msg + ' The report window is left open so you can look at it.');
       ovLog(msg + ' The report window is left open so you can look at it.', 'err');
-      ovStatus('Failed - nothing captured', 'err');
-      log('nothing captured. Press F5 in the CORES patient list window, open your list again, then paste the script again.', false);
+      ovVerdict('err', 'nothing captured. Press F5 in the CORES patient list window, open your list again, then paste the script again.');
+      console.log('CORES capture: nothing captured. Press F5 in the CORES patient list window, open your list again, then paste the script again.');
     }
 
     // CORES's own advice for "Can't Load Patient List" is to close the report window and reload it: press OK, then its
@@ -445,7 +564,7 @@
     function recover(w, d, text) {
       if (reloads >= retries) return false;
       reloads++;
-      log('CORES says "' + text + '" - pressing OK and Reload (attempt ' + reloads + ' of ' + retries + ')', false);
+      log('CORES says "' + text + '" - pressing OK and Reload (attempt ' + reloads + ' of ' + retries + ')', 'warn');
       ovStatus('Reloading report (' + reloads + ' of ' + retries + ')', 'warn');
       ovStat('reloads', reloads + ' reload' + (reloads === 1 ? '' : 's'));
       var ok = buttonNamed(d, 'OK');
@@ -468,7 +587,7 @@
         if (!done) {
           console.error('CORES capture: the report window closed before anything was captured.');
           ovLog('the report window closed before anything was captured.', 'err');
-          ovStatus('Report window closed', 'err');
+          ovVerdict('err', 'the report window closed before anything was captured. Open the report again.');
         }
         return;
       }
@@ -555,7 +674,7 @@
       }
       return w;
     };
-    ovStart('armed mode', 'Armed - open the report in CORES');
+    ovStart('armed mode', 'Waiting for you to open the report in CORES');
     ovStat('rows', '');
     log('armed. Now open the report from CORES as you normally do (its own report / print button); it is captured as soon ' +
       'as it has rendered. If nothing more appears here after you open it, CORES opened it another way: use captureCores(281).');
@@ -570,7 +689,7 @@
   // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
   var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
     localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, captureCores: 1, probeCores: 1, __coresRealOpen: 1 };
-  function copyText(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
+  function probeCopy(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
     return new Promise(function (res) {
       function old() { try { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); res(!!ok); } catch (e) { res(false); } }
       try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t).then(function () { res(true); }, old); return; } } catch (e) {}
@@ -579,8 +698,7 @@
   }
   function probeCores() {
     var args = [].slice.call(arguments), opt = {};
-    if (args.length && args[args.length - 1] && typeof args[args.length - 1] === 'object') opt = args.pop();
-    var terms = [], ids = [];
+    if (args.length && args[args.length - 1] && typeof args[args.length - 1] === 'object') opt = args.pop();    var terms = [], ids = [];
     args.forEach(function (x) {
       x = String(x).trim();
       if (/^\d+$/.test(x)) ids.push(x); else if (x) terms.push(x.toLowerCase());
@@ -606,17 +724,34 @@
       return m.join(', ');
     }
     function desc(el) {
-      // an id is shown only off the list rows (a row's id is often the patient's) and when it is not all capitals (CORES
-      // writes names in capitals); a class only when more than one element has it (one on a single row could be a name)
-      var d = el.tagName.toLowerCase(), doc = el.ownerDocument;
-      if (el.id && /[a-z]/.test(el.id) && !up(el, ['TR', 'LI'])) d += '#' + safe(el.id);
+      // on and inside list rows (one per patient, often) an id is never shown and a class only when more than one element
+      // has it (one on a single row could be a name); elsewhere both are shown when they look like a programmer's name
+      var d = el.tagName.toLowerCase(), doc = el.ownerDocument, inRow = !!up(el, ['TR', 'LI']);
+      if (el.id && !inRow) d += '#' + safe(el.id);
       if (typeof el.className === 'string' && el.className.trim())
-        d += el.className.trim().split(/\s+/).filter(function (c) { try { return doc.getElementsByClassName(c).length > 1; } catch (e) { return false; } })
+        d += el.className.trim().split(/\s+/).filter(function (c) { try { return !inRow || doc.getElementsByClassName(c).length > 1; } catch (e) { return false; } })
           .slice(0, 3).map(function (c) { return '.' + safe(c); }).join('');
       return d;
     }
     function path(el) { var q = []; while (el && el.nodeType === 1 && q.length < 7) { q.unshift(desc(el)); el = el.parentElement; } return q.join(' > '); }
     function up(el, tags) { while (el && el.nodeType === 1) { if (tags.indexOf(el.tagName) >= 0) return el; el = el.parentElement; } return null; }
+    // a heading row: one with a th, a cell spanning columns, fewer cells than the row after it, or a heading-like class
+    function looksHead(r, ref) {
+      if (!r || r.nodeType !== 1) return false;
+      var cls = typeof r.className === 'string' ? r.className : '';
+      return !!(r.querySelector('th') || [].some.call(r.children, function (c) { return c.colSpan > 1; }) ||
+        (ref && r.children.length < ref.children.length) || /group|header|heading|section/i.test(cls));
+    }
+    function headingInfo(row) {
+      var next = row.nextElementSibling, x;
+      if (row.tagName === 'TR' && looksHead(row, next) && next && !looksHead(next, row)) {   // the match is a heading over a group
+        var over = 0; for (x = next; x && !looksHead(x, row.nextElementSibling); x = x.nextElementSibling) over++;
+        return { heading: over + ' row' + (over === 1 ? '' : 's') };
+      }
+      for (var k = 0, y = row.previousElementSibling; y && k < 500; y = y.previousElementSibling, k++)
+        if (looksHead(y, row)) { var w = hit(y.textContent || ''); return { under: desc(y) + (w ? ', the nearest one says "' + w + '"' : '') }; }
+      return {};
+    }
     function mine(el) { while (el && el.nodeType === 1) { if (el.id === 'cores-capture-overlay' || el.id === 'cores-capture-banner') return true; el = el.parentElement; } return false; }
 
     // 1. the page and its frames
@@ -636,7 +771,9 @@
         out.dom.push(domKeys[key] = { found: t, where: where, via: attr ? 'attribute ' + attr : 'text', tag: el.tagName.toLowerCase(), path: pth, count: 1,
           selected: !!(el.selected || el.checked), visible: !!(el.offsetWidth || el.offsetHeight),
           row: row ? desc(row) : '', rowsInList: list ? list.children.length : 0,
-          rowAttributes: row ? [].map.call(row.attributes, function (x) { return safe(x.name); }).slice(0, 15) : [] });
+          rowAttributes: row ? [].map.call(row.attributes, function (x) { return safe(x.name); }).slice(0, 15) : [],
+          heading: '', under: '' });
+        if (row) { var hi = headingInfo(row); domKeys[key].heading = hi.heading || ''; domKeys[key].under = hi.under || ''; }
       }
     }
     scanDoc(document, 'this window');
@@ -702,45 +839,72 @@
       });
     } catch (e) {}
 
-    // the answer in plain words, then the details
-    var L = ['Find in CORES: ' + searched.join(', ')], n = function (x, w) { return x + ' ' + w + (x === 1 ? '' : 's'); };
+    // the answer in plain words: a verdict per word, where it is, and what that suggests; then the details for Claude
+    var L = [], n = function (x, w) { return x + ' ' + w + (x === 1 ? '' : 's'); };
+    var places = function (w) {
+      var c = 0;
+      out.dom.forEach(function (h) { if (h.found.split(', ').indexOf(w) >= 0) c += h.count; });
+      out.data.forEach(function (h) { if (h.found.indexOf(w) >= 0) c += h.count; });
+      return c;
+    };
+    var verdicts = searched.map(function (w) { var c = places(w); return { w: w, c: c }; });
     var onPage = out.dom.filter(function (h) { return !h.row; }), inRows = out.dom.filter(function (h) { return h.row; });
-    if (onPage.length) {
-      L.push('', 'On the page:');
-      onPage.forEach(function (h) {
-        L.push('- "' + h.found + '" in ' + (h.tag === 'option' ? 'a menu choice' + (h.selected ? ' (selected)' : '') :
-          h.via === 'text' ? 'the text of a ' + h.tag : 'the ' + h.via.replace('attribute ', '') + ' of a ' + h.tag) +
-          (h.visible ? '' : ', hidden') + ', ' + n(h.count, 'time') + (h.where === 'this window' ? '' : ', in ' + h.where) + '\n    at ' + h.path);
-      });
-    }
-    if (inRows.length) {
-      L.push('', 'In rows of a list (one patient per row?):');
-      inRows.forEach(function (h) {
-        L.push('- "' + h.found + '" in ' + n(h.count, 'row') + ' of ' + h.rowsInList + ' (' + h.row + ')' + (h.where === 'this window' ? '' : ', in ' + h.where) +
-          '\n    each row has: ' + (h.rowAttributes.join(', ') || 'no attributes') + '\n    at ' + h.path);
-      });
-    }
-    if (out.data.length) {
-      L.push('', "In the page's data:");
-      out.data.forEach(function (h) {
-        L.push('- "' + h.found.join('", "') + '" at ' + h.path + (h.inList ? ' (a list, ' + h.count + ' match' + (h.count === 1 ? '' : 'es') + ')' : '') +
-          '\n    fields beside it: ' + (h.fieldsBeside.join(', ') || '(none)'));
-      });
-    }
-    var none = searched.filter(function (w) {
-      return !out.dom.some(function (h) { return h.found.split(', ').indexOf(w) >= 0; }) && !out.data.some(function (h) { return h.found.indexOf(w) >= 0; });
-    });
-    if (none.length) L.push('', 'Not found anywhere: ' + none.join(', ') + '. Try a shorter piece of the word, spelled as CORES shows it.');
-    if (out.menuChoiceValues) L.push('', out.menuChoiceValues + ' menu choice(s) found have a number as their value; it was also looked for in the data, as an id.');
+    var sections = [];
+    if (onPage.length) sections.push(['ON THE PAGE', onPage.map(function (h) {
+      var what = h.tag === 'option' ? 'a menu choice' + (h.selected ? ', selected' : '') :
+        h.via === 'text' ? 'text in a ' + h.tag : 'the ' + h.via.replace('attribute ', '') + ' of a ' + h.tag;
+      return '• "' + h.found + '": ' + what + (h.visible ? '' : ' (hidden)') + ', ' + n(h.count, 'time') +
+        (h.where === 'this window' ? '' : ', in ' + h.where) + '\n    ' + h.path;
+    })]);
+    if (inRows.length) sections.push(['IN LIST ROWS', inRows.map(function (h) {
+      var s = '• "' + h.found + '" in ' + n(h.count, 'row') + ' of ' + h.rowsInList + ' (' + h.row + ')' + (h.where === 'this window' ? '' : ', in ' + h.where);
+      if (h.heading) s += '\n    these are HEADING rows, each over ' + h.heading + ' (a group per heading)';
+      else if (h.under) s += '\n    the rows sit under heading rows (' + h.under + ')';
+      return s + '\n    each row has: ' + (h.rowAttributes.join(', ') || 'no attributes') + '\n    ' + h.path;
+    })]);
+    if (out.data.length) sections.push(["IN THE PAGE'S DATA", out.data.map(function (h) {
+      return '• "' + h.found.join('", "') + '" at ' + h.path + (h.inList ? '  (a list: ' + h.count + ' match' + (h.count === 1 ? '' : 'es') + ')' : '') +
+        '\n    fields beside it: ' + (h.fieldsBeside.join(', ') || '(none)');
+    })]);
+    // what this suggests about finding each patient's team (the reason Find was written)
+    var hints = [], PT = /person|patient|pid|mrn|encntr|encounter|pt_?id|name/i;
+    if (out.data.some(function (h) { return h.inList && h.fieldsBeside.some(function (f) { return PT.test(f); }); }))
+      hints.push("The page's data has a list of patient-like records with a matching field: each patient's team can probably be read from it.");
+    if (inRows.some(function (h) { return h.heading; })) hints.push('Rows are grouped under heading rows with these words: patients are probably listed under a heading per team.');
+    else if (inRows.some(function (h) { return h.rowsInList > 1; })) hints.push('These words are in list rows: if each row is a patient, the rows show each patient\'s team.');
+    if (!inRows.length && !hints.length && onPage.some(function (h) { return h.tag === 'option' || h.selected; }))
+      hints.push('Only a menu has these words: this page may not show each patient\'s team. Try the window or panel that lists the patients.');
+    if (!out.dom.length && !out.data.length) hints.push('Nothing matched. Use a shorter piece of the word, spelled as CORES shows it, and run Find in the window that shows it.');
+
+    var head = 'Find in CORES: ' + searched.join(', ');
+    L.push(head);
+    verdicts.forEach(function (v) { L.push((v.c ? '✔ "' + v.w + '": found, ' + n(v.c, 'place') : '✖ "' + v.w + '": not found')); });
+    sections.forEach(function (s) { L.push('', s[0]); s[1].forEach(function (x) { L.push(x); }); });
+    if (hints.length) { L.push('', 'WHAT THIS SUGGESTS'); hints.forEach(function (x) { L.push('→ ' + x); }); }
+    if (out.menuChoiceValues) L.push('', out.menuChoiceValues + ' matching menu choice(s) have a number as their value; it was also looked for in the data, as an id.');
     if (out.notes.length) L.push('', 'Notes: ' + out.notes.join('; '));
-    L.push('', 'Searched ' + document.getElementsByTagName('*').length + ' page elements and ' + objs + ' data objects. Names that do not look like ' +
-      'a programmer\'s field name show as <name>, and no values are included.');
+    L.push('', 'Searched ' + document.getElementsByTagName('*').length + ' page elements and ' + objs + ' data objects. Names that do not look ' +
+      'like a programmer\'s field name show as <name>; no values are included.');
     var text = L.join('\n');
     var forClaude = text + '\n\n---- details ----\n' + JSON.stringify(out, null, 1);
     window.coresProbe = { result: out, text: text, forClaude: forClaude };
-    if (!opt.quiet) {
-      console.log(forClaude);
-      copyText(forClaude).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
+    console.log(forClaude);
+    if (opt.hud && ov) {
+      // into the HUD's console: the verdict lines coloured, the rest neutral, and a button that copies it all for Claude
+      var box = ovEl('div', 'margin:5px 0;padding:5px 7px;border:1px solid #c9d6e3;border-radius:5px;background:#f6f9fc;color:#1b1b1b;white-space:pre-wrap;word-break:break-word');
+      L.forEach(function (line, i) {
+        var el = ovEl('div', i === 0 ? 'font:600 12px Segoe UI,Arial,sans-serif;color:#1f4e79;margin-bottom:2px' :
+          /^✔/.test(line) ? 'color:' + OV_C.ok + ';font-weight:600' : /^✖/.test(line) ? 'color:' + OV_C.warn + ';font-weight:600' :
+          /^[A-Z' ]+$/.test(line) && line ? 'color:#1f4e79;font-weight:700;margin-top:3px' : '', line || ' ');
+        box.appendChild(el);
+      });
+      var cb = ovEl('button', 'margin-top:5px;font:600 11px Segoe UI,Arial,sans-serif;padding:2px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Copy for Claude');
+      cb.onclick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
+      box.appendChild(cb);
+      ovAppend(box);
+      ov.list.scrollTop = ov.list.scrollHeight - box.offsetHeight - 10;
+    } else {
+      probeCopy(forClaude).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
     }
     return { text: text };
   }
@@ -761,9 +925,9 @@
     var popup = (opts.open || window.__coresRealOpen || function (u, n, f) { return window.open(u, n, f); })(url, 'cores_capture_' + reportId, 'width=1400,height=900');
     if (!popup) {
       console.error('CORES capture: window.open was blocked. Allow popups for this site and try again.');
-      ovStart('direct mode, report ' + reportId, 'Popup blocked');
-      ovLog('window.open was blocked. Allow popups for this site and try again.', 'err');
-      ovStatus('Popup blocked', 'err');
+      ovStart('direct mode, report ' + reportId, 'Opening the report\u2026');
+      ovLog('window.open was blocked.', 'err');
+      ovVerdict('err', 'the popup was blocked. Allow popups for this site and try again.');
       return;
     }
     ovStart('direct mode, report ' + reportId, 'Report ' + reportId + ' opened, waiting…');
@@ -773,7 +937,7 @@
   };
   // helpers, also usable on their own:  captureCores.chooseFolder()  shows the folder button;  captureCores.deliver(html, name, opts)
   window.captureCores.chooseFolder = function () {
-    if (!window.showDirectoryPicker) { log('this browser has no folder picker', false); return; }
+    if (!window.showDirectoryPicker) { log('this browser has no folder picker', 'warn'); return; }
     showBanner('Choose the folder for CORES captures:', [['Choose folder…', function (el) {
       pickFolder().then(function (d) { el.textContent = 'Saving into "' + d.name + '"'; log('captures will be saved into "' + d.name + '"'); },
         function (e) { el.textContent = 'Failed: ' + e.message; });

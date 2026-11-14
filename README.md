@@ -15,13 +15,18 @@ command: `cores generate`.
    captures the window CORES opens as soon as the report has rendered, so it works whenever CORES's own button
    works. The report's HTML is put on the clipboard, which Citrix relays to your PC, and unless you used
    `cores capture --no-download` it is also downloaded as `CORES report 281 <date> <time>.html`. The report window
-   closes itself. From the moment the script is armed, a small status box in the bottom-right corner of the patient
-   list follows the capture (status, elapsed time, patient rows, reloads, and the same messages as the console);
-   drag it by its title bar, collapse it with –, or hide it with ×. Its **Find in CORES** box finds where CORES keeps
-   something: type words with a comma between (`pulm, interv`, or a number for an id) and press Find. It answers in
-   plain words where they are on the page, in which list rows, and in the page's data with the names of the fields
-   beside them (a name that does not look like a programmer's field name shows as `<name>`), never their values, and **Copy for Claude** copies that answer to paste into a
-   chat. In the Console the same search is `probeCores('pulm', 'interv')`. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
+   closes itself. From the moment the script is armed, the **CORES Capture HUD** in the bottom-right corner of the
+   patient list follows the capture: the step under way with a spinner and the elapsed time, patient rows, reloads, and
+   the same messages as the console, neutral unless they say how something went (green done, yellow a problem worked
+   around, red failed). A capture ends in one verdict line: **SUCCESS** (green), **CAPTURED WITH PROBLEMS** (yellow:
+   the report is in hand but something needs a look, such as a click on the banner or an unrendered report) or
+   **FAILED** (red). Drag the HUD by its title bar, resize it from any edge or corner, collapse it with –, hide it with ×;
+   its place and size are remembered. Its magnifying glass opens **Find in CORES**, which finds where CORES keeps
+   something: type words with a comma between (`pulm, interv`, or a number for an id) and press Find. The answer goes
+   into the HUD: whether each word was found, where (page, list rows, including heading rows that group rows under
+   them, and the page's data with the names of the fields beside each match), and what that suggests; names that do not
+   look like a programmer's field name show as `<name>` and no values are included. **Copy for Claude** copies it to
+   paste into a chat. In the Console the same search is `probeCores('pulm', 'interv')`. (`cores capture --direct` makes the script open the report itself instead, `--id 8` for I-PASS
    Detailed; CORES sometimes answers "Can't Load Patient List" to a window it did not open, so this is the fallback.)
 3. **`cores generate`** takes the newest capture in Downloads or, when there is none (it says so), the report on the
    clipboard. It saves it into `reports\`, checks that it is complete and parses, writes
