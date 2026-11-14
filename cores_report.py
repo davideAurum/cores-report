@@ -723,10 +723,11 @@ JS = """
     document.querySelectorAll('.rpt .sec').forEach(s=>{let p=s.previousElementSibling; while(p&&!(p.classList.contains('sec')&&shown(p)))p=p.previousElementSibling; s.classList.toggle('lead',!p);});
     document.querySelectorAll('.rpt .vitl,.rpt .pt .pid').forEach(c=>{const it=[...c.children].filter(x=>x.matches('.vi,[data-name="MRN"],[data-name="Date of birth"]')&&shown(x)); it.forEach((x,i)=>x.classList.toggle('endvis',i===it.length-1));});
     document.querySelectorAll('[data-sec]').forEach(cb=>{cb.checked=!hidden.has(cb.dataset.sec);});
-    // on screen the page is as wide as the paper's printable width (less the .3in margins, 96 px per inch), so the
-    // columns are the widths they print at: no wider than their content needs, as the default widths are worked out
+    // on screen the page is exactly the paper's printable width (less the .3in margins, 96 px per inch), so the columns
+    // are the widths they print at: no wider than their content needs, as the default widths are worked out, and no
+    // narrower in a small window (which scrolls sideways instead), so Labs stays beside Volume as it prints
     const pw=PAPERS[paper].map(x=>(x-.6)*96), W=orient==='portrait'?pw[0]:pw[1];
-    pageSz.textContent='@page{size:'+paper+' '+orient+';margin:.3in} @media screen{.page{max-width:'+Math.round(W+36)+'px}}'; orientSel.value=orient; paperSel.value=paper;
+    pageSz.textContent='@page{size:'+paper+' '+orient+';margin:.3in} @media screen{.page{width:'+Math.round(W+36)+'px;max-width:none}}'; orientSel.value=orient; paperSel.value=paper;
   }
   function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify({d:defs(orient).join(),w:base}));}catch(e){}}
   function saveS(){try{localStorage.setItem(KEYS,JSON.stringify([...hidden]));}catch(e){}}
@@ -769,8 +770,9 @@ JS = """
     // narrowest each may get, in steps: Notes its minimum (inches on paper, 96 px each), the rest KMIN
     // the Snapshot never narrower than its two columns need (2 x 100 px, the 12 px gap, print padding and border), so
     // Notes cannot take the width that keeps it in two columns
-    const snapc=COLNAME.indexOf('Snapshot column'), SNAPMIN=2*100+12+2*5+1;
-    const mins=idx.map(i=>i===notes?Math.max(KMIN,Math.ceil((parseFloat(notesMin.value)||0)*96/STEP)):i===snapc?Math.max(KMIN,Math.ceil(SNAPMIN/STEP)):KMIN), minSum=mins.reduce((a,b)=>a+b,0);
+    // and Data never narrower than keeps Labs beside Volume (DATA_MIN_PX in cores_report.py), unless Labs or Volume is hidden
+    const snapc=COLNAME.indexOf('Snapshot column'), SNAPMIN=2*100+12+2*5+1, datac=COLNAME.indexOf('Vitals column'), DATAMIN=eff.has('Labs')||eff.has('Volume')?0:__DATAMIN__;
+    const mins=idx.map(i=>i===notes?Math.max(KMIN,Math.ceil((parseFloat(notesMin.value)||0)*96/STEP)):i===snapc?Math.max(KMIN,Math.ceil(SNAPMIN/STEP)):i===datac?Math.max(KMIN,Math.ceil(DATAMIN/STEP)):KMIN), minSum=mins.reduce((a,b)=>a+b,0);
     const fixedCols=[...Array(n).keys()].filter(i=>vis[i]&&!idx.includes(i));
     if(!idx.length){optMsg.textContent='No columns to optimize';return;}
     const pct=base.map((b,i)=>vis[i]?parseFloat(b)||0:0), pctSum=pct.reduce((a,b)=>a+b,0)||1, curPx=pct.map(x=>x/pctSum*W);
@@ -1582,7 +1584,7 @@ def render(data, orientation='landscape', bw=False, paper=DEFAULT_PAPER, unit_lo
 </table>
 <div class="foot">Generated from {e(data.get("source", ""))} · {len(recs)} patients</div>
 </div>
-<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors)).replace('__PAPERS__', json.dumps(PAPERS)).replace('__DEFW__', json.dumps({f'{p} {o}': default_widths(p, o) for p in PAPERS for o in ('landscape', 'portrait')}))}</script>
+<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors)).replace('__PAPERS__', json.dumps(PAPERS)).replace('__DATAMIN__', str(DATA_MIN_PX)).replace('__DEFW__', json.dumps({f'{p} {o}': default_widths(p, o) for p in PAPERS for o in ('landscape', 'portrait')}))}</script>
 </body></html>'''
 
 
