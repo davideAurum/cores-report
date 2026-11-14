@@ -532,7 +532,9 @@
   // menus name them, with the MRN, FIN and encounter that tie it to the report's patients). The report CORES prints
   // does not carry them, so they travel in the capture, in a comment after its name: <!-- CORES teams {...} -->.
   function teamsFromCores() {
-    var rows; try { rows = window.global_constant_row_info; } catch (e) { return null; }
+    // in this window, or its parent, the top window or the one that opened it (the script may run in a frame)
+    var rows = null, cands = [function () { return window; }, function () { return window.parent; }, function () { return window.top; }, function () { return window.opener; }];
+    for (var c = 0; c < cands.length && !(rows && rows.length); c++) { try { rows = cands[c]().global_constant_row_info; } catch (e) { rows = null; } }
     if (!rows || typeof rows !== 'object' || typeof rows.length !== 'number' || !rows.length) return null;
     var pts = [], count = {};
     for (var i = 0; i < rows.length; i++) {
@@ -1038,13 +1040,49 @@
     opt = opt || {};
     path = String(path || 'window.global_constant_row_info').trim();
     function safe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,29}$/.test(x) && !/\d{3,}/.test(x) && /[a-z]/.test(x) && !/^[A-Z][a-z]+$/.test(x) ? x : '<name>'; }
-    var target = window, parts = path.replace(/^window\.?/, '').split('.').filter(Boolean);
-    for (var i = 0; i < parts.length; i++) { try { target = target == null ? undefined : target[parts[i]]; } catch (e) { target = undefined; } }
-    var L = ['Describe: ' + parts.map(safe).join('.') || 'window'];
+    var parts = path.replace(/^window\.?/, '').split('.').filter(Boolean), where = 'this window', checked = [];
+    function at(w) { var t = w; for (var i = 0; i < parts.length; i++) { try { t = t == null ? undefined : t[parts[i]]; } catch (e) { return undefined; } } return t; }
+    // the windows to look in: this one, then (for the CORES records) its parent, the top window, the one that opened it,
+    // and every readable frame of each: the Console may have run the script in a frame or another CORES window
+    function wins() {
+      var out = [], seenW = [];
+      function add(w, name) {
+        try { if (!w || seenW.indexOf(w) >= 0) return; w.document; } catch (e) { return; }   // another site: unreadable
+        seenW.push(w); out.push([w, name]);
+        try { for (var f = 0; f < w.frames.length; f++) add(w.frames[f], name + ' > frame ' + f); } catch (e) {}
+      }
+      add(window, 'this window');
+      try { add(window.parent, 'the parent window'); } catch (e) {}
+      try { add(window.top, 'the top window'); } catch (e) {}
+      try { add(window.opener, 'the window that opened this one'); } catch (e) {}
+      return out;
+    }
+    var target = at(window), fallback = /^global_constant_row_info$/.test(parts.join('.'));
+    if ((!target || typeof target !== 'object') && fallback) {
+      var ws = wins();
+      for (var wi = 0; wi < ws.length && !(target && typeof target === 'object'); wi++) { checked.push(ws[wi][1]); target = at(ws[wi][0]); where = ws[wi][1]; }
+      // not under that name anywhere: a list in the page's data whose entries look like CORES's patient records
+      for (var wj = 0; wj < ws.length && !(target && typeof target === 'object'); wj++) {
+        var w = ws[wj][0], ks = []; try { ks = Object.keys(w); } catch (e) {}
+        for (var q = 0; q < ks.length; q++) {
+          var v; try { v = w[ks[q]]; } catch (e) { continue; }
+          try { if (Array.isArray(v) && v.length && v[0] && typeof v[0] === 'object' && 'person_id' in v[0] && 'encntr_id' in v[0]) { target = v; where = ws[wj][1] + ', under the name ' + safe(ks[q]); break; } } catch (e) {}
+        }
+      }
+    }
+    var L = ['Describe: ' + (parts.map(safe).join('.') || 'window')];
     if (!target || typeof target !== 'object') {
-      L.push('✖ nothing to describe there' + (path.indexOf('global_constant_row_info') >= 0 ? ': this window has no CORES patient records (run Describe in the patient list window)' : ''));
+      L.push('✖ nothing to describe there' + (fallback ? ': no CORES patient records found' : ''));
+      if (fallback) {
+        L.push('   looked in: ' + (checked.join(', ') || 'this window') + '; and for any list of patient records in their data');
+        var pg = String(location.pathname.split('/').filter(Boolean).pop() || '');
+        L.push('   this window: "' + (/^[A-Za-z_][\w.-]{0,40}$/.test(pg) && !/\d{3,}/.test(pg) ? pg : '<name>') + '", ' + window.frames.length + ' frame(s)' +
+          (window !== window.top ? ', inside another window (a frame)' : ''));
+        L.push('   Check that the Console\'s context menu (top left of the Console) says "top", that the script was pasted in the CORES patient list window, and that the list has loaded.');
+      }
       return finish(L);
     }
+    if (where !== 'this window') L.push('✔ found in ' + where);
     // the records: a list's entries; an object with many keys is a lookup table (keyed by patient, perhaps), so its
     // entries are described and its keys never shown; a smaller object is one record
     var keyed = !Array.isArray(target) && Object.keys(target).length > 25;
