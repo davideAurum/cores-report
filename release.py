@@ -9,9 +9,10 @@
 
 Run it on main, with everything committed and pushed. It
   1. sets VERSION in cores.py, commits "Release X.Y.Z" and tags vX.Y.Z,
-  2. builds dist\\cores-report-X.Y.Z.zip from the tag with `git archive` (release.py and .gitattributes are left out;
-     see .gitattributes) plus its .sha256,
+  2. builds dist\\cores-report-X.Y.Z.zip from the tag with `git archive` (release.py, .gitattributes, tests\\, test\\
+     and docs\\ are left out; see .gitattributes) plus its .sha256,
   3. unpacks the zip and checks it the way `cores update` will: a cores.py reporting X.Y.Z, every .py compiling,
+     none of the left-out files in it,
   4. after asking, pushes main and the tag and creates the release with `gh`, the zip and checksum attached, the
      notes being the commit subjects since the previous release (edit them on GitHub afterwards if you like).
 Nothing is pushed until step 4; answering no there leaves the commit and tag local (`git tag -d vX.Y.Z` and
@@ -88,8 +89,23 @@ def build_zip(ref, ver, out):
     return sha
 
 
+DEV_ONLY = ('release.py', '.gitattributes', 'tests/', 'test/', 'docs/')  # export-ignore'd in .gitattributes: never in a release zip
+
+
+def dev_only(names, prefix=''):
+    """Those of a zip's file names (below its top folder `prefix`) that are development-only: a DEV_ONLY file, or
+    anything inside a DEV_ONLY folder."""
+    out = []
+    for n in names:
+        inner = n[len(prefix):] if n.startswith(prefix) else n
+        if any(inner.startswith(d) if d.endswith('/') else inner == d for d in DEV_ONLY):
+            out.append(inner)
+    return out
+
+
 def check_zip(path, ver):
-    """What `cores update` relies on: one top folder, a cores.py that says it is `ver`, every .py compiling."""
+    """What `cores update` relies on: one top folder, a cores.py that says it is `ver`, every .py compiling, and none
+    of the development-only files."""
     tmp = Path(tempfile.mkdtemp(prefix='cores-release-check-'))
     try:
         with zipfile.ZipFile(path) as z:
@@ -99,9 +115,10 @@ def check_zip(path, ver):
         if tops != {f'cores-report-{ver}'}:
             raise ReleaseError(f'the zip should hold one folder cores-report-{ver}, not {sorted(tops)}')
         root = tmp / f'cores-report-{ver}'
-        leaked = [n for n in ('release.py', '.gitattributes') if (root / n).exists()]
+        leaked = dev_only(names, f'cores-report-{ver}/')
         if leaked:
-            raise ReleaseError(f'{", ".join(leaked)} should be export-ignore\'d (see .gitattributes) but is in the zip')
+            more = f' and {len(leaked) - 5} more' if len(leaked) > 5 else ''
+            raise ReleaseError(f'{", ".join(leaked[:5])}{more} should be export-ignore\'d (see .gitattributes) but is in the zip')
         for py in root.rglob('*.py'):
             compile(py.read_bytes(), str(py.relative_to(root)), 'exec')
         got = run(sys.executable, str(root / 'cores.py'), '--version')

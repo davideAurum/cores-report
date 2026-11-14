@@ -36,8 +36,19 @@ command: `cores generate`.
    also brings the print dialog up (or prints without a dialog once a printer is configured, see *Printing*), and
    `--clipboard` uses the clipboard even when Downloads has a capture.
 
+**One paste, no clicks: `cores capture --auto` (new, opt-in).** In step 1, run `cores capture --auto` instead. In
+step 2, paste and press Enter, and that is all: the script presses CORES's own three buttons itself (Reports, then
+the report *ANES ICU w/ Meds*, then *Just Print*), as you would by hand. CORES opens the report window and the
+script captures it. Watch the HUD. If it hands a step back, it names the button it could not press: press that
+button yourself. The capture stays armed, so the rest goes on by itself. Step 3 is the same. Plain `cores capture`
+works as before; `--auto` cannot be combined with `--direct` or `--no-run`.
+
 Hands-free: keep `cores watch --clipboard --print` running in a terminal; every capture is saved, rendered and
 printed as it arrives, from the clipboard or from Downloads.
+
+**The Trace.** `cores capture --trace` also arms the Trace in the paste. It only watches: what fills CORES's patient
+records, what the report button calls, and which requests go out. Its result shows in the HUD when the capture
+ends. `CORES_PAGE_NOTES.md` (section *Trace*) says how to run it, how to read it, and what it found.
 
 Order matters with the clipboard: run `cores generate` *before* the next `cores capture`, because the latter
 puts the script on the clipboard. If you do it the other way round nothing is lost: `cores capture` first saves any
@@ -159,8 +170,9 @@ publishing the release with the zip and its `.sha256` attached. The release note
 previous release; `--notes "..."` replaces them, and they can be edited on GitHub afterwards.
 `py release.py minor --dry-run` builds and checks the zip without committing, tagging or pushing anything; try it on a
 copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
-`release.py` itself is not in the zip (`.gitattributes` leaves it out), and `.gitattributes` makes the `.cmd` and
-`.ps1` files CRLF in the zip whatever the building machine uses.
+`release.py`, `tests\`, `test\` and `docs\` are not in the zip (`.gitattributes` leaves them out, and the zip is
+checked for them), and `.gitattributes` makes the `.cmd` and `.ps1` files CRLF in the zip whatever the building
+machine uses.
 
 ## Commands
 
@@ -169,7 +181,7 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 | Command | What it does |
 |---|---|
 | `cores generate [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | newest capture in Downloads, else the clipboard -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` uses the clipboard even when Downloads has a capture. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
-| `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run] [--trace]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself; `--trace` also arms the Trace (what loads CORES's patient records, see `CORES_PAGE_NOTES.md`); `--no-run` leaves the capture call out, so nothing shows in CORES until a call is typed in the Console |
+| `cores capture [--auto \| --direct [--id 281]] [--no-download] [--folder] [--no-run] [--trace]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens when you open the report, `--auto` (new, opt-in) has the script press CORES's Reports, report and Just Print buttons itself, `--direct` opens the report's address itself; `--trace` also arms the Trace (what loads CORES's patient records, see `CORES_PAGE_NOTES.md`); `--no-run` leaves the capture call out, so nothing shows in CORES until a call is typed in the Console |
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores compare [FILE]` | compare a capture's printed report with the CORES clinical data it carries: agree / differ / only one, per vital, lab and the meds (counts only) |
@@ -256,7 +268,7 @@ the report that has no location yet, so the file fills in from real reports. A r
 
 ## The log
 
-Every `cores` command adds one line to the **cores log** when it ends, and a capture brings its HUD's events along
+Every `cores` command (except `cores log` itself) adds one line to the **cores log** when it ends, and a capture brings its HUD's events along
 (`<!-- CORES log … -->` before its closing `</html>`), which are added the first time a command takes that capture in.
 The log outlives any one capture, report or folder, so `cores log` can still say next week whether Tuesday's capture
 worked, on which computer, and how long it took.
@@ -316,6 +328,7 @@ or use `cores config --set KEY VALUE`.
 | `make_synthetic.py` | writes a made-up report (`reports\SYNTHETIC test report.json`, no real patients) for trying layout and printing |
 | `requirements.txt` | Python packages |
 | `release.py` | publishes a release (development copy only; not in the release zip) |
+| `tests\`, `test\`, `docs\` | development copy only, not in the release zip: the unit tests (`python -m unittest discover -s tests`), the fake CORES page with the HUD self-test, and the code review |
 | `.cores-update.json` | made by `cores update`: when GitHub was last asked, and the files the installed release put here |
 | `cores.config.json` | optional settings |
 | `python\` | optional, made by `.\bundle`: a private Python so nothing needs installing |
@@ -328,6 +341,9 @@ into `reports\` by hand.
 
 ## If something does not work
 
+- **`cores capture --auto` stops part-way**: the HUD names the button it could not press (Reports, the report, or
+  Just Print). Press that button yourself; the capture is still armed and takes the report window when CORES opens
+  it. If no window opens, allow popups for the CORES site. Plain `cores capture` always works the old way.
 - **Nothing downloads after `captureCores(281)`**: allow popups for the CORES site and run it again. The console must
   belong to the Cerner-hosted patient-list window; a report opened in a plain browser tab has no CORES session.
 - **The report window says "Can't Load Patient List / Unable to load the patient list from CORES"**: CORES itself

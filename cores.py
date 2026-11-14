@@ -58,6 +58,8 @@ DEFAULTS = {
 }
 REPORT_IDS = {'281': 'Anesthesia ICU w/ Meds (nine columns)', '8': 'I-PASS Detailed (six columns)',
               '7': 'Medicine Report +VS/Meds (five columns)'}
+# `cores capture --auto`: captureCores({auto: true}) presses CORES's own Reports button, this item of its menu, and Just Print
+AUTO_REPORT_ID, AUTO_REPORT_ITEM = '281', 'ANES ICU w/ Meds'
 DERIVED = {'json': '{stem}.json', 'report': '{stem} - Daily Report.html', 'pdf': '{stem} - Daily Report.pdf',
            'annotate': '{stem} - annotate.html'}
 # derived-file names, tolerating the " (2)" a browser or Explorer appends to a duplicate
@@ -1101,11 +1103,19 @@ def cmd_generate(a, cfg):
 
 
 def cmd_capture(a, cfg):
+    if a.auto and a.direct:
+        raise CoresError('--auto and --direct are two different ways to get the report window; use one of them. '
+                         '--auto presses CORES\'s own buttons (Reports, the report, Just Print); --direct opens the report\'s address itself.')
+    if a.auto and a.no_run:
+        raise CoresError('--auto needs the capture call at the end of the paste, and --no-run leaves it out; use one of them. '
+                         '(For the Trace with --auto: cores capture --auto --trace)')
+    if a.auto and str(a.id) != AUTO_REPORT_ID:
+        raise CoresError(f'--auto opens report {AUTO_REPORT_ID} ({AUTO_REPORT_ITEM}); --id is for --direct.')
     js_path = HERE / 'capture_report.js'
     if not js_path.exists():
         raise CoresError(f'{js_path.name} is missing from {HERE}')
     rid = str(a.id)
-    opts = [o for o, on in (('download: false', a.no_download), ('folder: true', a.folder)) if on]
+    opts = [o for o, on in (('auto: true', a.auto), ('download: false', a.no_download), ('folder: true', a.folder)) if on]
     optstr = '{' + ', '.join(opts) + '}' if opts else ''
     call = f'captureCores({rid}{", " + optstr if optstr else ""});' if a.direct else f'captureCores({optstr});'
     text = js_path.read_text(encoding='utf-8')
@@ -1139,7 +1149,14 @@ def cmd_capture(a, cfg):
         say('  3. Open the report from CORES as you normally do. Nothing is captured (--no-run).')
         say('     When the report has rendered, press Stop trace in the HUD, read the result, press Copy for Claude.')
         return
-    if a.direct:
+    if a.auto:
+        say('  3. Nothing to click. The script presses three of CORES\'s own buttons for you, as you would by hand:')
+        say(f'     Reports, then the report ({AUTO_REPORT_ITEM}), then Just Print. CORES opens the report window and the')
+        say('     script captures it.')
+        say('     Watch the HUD (bottom right of the patient list). If it hands a step back, it names the button it could')
+        say('     not press: press that button yourself. The capture stays armed, so the rest goes on by itself.')
+        say('     No report window? The browser may have blocked it: allow popups for the CORES site, or open the report by hand.')
+    elif a.direct:
         say(f'  3. The script opens report {rid} itself in a popup ({REPORT_IDS.get(rid, "report id " + rid)}).')
     else:
         say('  3. Open the report from CORES as you normally do (its own report / print button). The script captures the window')
@@ -1152,8 +1169,12 @@ def cmd_capture(a, cfg):
     say('  4. Back on this PC:')
     say(f'       cores generate --print              newest capture in {inbox}, else the clipboard -> Daily Report -> print')
     say('       cores watch --clipboard --print     ... automatically for every capture, until Ctrl+C')
-    say(f'  Report ids (for --direct): {", ".join(f"{k} = {v}" for k, v in REPORT_IDS.items())}.')
-    say('  Options: --direct [--id 8], --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once).')
+    if a.auto:
+        say('  Options with --auto: --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once),')
+        say('  --trace. Without --auto, `cores capture` works as before: you open the report yourself.')
+    else:
+        say(f'  Report ids (for --direct): {", ".join(f"{k} = {v}" for k, v in REPORT_IDS.items())}.')
+        say('  Options: --direct [--id 8], --no-download (clipboard only, no save dialog), --folder (also save into a folder picked once).')
     say('  If the CORES console says it could not copy, click "Copy to clipboard" in the banner at the top of the patient list.')
 
 
@@ -1923,6 +1944,9 @@ def build_parser():
 
     sp = add('capture', cmd_capture, 'put capture_report.js (plus its captureCores(...) call) on the clipboard and show how to run it in the CORES window',
              listed='put the capture script on the clipboard and show the steps for CORES')
+    sp.add_argument('--auto', action='store_true', help='new, opt-in: one paste and no clicks. The script presses CORES\'s own buttons itself '
+                    f'(Reports, {AUTO_REPORT_ITEM}, Just Print) and captures the window CORES opens (captureCores({{auto: true}})). '
+                    'A step it cannot do is handed back in the HUD, which names the button to press. Not with --direct or --no-run')
     sp.add_argument('--direct', action='store_true', help='the script opens the report itself (captureCores(ID)) instead of capturing the window CORES opens')
     sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed, 7 = Medicine Report +VS/Meds)')
     sp.add_argument('--no-download', action='store_true', help='clipboard hand-off only: the browser does not download a file')
@@ -2057,6 +2081,7 @@ def build_parser():
 HELP_ALIASES = {'-help', '-?', '/?', '/help'}  # what Windows users tend to type; all mean --help
 NEEDS_PACKAGES = {'generate', 'capture', 'parse', 'watch'}  # the commands that import cores_parse (bs4 + lxml)
 UPDATE_NOTICE = {'generate', 'capture'}  # the everyday commands, which end by saying when a newer release is out
+NOT_LOGGED = {'log'}  # looking at the log is not something to log: it would fill the log with its own readings
 
 
 def missing_packages():
@@ -2109,7 +2134,8 @@ def main(argv=None):
         if not a.cmd:
             parser.print_help()
             return 0
-        with logged(a.cmd, cfg) as run:  # every command leaves a line in the cores log, however it ends
+        # every command leaves a line in the cores log, however it ends; all but `cores log`, which only reads it
+        with (contextlib.nullcontext({}) if a.cmd in NOT_LOGGED else logged(a.cmd, cfg)) as run:
             if a.cmd in NEEDS_PACKAGES:
                 check_dependencies(cfg)
             notice = a.cmd in UPDATE_NOTICE and start_update_check(cfg)

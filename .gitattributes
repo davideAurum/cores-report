@@ -5,3 +5,8 @@
 # Kept out of release zips (`git archive`): release.py is for whoever publishes releases, not for the people using them.
 release.py export-ignore
 .gitattributes export-ignore
+# Development only: the unit tests, the fake CORES page with the HUD self-test, and the code review. A leading slash and no
+# trailing one: the folder itself is what `git archive` asks about. tests/test_release.py checks that this works.
+/tests export-ignore
+/test export-ignore
+/docs export-ignore
