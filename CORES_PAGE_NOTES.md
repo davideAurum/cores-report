@@ -31,6 +31,8 @@ vocabulary (column types, result labels, team names) and counts. Keep it that wa
    not what loads the records: the click on Reports is. Can it be **automated? Yes**: CORES opens the report after
    three ordinary clicks and a plain `window.open`, so the capture script can press the same three buttons. The
    Trace lines behind both are under "Trace", "What the Trace showed in CORES".
+9. **Auto works in CORES (2026-11-14)**: `cores capture --auto` opened and captured report 281 with no clicks by
+   hand; the browser did not block the window and CORES asked nothing first. Details under "Auto".
 
 ## The setting
 
@@ -511,18 +513,29 @@ button yourself and the capture goes on (it then ends yellow, "after the problem
 
 (A blocked report window is now said in armed mode too, in yellow; the capture stays armed.)
 
-**Not yet run in CORES.** It is proved on the fake page only (`node test/run_selftest.mjs`: the full run ends in
-SUCCESS, each stop above hands over and stays armed, and it works with an armed Trace in both orders). The
-first run in CORES should be `cores capture --auto --trace`, in a fresh session. Things to look at:
+**Run in CORES (2026-11-14, `cores capture --auto --trace`, a fresh session, a list of 14 patients): it works.**
+Nothing was clicked by hand. From the Trace of that run (seconds since the paste):
 
-- Does the HUD get past "pressing Reports"? If it says it could not find the Reports button, CORES keeps that
-  handler somewhere the script does not read: press the three buttons by hand and send the Trace.
-- Does CORES ask something after Reports (the role check)? Then answer it and go on by hand.
-- Does the report window open, or does the browser block it? A script's click is not a person's click: the
-  browser may refuse the window. The HUD then says so; pressing the buttons by hand works.
-- In the Trace: the three clicks are marked "(pressed by the capture script)", and the two RECORDS lines should
-  read as they did by hand (an empty list assigned by `printReportLegacy`, then 58 or so records).
-- Does the capture end green, with teams and clinical data?
+| At | What |
+|---|---|
+| 0.00 | armed; records then: none |
+| 0.26 | click on Reports, "(pressed by the capture script)"; handlers end in `self.showReportMenu` |
+| 0.27 | records assigned: 0, by `printReportLegacy` ← `onPrintReport` ← `showReportMenu`, as by hand |
+| 0.28 | records filled in place: 14; no request, no report window open |
+| 0.30 | click on "ANES ICU w/ Meds" (by the script); CORES fetches the template (one XHR) |
+| 1.02 | click on "Just Print" (by the script); CORES sends its own usage log |
+| 1.53 | CORES's `window.open` of report 281, 511 ms after Just Print, same address parts and features as by hand |
+| 3.2 – 21.0 | the report window loads its template files (css, html, js, then the pdf css) |
+| 41.6 | the report window closed; the Trace stopped by itself after the capture ended |
+
+So: the script finds the Reports button by its handler, CORES asked nothing first (`checkRequiredRoles` passed
+without a prompt), no step was handed back, and **the browser did not block the report window** although the
+clicks came from a script. The whole run took about 42 s for 14 patients. The fake page stays the regression
+test (`node test/run_selftest.mjs`: the full run, each stop in the table above, and both orders with a Trace).
+
+Still open after this run: the HUD's own last line was not noted (the Trace shows the capture ended, not its
+colour; `cores log` shows it once `cores generate` has read the capture), and where the report window gets its
+data is still not visible (its listed requests are template files only).
 
 ## The HUD's event log (`<!-- CORES log -->`, 2026-11-14)
 
