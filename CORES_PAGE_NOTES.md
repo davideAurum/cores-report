@@ -4,6 +4,28 @@ What was learned by probing the live CORES page from inside Citrix with the capt
 Describe, Columns, Map), and what was built on it. Nothing here is patient data: only field names, CORES's own
 vocabulary (column types, result labels, team names) and counts. Keep it that way when updating this file.
 
+## Key findings
+
+1. **CORES keeps structured patient data on the patient-list page**, in `window.global_constant_row_info`: one
+   record per patient (158 fields). It appears only **after a report has been opened** from the list.
+2. **Each patient's team is there** (`service`, `team`, `sub_team`); the printed report never says it. The capture
+   now carries it, and the Daily Report fills its Team field and names the teams in its header (done, working).
+3. **The data depends on the list's columns.** Each column's `col_option` names the event sets and the look-back
+   it fetches; result columns put **timed values** in `result_list` (heart rate since admission: thousands per
+   patient), the meds column puts **full order records** in `med_list`, custom columns put **cell HTML** in
+   `custom_fields`. Columns load asynchronously, after the list draws.
+4. **The handoff text is structured** (`handoff_fields`): Patient Summary, Sit Aware/Contingenc, Action List
+   (tasks with due times), Fellow Notes, Fellow Signout.
+5. **CORES's values match the report's.** First comparison (57 patients): HR, BP and SpO2 agree in about 95%,
+   Na, BUN and creatinine in about 84%; the differences look like CORES holding newer values than the report's
+   snapshot.
+6. **The page cannot replace report 281 yet**: no temperature, GCS, CBC, LFTs, coags, full medication list, I&O
+   tables, lines/tubes/drains or allergies on our list. Columns exist for most of them except the full med list
+   and I&O tables.
+7. **Privacy tooling works**: the HUD's Find, Describe, Columns and Map show field names, CORES's vocabulary and
+   counts only, redacting every identifier the page holds. Each leak found on the way (by security review or
+   in use) is fixed and recorded below.
+
 ## The setting
 
 - CORES (Transformative Med, `static.transformativemed.com/cores/uab/prod/cores.4.11.0/base/public_web/`) runs in a
@@ -203,15 +225,34 @@ Automated security reviews flagged several leaks; each was fixed. The rules now:
 - The preview pane opens local files as `data:` URLs with storage disabled; test report JS over
   `.claude/launch.json`'s local server instead.
 
-## Open items / next steps
+## Next steps
 
-1. Capture with the current script (clinical data v2; check the HUD's size line and a green SUCCESS), `cores
-   generate`, then `cores compare`; tune VITALS / LABS label patterns from its "labels each item used / no item
-   used" lists (K: find CORES's potassium label; then compare vent / O2 and microbiology too). Compare again after
-   the morning labs, when the report's "current" is filled.
-2. Re-run Map with the current script (the 00:49 Map predates the date / age / room fix).
-3. Decide, section by section, which Daily Report parts come from the structured data (team is done); consider
-   adding TEMP, CBC, LFT, INR, VASOPRESS, IVF, ALLERGIES, ANES_TLD columns to the CORES list.
-4. 2026-11-13 test report prints 14 pages with synthetic data (4 days of I&O push Labs under Volume at the
-   default Data width; real CORES has 2 days). Unit locations missing: ABTX, HNPU, HOSU, HSP3, HSP4, SICU, TBIC,
-   W5N, W8N.
+In order; each builds on the one before.
+
+1. **Confirm the smaller capture.** Capture with the current script (`cores capture`, open the report): the HUD
+   should end in a green SUCCESS, with a "clinical data ... KB" line well under the first capture's 4,652 KB (v2:
+   compact rows, 120 per result column). If the clipboard copy still fails, lower `PER_SET` in capture_report.js.
+2. **Compare again after the morning labs** (`cores generate`, `cores compare`), when the report's "current" labs
+   are filled, to check today's values rather than yesterday's.
+3. **Tune and widen `cores compare`**:
+   - potassium: find CORES's label for K (its event set spells it *Postassium*) from the "labels no item used" list;
+   - vent and O2: compare *Oxygen Therapy*, *FiO2 Patient Care* / *FiO2, Set*, *Ventilator Mode*, *Pressure
+     Support*, *Vent Set Rate* with the report's `vent` and O2 delivery;
+   - microbiology and pending results: compare with what the report shows;
+   - the handoff fields (Patient Summary, Sit Aware, Action List) with the report's summary, situational
+     awareness and tasks;
+   - look at the few disagreeing patients' times (counts only) to confirm they are newer CORES values.
+4. **Re-run Map** with the current script (the last Map predates the date / age / room fix) and keep this file's
+   data map current.
+5. **Add columns to the CORES list** for what the report has and the page lacks: TEMP (or a vitals column that
+   includes temperature), GCS, HGB / WBC / PLATELETS (or a CBC column), LFT, INR, VASOPRESS, IVF, ALLERGIES,
+   ANES_TLD; then Map and compare again to see what each delivers (timed results, order records, or HTML).
+6. **Switch Daily Report sections to the structured data, one at a time**, where the compare shows they agree:
+   likely first the handoff text (summary, situational awareness, tasks), code status, then vitals and the
+   electrolytes. Keep report 281 as the source for everything else, and as the fallback when a capture has no
+   clinical data. Decide per section whether the newer CORES value or the report's snapshot is wanted.
+7. **Later, if the columns cover enough**: a capture that reads the list without opening report 281 at all (the
+   records exist only after a report has been opened, so check whether the list can load them some other way).
+8. Housekeeping: unit locations still missing (ABTX, CPCC, HNPU, HOSU, HSP2, HSP3, HSP4, HTIC, S6S, SCU, SICU,
+   TBIC, W5N, W8N); the synthetic test report prints 14 pages because its 4 days of I&O push Labs under Volume at
+   the default Data width (real CORES has 2 days).
