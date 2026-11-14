@@ -108,7 +108,9 @@
     var fin = ovEl('input', 'flex:1;min-width:0;font:12px ' + FONT + ';padding:3px 6px;border:1px solid #9aa8b6;border-radius:4px;user-select:text');
     fin.placeholder = 'words to find, comma between (pulm, interv)'; fin.value = prefs.find || '';
     var fgo = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 12px;border:1px solid #1f4e79;border-radius:4px;background:#1f4e79;color:#fff;cursor:pointer', 'Find');
-    findBar.appendChild(fin); findBar.appendChild(fgo);
+    var fdesc = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Describe');
+    fdesc.title = 'The layout of the CORES patient records: which fields are filled, and what kind of thing each holds. No values.';
+    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc);
 
     // the console: the script's messages, Find results, and the live spinner line at the bottom
     var list = ovEl('div', 'flex:1;min-height:0;overflow-y:auto;padding:5px 9px 7px;font:11px/1.45 ' + MONO + ';user-select:text;cursor:text');
@@ -172,6 +174,17 @@
     }
     // caught on the way down (capture phase), so a page that swallows clicks or keys before they arrive cannot stop them
     window.addEventListener('click', function (e) { if (e.target === fgo) { e.stopPropagation(); runFind(); } }, true);
+    // Describe: the CORES patient records, or the data path typed in the box (window.something)
+    window.addEventListener('click', function (e) {
+      if (e.target !== fdesc) return;
+      e.stopPropagation();
+      var pth = /^window\./.test(fin.value.trim()) ? fin.value.trim() : '';
+      ovLog('Describing: ' + (pth || 'the CORES patient records'));
+      setTimeout(function () {
+        try { describeCores(pth, { hud: true }); }
+        catch (err) { console.error('CORES capture: Describe failed', err); ovLog('Describe failed: ' + (err && (err.name + ': ' + err.message) || err) + '. Copy this line for Claude.', 'err'); }
+      }, 30);
+    }, true);
     window.addEventListener('keydown', function (e) {
       if (e.target !== fin) return;
       e.stopPropagation();
@@ -766,7 +779,8 @@
   // identifier (it could be a patient's name or number used as a key or an id) shows as <name>. Used by the Find box in the status box, or in the
   // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
   var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
-    localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, captureCores: 1, probeCores: 1, __coresRealOpen: 1 };
+    localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, coresDescribe: 1, captureCores: 1, probeCores: 1,
+    describeCores: 1, __coresRealOpen: 1 };
   function probeCopy(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
     return new Promise(function (res) {
       function old() { try { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); res(!!ok); } catch (e) { res(false); } }
@@ -993,30 +1007,131 @@
     window.coresProbe = { result: out, text: text, forClaude: forClaude };
     console.log(forClaude);
     if (opt.hud && ov) {
-      // into the HUD's console: the verdict lines coloured, the rest neutral, and a button that copies it all for Claude
-      var box = ovEl('div', 'margin:5px 0;padding:5px 7px;border:1px solid #c9d6e3;border-radius:5px;background:#f6f9fc;color:#1b1b1b;white-space:pre-wrap;word-break:break-word');
-      L.forEach(function (line, i) {
-        var el = ovEl('div', i === 0 ? 'font:600 12px Segoe UI,Arial,sans-serif;color:#1f4e79;margin-bottom:2px' :
-          /^✔/.test(line) ? 'color:' + OV_C.ok + ';font-weight:600' : /^✖/.test(line) ? 'color:' + OV_C.warn + ';font-weight:600' :
-          /^[A-Z' ]+$/.test(line) && line ? 'color:#1f4e79;font-weight:700;margin-top:3px' : '', line || ' ');
-        box.appendChild(el);
-      });
-      var cb = ovEl('button', 'margin-top:5px;font:600 11px Segoe UI,Arial,sans-serif;padding:2px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Copy for Claude');
-      cb.onclick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
-      box.appendChild(cb);
-      ovAppend(box);
-      // in view: the HUD opened if it was collapsed or hidden, the console scrolled to the result's first line, and the
-      // result lit up for a moment so it is easy to spot
-      ov.expand();
-      ov.list.scrollTop += box.getBoundingClientRect().top - ov.list.getBoundingClientRect().top - 4;
-      box.style.transition = 'background-color 1.2s'; box.style.backgroundColor = '#fff3b0';
-      setTimeout(function () { box.style.backgroundColor = '#f6f9fc'; }, 60);
+      showResult(L, forClaude, 'Find');
     } else {
       probeCopy(forClaude).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
     }
     return { text: text };
   }
   window.probeCores = probeCores;
+  // ---- Describe (describeCores): the LAYOUT of CORES's patient records, never their contents. For each field of the
+  // records in window.global_constant_row_info (or another list or object, given its path): in how many records it is
+  // empty, text, a number, a yes/no flag, a list (how many entries, and the fields its entries have) or an object (its
+  // fields); text holding JSON is opened and described the same way, and text holding HTML is called HTML. No value is
+  // ever shown: only field names that look like a programmer's (else <name>), kinds and counts. Then a guess at which
+  // fields could hold each part of the Daily Report, by their names. HUD: the Describe button; Console: describeCores()
+  // or describeCores('window.some.path').
+  function describeCores(path, opt) {
+    opt = opt || {};
+    path = String(path || 'window.global_constant_row_info').trim();
+    function safe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,29}$/.test(x) && !/\d{3,}/.test(x) && /[a-z]/.test(x) && !/^[A-Z][a-z]+$/.test(x) ? x : '<name>'; }
+    var target = window, parts = path.replace(/^window\.?/, '').split('.').filter(Boolean);
+    for (var i = 0; i < parts.length; i++) { try { target = target == null ? undefined : target[parts[i]]; } catch (e) { target = undefined; } }
+    var L = ['Describe: ' + parts.map(safe).join('.') || 'window'];
+    if (!target || typeof target !== 'object') {
+      L.push('✖ nothing to describe there' + (path.indexOf('global_constant_row_info') >= 0 ? ': this window has no CORES patient records (run Describe in the patient list window)' : ''));
+      return finish(L);
+    }
+    var recs = Array.isArray(target) ? target.filter(function (r) { return r && typeof r === 'object'; }) : [target];
+    L.push('✔ ' + recs.length + ' record' + (recs.length === 1 ? '' : 's') + (Array.isArray(target) ? ' in the list' : ''));
+    // what kind of thing a value is (no value is kept)
+    function kindOf(v) {
+      if (v === null || v === undefined || v === '') return 'empty';
+      if (typeof v === 'number') return 'number';
+      if (typeof v === 'boolean') return 'flag';
+      if (typeof v === 'string') {
+        var t = v.trim();
+        if (!t) return 'empty';
+        if (/^[\[{]/.test(t)) { try { JSON.parse(t); return 'JSON text'; } catch (e) {} }
+        if (/^<\w/.test(t) || /<\/\w+>/.test(t)) return 'HTML text';
+        if (/^\d+(\.\d+)?$/.test(t)) return 'digits';
+        return 'text';
+      }
+      if (Array.isArray(v)) return v.length ? 'list' : 'empty list';
+      if (typeof v === 'object') return Object.keys(v).length ? 'object' : 'empty object';
+      return typeof v;
+    }
+    function open(v) { if (typeof v === 'string') { try { return JSON.parse(v.trim()); } catch (e) { return null; } } return v; }
+    // the layout of a set of values found under one field: kinds with counts; for lists and objects, their fields (one
+    // more level, and one beyond that for lists of objects)
+    function layout(vals, depth) {
+      var kinds = {}, sizes = [], sub = {}, nObj = 0;
+      vals.forEach(function (v) {
+        var k = kindOf(v); kinds[k] = (kinds[k] || 0) + 1;
+        if (depth > 1 || (k !== 'list' && k !== 'object' && k !== 'JSON text')) return;
+        var o = open(v);
+        var items = Array.isArray(o) ? o : [o];
+        if (Array.isArray(o)) sizes.push(o.length);
+        items.forEach(function (it) {
+          if (!it || typeof it !== 'object' || Array.isArray(it)) return;
+          nObj++;
+          var ks = Object.keys(it);
+          if (ks.length > 60) { sub['(' + ks.length + ' keys: a table)'] = (sub['(' + ks.length + ' keys: a table)'] || []).concat([null]); return; }
+          ks.forEach(function (key) { (sub[key] = sub[key] || []).push(it[key]); });
+        });
+      });
+      var s = Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; }).map(function (k) { return k + ' ' + kinds[k]; }).join(', ');
+      if (sizes.length) s += '; ' + Math.min.apply(null, sizes) + '–' + Math.max.apply(null, sizes) + ' entries';
+      var subs = Object.keys(sub);
+      if (subs.length) {
+        s += '\n        ' + (sizes.length ? 'its entries have' : 'with') + ' fields: ' + subs.slice(0, 40).map(function (key) {
+          if (key.charAt(0) === '(') return key;
+          var inner = layout(sub[key], depth + 1).split('\n')[0];
+          return safe(key) + ' (' + inner.replace(/ \d+(?=,|;|$)/g, '') + ')';
+        }).join(', ') + (subs.length > 40 ? ', … ' + (subs.length - 40) + ' more' : '');
+      }
+      return s;
+    }
+    var fields = {};
+    recs.forEach(function (r) { try { Object.keys(r).forEach(function (k) { (fields[k] = fields[k] || []).push(r[k]); }); } catch (e) {} });
+    var names = Object.keys(fields), filled = [], blank = [];
+    names.forEach(function (k) { (fields[k].every(function (v) { return /^empty/.test(kindOf(v)); }) ? blank : filled).push(k); });
+    L.push('', 'FIELDS WITH SOMETHING IN THEM (' + filled.length + ')  [kind and in how many records]');
+    filled.forEach(function (k) { L.push('• ' + safe(k) + ': ' + layout(fields[k], 0)); });
+    if (blank.length) L.push('', 'EMPTY IN EVERY RECORD (' + blank.length + '): ' + blank.map(safe).join(', '));
+    // which fields could hold each part of the Daily Report, by name
+    var PARTS = [['Vitals', /vital|\bvs\b|temp|pulse|heart|resp|spo2|bp_|blood_?press|weight/i], ['Ventilation / O2', /vent|o2|oxygen|fio2|peep|airway/i],
+      ['Intake / output', /\bio\b|i_?o_|intake|output|urine|drain|fluid/i], ['Labs', /lab|result|chem|cbc|bmp/i],
+      ['Meds', /med|drug|infus|drip|antibio|prn|sched/i], ['Lines / tubes / drains', /(^|_)lines?($|_)|cath|tube|drain|tld/i],
+      ['Patient summary / one-liner', /summary|one_?liner|handoff|narrative|course|hpi/i], ['Tasks / to-do', /task|todo|action/i],
+      ['Situational awareness / plan', /plan|aware|sit_|contingenc/i], ['Diagnosis / problems', /diag|problem|dx/i],
+      ['Allergies / diet', /allerg|diet|feed/i], ['Code status / isolation', /code_?status|isolat|precaution/i], ['Notes', /note|document/i]];
+    L.push('', 'DAILY REPORT PARTS, BY FIELD NAME (a guess: check the kinds above)');
+    PARTS.forEach(function (pt) {
+      var hits = filled.filter(function (k) { return pt[1].test(k); });
+      L.push((hits.length ? '✔ ' : '✖ ') + pt[0] + ': ' + (hits.length ? hits.map(safe).join(', ') : 'no filled field named like it'));
+    });
+    L.push('', 'No values are included: only field names that look like a programmer\'s (else <name>), kinds and counts.');
+    return finish(L);
+
+    function finish(lines) {
+      var text = lines.join('\n');
+      window.coresDescribe = { text: text };
+      if (opt.hud && ov) showResult(lines, text, 'Describe');
+      else { console.log(text); probeCopy(text).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); }); }
+      return { text: text };
+    }
+  }
+  // a Find or Describe answer in the HUD's console: the first line as a title, verdict lines coloured, section titles
+  // bold, a Copy for Claude button; scrolled into view, the HUD opened if it was collapsed, lit up for a moment
+  function showResult(lines, forClaude, what) {
+    var box = ovEl('div', 'margin:5px 0;padding:5px 7px;border:1px solid #c9d6e3;border-radius:5px;background:#f6f9fc;color:#1b1b1b;white-space:pre-wrap;word-break:break-word');
+    lines.forEach(function (line, i) {
+      box.appendChild(ovEl('div', i === 0 ? 'font:600 12px Segoe UI,Arial,sans-serif;color:#1f4e79;margin-bottom:2px' :
+        /^✔/.test(line) ? 'color:' + OV_C.ok + ';font-weight:600' : /^✖/.test(line) ? 'color:' + OV_C.warn + ';font-weight:600' :
+        /^[A-Z][A-Z' \/,()\-]+(\(|\[|$)/.test(line) ? 'color:#1f4e79;font-weight:700;margin-top:3px' : '', line || ' '));
+    });
+    var cb = ovEl('button', 'margin-top:5px;font:600 11px Segoe UI,Arial,sans-serif;padding:2px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Copy for Claude');
+    cb.onclick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
+    box.appendChild(cb);
+    ovAppend(box);
+    ov.expand();
+    ov.list.scrollTop += box.getBoundingClientRect().top - ov.list.getBoundingClientRect().top - 4;
+    box.style.transition = 'background-color 1.2s'; box.style.backgroundColor = '#fff3b0';
+    setTimeout(function () { box.style.backgroundColor = '#f6f9fc'; }, 60);
+  }
+  window.describeCores = describeCores;
+
 
   window.captureCores = function (reportId, opts) {
     if (reportId && typeof reportId === 'object') { opts = reportId; reportId = null; }
