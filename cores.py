@@ -1109,8 +1109,11 @@ def cmd_capture(a, cfg):
     optstr = '{' + ', '.join(opts) + '}' if opts else ''
     call = f'captureCores({rid}{", " + optstr if optstr else ""});' if a.direct else f'captureCores({optstr});'
     text = js_path.read_text(encoding='utf-8')
-    if not a.no_run:
-        text = text.rstrip('\n') + '\n\n' + call + '\n'
+    # what runs at the end of the paste: the capture call (unless --no-run), then the Trace (--trace). With neither, the
+    # paste only defines the functions and nothing shows in CORES until one of them is typed in the Console
+    calls = ([] if a.no_run else [call]) + (['traceCores();'] if a.trace else [])
+    if calls:
+        text = text.rstrip('\n') + '\n\n' + '\n'.join(calls) + '\n'
     rescued, _, saved_now = clipboard_capture(cfg)  # a report still on the clipboard from the last capture must not be lost
     if rescued:
         say(f'The clipboard held a report from CORES: {"saved as" if saved_now else "already saved as"} {rel(rescued)}. '
@@ -1119,12 +1122,23 @@ def cmd_capture(a, cfg):
     inbox = ', '.join(str(d) for d in inbox_dirs(cfg))
     say('CORES capture')
     say('  1. In the CORES patient-list window (the Cerner-hosted one, inside Citrix) press F12 and open the Console tab.')
-    if copied:
-        say(f'  2. Paste and press Enter. The clipboard holds the capture script with   {call}   at the end.')
+    ending = '   '.join(calls)
+    if copied and calls:
+        say(f'  2. Paste and press Enter. The clipboard holds the capture script with   {ending}   at the end.')
+    elif copied:
+        say('  2. Paste and press Enter. The clipboard holds the capture script alone (--no-run): NOTHING SHOWS in CORES')
+        say('     until you type a call in the Console:   traceCores()   for the Trace,   captureCores()   for a capture.')
     else:
-        say(f'  2. Paste the contents of {js_path.name} (clipboard unavailable here), press Enter, then run   {call}')
+        say(f'  2. Paste the contents of {js_path.name} (clipboard unavailable here), press Enter, then run   {ending or "traceCores()  or  captureCores()"}')
     say('     First time only: Chrome refuses the paste until you type   allow pasting   and press Enter; then paste again.')
     say('     (DevTools > Sources > Snippets never asks: paste into a new snippet once and run it with Ctrl+Enter.)')
+    if a.trace:
+        say('     The HUD comes up with the Trace armed (a red Stop trace button). It only watches. Use a fresh CORES session')
+        say('     (F5, list reopened): the Trace has to be armed before the first report is opened.')
+    if a.no_run and a.trace:   # the Trace alone
+        say('  3. Open the report from CORES as you normally do. Nothing is captured (--no-run).')
+        say('     When the report has rendered, press Stop trace in the HUD, read the result, press Copy for Claude.')
+        return
     if a.direct:
         say(f'  3. The script opens report {rid} itself in a popup ({REPORT_IDS.get(rid, "report id " + rid)}).')
     else:
@@ -1133,6 +1147,8 @@ def cmd_capture(a, cfg):
     say('     When the report has rendered, its HTML goes on the clipboard'
         + ('' if a.no_download else ' and downloads as "CORES report <id> <date> <time>.html"')
         + ('; the patient list shows a button to save it into your folder' if a.folder else '') + '. The report window closes.')
+    if a.trace:
+        say('     The Trace stops by itself a moment after the capture: read its result in the HUD, then press Copy for Claude.')
     say('  4. Back on this PC:')
     say(f'       cores generate --print              newest capture in {inbox}, else the clipboard -> Daily Report -> print')
     say('       cores watch --clipboard --print     ... automatically for every capture, until Ctrl+C')
@@ -1911,7 +1927,10 @@ def build_parser():
     sp.add_argument('--id', default='281', help='report id for --direct (281 = Anesthesia ICU w/ Meds, 8 = I-PASS Detailed, 7 = Medicine Report +VS/Meds)')
     sp.add_argument('--no-download', action='store_true', help='clipboard hand-off only: the browser does not download a file')
     sp.add_argument('--folder', action='store_true', help='also save into a folder chosen once with the browser\'s folder picker')
-    sp.add_argument('--no-run', action='store_true', help='copy the script without the captureCores(...) call at the end')
+    sp.add_argument('--no-run', action='store_true', help='copy the script without the captureCores(...) call at the end: nothing shows in CORES '
+                    'until a call is typed in the Console (or add --trace)')
+    sp.add_argument('--trace', action='store_true', help='also arm the Trace (traceCores()) in the paste: the HUD comes up watching what loads '
+                    'CORES\'s patient records; with --no-run, the Trace alone')
 
     def print_opts(sp, implies=False):
         pre = '(implies --print) ' if implies else ''

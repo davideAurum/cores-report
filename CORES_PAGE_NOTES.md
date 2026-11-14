@@ -215,10 +215,13 @@ could load the records without it) or **automated** (a script could open it the 
 
 1. Start from a **fresh CORES session**: press F5 in the patient-list window and open your list again. The Trace
    has to be armed while the records are not there yet; armed later, it says so and tells you to start over.
-2. On the PC run `cores capture`, then in the CORES window paste into the DevTools Console as usual (the capture
-   is now armed). `cores capture --no-run` pastes the script without arming a capture, if only the Trace is wanted.
-3. In the HUD press the magnifier, then **Trace**, *before* opening the report. The button turns red (**Stop
-   trace**) and the counts line shows `● trace 12 s, 34 seen`. In the Console the same is `traceCores()`.
+2. On the PC run `cores capture --trace`, then in the CORES window paste into the DevTools Console as usual: the
+   capture is armed and the Trace with it, so step 3 is already done. `cores capture --no-run --trace` arms the
+   Trace alone, with no capture. (`--no-run` without `--trace` pastes the script with no call at all: no HUD
+   appears until `traceCores()` or `captureCores()` is typed in the Console.)
+3. After a plain `cores capture`: in the HUD press the magnifier, then **Trace**, *before* opening the report. The
+   button turns red (**Stop trace**) and the counts line shows `● trace 12 s, 34 seen`. In the Console the same is
+   `traceCores()`, which also brings the HUD up when it is not there.
 4. **Open the report as usual** (CORES's own report button, report 281). Let the capture finish.
 5. The Trace stops by itself about 2.5 s after the capture's verdict line. Without a capture, press **Stop
    trace** once the report has rendered (`traceCores()` again, or `traceCores('stop')`). It also stops by itself

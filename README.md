@@ -169,7 +169,7 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 | Command | What it does |
 |---|---|
 | `cores generate [FILE \| --clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean]` | newest capture in Downloads, else the clipboard -> `reports\` -> JSON -> Daily Report -> browser. `--clipboard` uses the clipboard even when Downloads has a capture. `FILE` may also be a `.json` or a Daily Report. `--copy` leaves the capture in Downloads instead of moving it. `--to PRINTER`, `--kiosk` and `--dialog` choose how to print and imply `--print`. |
-| `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself |
+| `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run] [--trace]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself; `--trace` also arms the Trace (what loads CORES's patient records, see `CORES_PAGE_NOTES.md`); `--no-run` leaves the capture call out, so nothing shows in CORES until a call is typed in the Console |
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
 | `cores compare [FILE]` | compare a capture's printed report with the CORES clinical data it carries: agree / differ / only one, per vital, lab and the meds (counts only) |
