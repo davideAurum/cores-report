@@ -1032,8 +1032,16 @@
       L.push('✖ nothing to describe there' + (path.indexOf('global_constant_row_info') >= 0 ? ': this window has no CORES patient records (run Describe in the patient list window)' : ''));
       return finish(L);
     }
-    var recs = Array.isArray(target) ? target.filter(function (r) { return r && typeof r === 'object'; }) : [target];
-    L.push('✔ ' + recs.length + ' record' + (recs.length === 1 ? '' : 's') + (Array.isArray(target) ? ' in the list' : ''));
+    // the records: a list's entries; an object with many keys is a lookup table (keyed by patient, perhaps), so its
+    // entries are described and its keys never shown; a smaller object is one record
+    var keyed = !Array.isArray(target) && Object.keys(target).length > 25;
+    var recs = (Array.isArray(target) ? target : keyed ? Object.keys(target).map(function (k) { return target[k]; }) : [target])
+      .filter(function (r) { return r && typeof r === 'object'; });
+    L.push('✔ ' + recs.length + ' record' + (recs.length === 1 ? '' : 's') + (Array.isArray(target) ? ' in the list' : keyed ? ', the entries of a table (its keys are not shown)' : ''));
+    // a field name is shown only when it is shared: in at least half of the records it comes from (when there are 3 or
+    // more), so a key that is a patient's name or number, different in each, never appears; and it must look like a
+    // programmer's name (safe)
+    function shown(key, n, of) { return of >= 3 && n < of / 2 ? null : safe(key); }
     // what kind of thing a value is (no value is kept)
     function kindOf(v) {
       if (v === null || v === undefined || v === '') return 'empty';
@@ -1055,7 +1063,7 @@
     // the layout of a set of values found under one field: kinds with counts; for lists and objects, their fields (one
     // more level, and one beyond that for lists of objects)
     function layout(vals, depth) {
-      var kinds = {}, sizes = [], sub = {}, nObj = 0;
+      var kinds = {}, sizes = [], sub = {}, nObj = 0, tables = 0, tableKeys = 0;
       vals.forEach(function (v) {
         var k = kindOf(v); kinds[k] = (kinds[k] || 0) + 1;
         if (depth > 1 || (k !== 'list' && k !== 'object' && k !== 'JSON text')) return;
@@ -1066,29 +1074,36 @@
           if (!it || typeof it !== 'object' || Array.isArray(it)) return;
           nObj++;
           var ks = Object.keys(it);
-          if (ks.length > 60) { sub['(' + ks.length + ' keys: a table)'] = (sub['(' + ks.length + ' keys: a table)'] || []).concat([null]); return; }
+          if (ks.length > 60) { tables++; tableKeys = Math.max(tableKeys, ks.length); return; }   // a table: keys not shown
           ks.forEach(function (key) { (sub[key] = sub[key] || []).push(it[key]); });
         });
       });
       var s = Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; }).map(function (k) { return k + ' ' + kinds[k]; }).join(', ');
       if (sizes.length) s += '; ' + Math.min.apply(null, sizes) + '–' + Math.max.apply(null, sizes) + ' entries';
-      var subs = Object.keys(sub);
-      if (subs.length) {
-        s += '\n        ' + (sizes.length ? 'its entries have' : 'with') + ' fields: ' + subs.slice(0, 40).map(function (key) {
-          if (key.charAt(0) === '(') return key;
-          var inner = layout(sub[key], depth + 1).split('\n')[0];
-          return safe(key) + ' (' + inner.replace(/ \d+(?=,|;|$)/g, '') + ')';
-        }).join(', ') + (subs.length > 40 ? ', … ' + (subs.length - 40) + ' more' : '');
-      }
+      var subs = Object.keys(sub), hidden = 0, parts = [];
+      subs.forEach(function (key) {
+        var nm = shown(key, sub[key].length, nObj);
+        if (!nm || nm === '<name>') { hidden++; return; }
+        parts.push(nm + ' (' + layout(sub[key], depth + 1).split('\n')[0].replace(/ \d+(?=,|;|$)/g, '') + ')');
+      });
+      if (parts.length > 40) parts = parts.slice(0, 40).concat(['… ' + (parts.length - 40) + ' more']);
+      if (hidden) parts.push(hidden + ' name' + (hidden === 1 ? '' : 's') + ' not shown (not shared, or not a programmer\'s name)');
+      if (tables) parts.push(tables + ' table' + (tables === 1 ? '' : 's') + ' of up to ' + tableKeys + ' keys (not shown)');
+      if (parts.length) s += '\n        ' + (sizes.length ? 'its entries have' : 'with') + ' fields: ' + parts.join(', ');
       return s;
     }
     var fields = {};
     recs.forEach(function (r) { try { Object.keys(r).forEach(function (k) { (fields[k] = fields[k] || []).push(r[k]); }); } catch (e) {} });
-    var names = Object.keys(fields), filled = [], blank = [];
-    names.forEach(function (k) { (fields[k].every(function (v) { return /^empty/.test(kindOf(v)); }) ? blank : filled).push(k); });
+    var names = Object.keys(fields), filled = [], blank = [], unshared = 0;
+    names.forEach(function (k) {
+      var nm = shown(k, fields[k].length, recs.length);
+      if (!nm || nm === '<name>') { unshared++; return; }   // never listed, not even as <name>
+      (fields[k].every(function (v) { return /^empty/.test(kindOf(v)); }) ? blank : filled).push(k);
+    });
     L.push('', 'FIELDS WITH SOMETHING IN THEM (' + filled.length + ')  [kind and in how many records]');
     filled.forEach(function (k) { L.push('• ' + safe(k) + ': ' + layout(fields[k], 0)); });
     if (blank.length) L.push('', 'EMPTY IN EVERY RECORD (' + blank.length + '): ' + blank.map(safe).join(', '));
+    if (unshared) L.push('', unshared + ' more field name' + (unshared === 1 ? '' : 's') + ' not shown: not shared by most records, or not a programmer\'s name.');
     // which fields could hold each part of the Daily Report, by name
     var PARTS = [['Vitals', /vital|\bvs\b|temp|pulse|heart|resp|spo2|bp_|blood_?press|weight/i], ['Ventilation / O2', /vent|o2|oxygen|fio2|peep|airway/i],
       ['Intake / output', /\bio\b|i_?o_|intake|output|urine|drain|fluid/i], ['Labs', /lab|result|chem|cbc|bmp/i],
