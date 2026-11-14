@@ -227,12 +227,12 @@ take fewer lines and more of them fit on a page.
 ## Unit locations
 
 `unit_locations.json` maps each unit, exactly as CORES prints it (`MICU`, `MCCU`, `UED` …), to where it is, in a few
-words such as `North Pavilion 7`. A unit with a location gets a **Loc** line in each patient's Snapshot (it can be hidden
+words such as `North Pavilion` (the building, no floor). A unit with a location gets a **Building** line in each patient's Snapshot (it can be hidden
 in *Sections*), its location in the Location block's tooltip and in the Unit filter, and the toolbar's Breakdown gains
-*By location*, which counts patients per location. Search finds patients by location too.
+*By building*, which counts patients per building. Search finds patients by location too.
 
 ```json
-"MICU": {"location": "North Pavilion 7", "verified": true}
+"MICU": {"location": "North Pavilion", "verified": true}
 ```
 
 `"verified": false` prints the location with a `?` after it until you confirm it. `cores generate` names every unit on

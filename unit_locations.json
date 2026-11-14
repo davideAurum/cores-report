@@ -1,17 +1,17 @@
 {
   "_about": [
-    "Where each CORES unit is, shown in the Daily Report's Snapshot as 'Loc ...', in the Location block's tooltip, in the Unit filter and as Breakdown > By location.",
-    "Key = the unit exactly as CORES prints it (case does not matter). location = free text, kept short because it prints on every patient, e.g. 'North Pavilion 7'.",
+    "Where each CORES unit is, shown in the Daily Report's Snapshot as 'Building ...', in the Location block's tooltip, in the Unit filter and as Breakdown > By building.",
+    "Key = the unit exactly as CORES prints it (case does not matter). location = the building only (no floor), kept short because it prints on every patient, e.g. 'North Pavilion'.",
     "verified = false prints the location with a '?' after it; set it to true once you have confirmed it. A unit with an empty location shows nothing.",
     "cores generate names any unit on the report that has no location here yet. Unit names are not PHI; never put patient details in this file."
   ],
   "units": {
-    "MICU": {"location": "West Pavilion 6", "verified": true},
-    "MCCU": {"location": "West Pavilion 3", "verified": true},
-    "CCU":  {"location": "West Pavilion 6", "verified": true},
-    "ICVU": {"location": "Spain Wallace 7", "verified": true},
-    "NICU": {"location": "North Pavilion 8", "verified": true},
-    "BMT":  {"location": "Women & Infants 8", "verified": true},
-    "UED":  {"location": "North Pavilion 1", "verified": true}
+    "MICU": {"location": "West Pavilion", "verified": true},
+    "MCCU": {"location": "West Pavilion", "verified": true},
+    "CCU":  {"location": "West Pavilion", "verified": true},
+    "ICVU": {"location": "Spain Wallace", "verified": true},
+    "NICU": {"location": "North Pavilion", "verified": true},
+    "BMT":  {"location": "Women & Infants", "verified": true},
+    "UED":  {"location": "North Pavilion", "verified": true}
   }
 }

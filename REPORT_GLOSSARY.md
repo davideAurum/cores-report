@@ -154,7 +154,7 @@ The Daily Report flags a temperature under 50 as degrees C (normal 36.1 to 37.9)
 not all marked low.
 
 ## Rendered Daily Report (names shown by the Inspect toggle)
-Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, **Breakdown** (Off / By unit, By location once any unit
+Toolbar: search, Unit / Severity / O2 filters, Open tasks only, Sort, Reset, **Breakdown** (Off / By unit, By building once any unit
 has one in `unit_locations.json`, and By team once any Patient block carries a team: the **Breakdown** line above the table, a Breakdown total, a Breakdown chip per
 unit outlined in its unit color with the count of patients shown and printed, and a dashed Breakdown blank chip; printed
 when on), **+ Blank patient**, **Print all** (puts back every patient left out with Don't print), Print, **B&W** (black and white: see
@@ -190,12 +190,15 @@ Each patient is a **Patient block**, one row: Snapshot column (header "Snapshot"
 outlined and lettered in that unit's color, then 8 px to its right the Patient name, last name and comma on the
 first line, first name and MI on the second, and the Isolation tag (a Lucide biohazard icon in a box, red, black in B&W; hover
 shows the isolation text) to the right of the name when the patient is on isolation; then the Severity chip, and
-the Allergy / Diet block at the bottom) · Hospital Summary column (Admission at the top, then the Patient summary
-and Status lines) · Vitals column (header "Data"; its default width is the narrowest that keeps Volume and Labs side by side in print. Vitals across the top, then
+the Allergy / Diet block, then Admission, Patient summary, Status lines, Tasks and Situational Awareness — the
+**Snapshot flow**, in two columns: it fills the first column down to the height the other cells give the row (sections
+hidden in Sections do not count) and carries on in the second, and the row grows only when two columns are not enough,
+and then only to balanced columns; one column when the Snapshot is under 2 × 120 px. Hospital Summary and Tasks /
+Sit. Awareness were columns of their own until 2026-11-13) · Vitals column (header "Data"; its default width is the narrowest that keeps Volume and Labs side by side in print. Vitals across the top, then
 Ventilation, then Volume and Labs side by side with a rule between them — Labs goes under Volume when the column
 is too narrow, as in portrait — then Tubes / Lines / Drains; Labs, heading "LABS (today)", was a column of its own
 until 2026-10-10) · Meds column (Infusions,
-Antibiotics, Scheduled, PRN stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (Typed notes, else blank
+Antibiotics, Scheduled, PRN stacked) · Notes column (Typed notes, else blank
 for handwriting; under the Snapshot, on screen only, the **Patient controls**: Don't print button — the patient stays on
 screen, dimmed, and is left out of the printout and of Optimize widths; remembered by MRN for 30 days — and Blank below button). Same-name drugs are merged onto one line with doses comma-separated.
 A **Blank patient block** (+ Blank patient, or Blank below on a patient) has the same row, empty and tall enough to
@@ -208,7 +211,7 @@ unit's. A chip with no unit is gray. In a Snapshot column too narrow
 for the chip and the name side by side, the name moves under the chip.
 Inside them: Location block (Unit, Room, Bed), Severity chip, Isolation tag (boxed biohazard icon), Patient name (Last name, First name
 and MI), MRN and Date of birth on one line ("MRN … | DOB …", labels bold, values plain),
-Age, Sex, Code status, **Unit location** ("Loc North Pavilion 7", the unit's location from `unit_locations.json`, with
+Age, Sex, Code status, **Building** ("Building North Pavilion", the unit's building from `unit_locations.json`, no floor, with
 " ?" after one not yet confirmed; only when the unit has one), Admission ("Dx: …", the Admit diagnosis with the `ADMIT:` prefix stripped; "Date: MM/DD/YY (LOS n days)", the Admit date
 and Length of stay; only the labels bold),
 Patient summary, Status lines, Allergy / Diet block (Allergies — "No Known Medication Allergies" or "No Known Drug

@@ -4,10 +4,10 @@ Usage:
   python cores_report.py "CORES report 281 2026-09-16 0715.html" [out.html] [--letter|--legal] [--portrait] [--bw]   # parse + render
   python cores_report.py data.json [out.html] [--letter|--legal] [--portrait] [--bw]                                   # from saved JSON
 --letter / --legal start the report on that paper (legal unless told), --portrait in portrait, --bw in black and white
-(all can be changed in its toolbar). Units listed in unit_locations.json get their location in the Snapshot.
+(all can be changed in its toolbar). Units listed in unit_locations.json get their building in the Snapshot.
 
-Each patient is a block: Snapshot | Hospital Summary | Data (Vitals · Vent · Volume · Labs · Lines) | Meds | Tasks / Sit Awareness | Notes (typed, else blank for
-handwriting).
+Each patient is a block: Snapshot (identity, allergies, Admission, Patient summary, Tasks, Situational Awareness,
+in two columns) | Data (Vitals · Vent · Volume · Labs · Lines) | Meds | Notes (typed, else blank for handwriting).
 Click a column header to sort; use the toolbar to filter. Hidden patients are not printed. Designed for ~1000 px
 (letter landscape) and up. The toolbar's Paper switches pick letter or legal, landscape or portrait; Optimize widths picks the column widths
 that fit the shown patients on the fewest pages.
@@ -48,7 +48,7 @@ DEFAULT_PAPER = 'legal'
 # Volume and Labs side by side (the .duo container query switches at 352 px of content; 364 px with the cell's
 # padding and border, measured with CORES's two days of I&O). The others share the rest in these proportions.
 DATA_MIN_PX = 364
-COL_SHARES = [15, 14, None, 14, 12, 8]   # Snapshot, Hospital Summary, Data, Meds, Tasks / Sit Awareness, Notes
+COL_SHARES = [30, None, 17, 13]   # Snapshot, Data, Meds, Notes
 
 
 def default_widths(paper, orient):
@@ -159,16 +159,15 @@ def unit_colors(units):
 # entries ending in ' column' hide a whole column (header, cells and width).
 SECTIONS = [
     ('Snapshot', ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                  'Unit location', 'Custom fields', 'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
+                  'Building', 'Custom fields', 'Allergy / Diet block', 'Allergies', 'Diet', 'TF', 'Restraints']),
     ('Hospital Summary', ['Admission', 'Admit diagnosis', 'Admit date', 'Length of stay', 'Patient summary', 'Status lines']),
     ('Vitals', ['Vitals', 'O2 delivery', 'Ventilation', 'Vent settings', 'Vent measurements', 'Blood gas',
                 'Volume', 'Volume chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
     ('Labs', ['Labs', 'CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs',
               'Trends', 'Glucose trend', 'Lactic acid trend']),
     ('Meds', ['Infusions', 'Antibiotics', 'Scheduled', 'PRN']),
-    ('Tasks', ['Tasks', 'Situational Awareness']),
-    ('Columns', ['Snapshot column', 'Hospital Summary column', 'Vitals column', 'Meds column', 'Sit Awareness column',
-                 'Notes column']),
+    ('Tasks', ['Tasks', 'Situational Awareness']),  # these and Hospital Summary's are in the Snapshot now
+    ('Columns', ['Snapshot column', 'Vitals column', 'Meds column', 'Notes column']),
 ]
 # Parts of each container: when every part is hidden the container disappears too (applied bottom-up).
 COLPARTS = {
@@ -180,11 +179,10 @@ COLPARTS = {
     'Trends': ['Glucose trend', 'Lactic acid trend'],
     'Labs': ['CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs', 'Trends'],
     'Snapshot column': ['Location block', 'Severity chip', 'Isolation tag', 'Patient name', 'MRN', 'Date of birth', 'Code status',
-                        'Unit location', 'Custom fields', 'Allergy / Diet block'],
-    'Hospital Summary column': ['Admission', 'Patient summary', 'Status lines'],
+                        'Building', 'Custom fields', 'Allergy / Diet block', 'Admission', 'Patient summary', 'Status lines',
+                        'Tasks', 'Situational Awareness'],
     'Vitals column': ['Vitals', 'Ventilation', 'Volume', 'Labs', 'Tubes / Lines / Drains'],
     'Meds column': ['Infusions', 'Antibiotics', 'Scheduled', 'PRN'],
-    'Sit Awareness column': ['Tasks', 'Situational Awareness'],
 }
 CHILDREN = {c for k, v in COLPARTS.items() if not k.endswith(' column') for c in v}
 
@@ -273,6 +271,20 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .status td{padding:0 6px 1px 0;vertical-align:top;border:0} .status td:first-child{color:var(--mute);white-space:nowrap}
 .care{border-top:1px solid var(--line);margin-top:5px;padding-top:3px} .care > div{margin:0 0 3px}
 .care .allergies{color:var(--alert);font-weight:600}
+/* Snapshot: identity, Allergy / Diet block, Admission, Patient summary, Tasks and Situational Awareness flow down one
+   column and on into a second. The flow (.snap) sits over the cell without adding to the row's height, so the row is
+   as tall as the other cells make it (sections hidden in Sections do not count); it fills its first column to that
+   height and spills into the second. A hidden copy of it in the cell (.snap-ghost, made by the page script), with its
+   two columns balanced, holds the row at least as tall as two columns need, so the row grows only when the Snapshot
+   does not fit beside the rest in two columns, and then only as far as balanced columns take. Under 2 x 120 px the
+   Snapshot is one column. */
+.rpt > tbody > tr > td.snapcell{padding:0;position:relative}
+.snap,.snap-ghost{padding:4px 6px;columns:2 120px;column-gap:12px;column-rule:1px solid var(--line)}
+.snap{position:absolute;inset:0;column-fill:auto;overflow:hidden}
+.snap-ghost{visibility:hidden;column-fill:balance;padding-bottom:7px!important}  /* 3 px spare: the flow is inside the cell's borders */
+.snap h4{break-after:avoid} .snap li,.snap .pthead,.snap .pid,.snap .care > div,.snap .adm > div,.snap .status tr{break-inside:avoid}
+/* its sections are ruled off from each other and, the first one shown too, from the identity lines above them */
+.snap > .sec,.snap > .sec.lead,.snap-ghost > .sec,.snap-ghost > .sec.lead{border-top:1px solid var(--line);margin-top:5px;padding-top:4px}
 .abn{color:var(--alert)}
 /* Isolation: a biohazard icon right of the name, the two kept together (they go under the chip together) */
 .pthead .nameiso{display:flex;align-items:center;gap:3px;min-width:0} .iso{flex:none;color:var(--unstable);border:1.5px solid currentColor;border-radius:3px;padding:1px} .iso svg{display:block}
@@ -355,6 +367,7 @@ body.bw .brk .bk{border-color:#000;color:#000}
 /* off-screen copy used by Optimize widths: the print rules below, applied on screen so it can be measured */
 .pm{position:absolute;left:-30000px;top:0;font-size:9px;line-height:1.22;background:#fff}
 .pm .rpt thead th{position:static} .pm .rpt > thead > tr > th,.pm .rpt > tbody > tr > td{padding:3px 5px} .pm .pmw{display:flow-root}
+.pm .rpt > tbody > tr > td.snapcell{padding:0} .pm .snap,.pm .snap-ghost{padding:3px 5px}
 @media screen{body{background:#e6e7e8}.page{background:#fff;padding:14px 18px;box-shadow:0 0 6px rgba(0,0,0,.15);max-width:1800px;margin:0 auto}}
 @media print{
   body{padding:0;font-size:9px;line-height:1.22}
@@ -367,12 +380,27 @@ body.bw .brk .bk{border-color:#000;color:#000}
   /* a patient never straddles a page break; a block that will not fit moves to the next page whole */
   .rpt > tbody.blk{page-break-inside:avoid;break-inside:avoid}
   .rpt > tbody.blk:nth-of-type(even) > tr > td{background:#fff}
+  .snap,.snap-ghost{padding:3px 5px}
 }
 """
 
 JS = """
 (function(){
   const table=document.getElementById('rpt'), rows=[...table.querySelectorAll('tbody.blk')];
+  // the Snapshot's hidden balanced copy (see .snap-ghost in the CSS), remade whenever the Snapshot's content changes
+  function ghost(td){
+    const sn=td.querySelector(':scope > .snap'); if(!sn)return;
+    const g=sn.cloneNode(true); g.className='snap-ghost'; g.removeAttribute('data-name'); g.setAttribute('aria-hidden','true'); g.inert=true;
+    g.querySelectorAll('[id]').forEach(x=>x.removeAttribute('id'));
+    g.querySelectorAll('input').forEach(x=>{x.tabIndex=-1;});
+    const old=td.querySelector(':scope > .snap-ghost'); if(old)old.replaceWith(g); else td.appendChild(g);
+  }
+  table.querySelectorAll('td.snapcell').forEach(ghost);
+  const dirty=new Set();
+  new MutationObserver(ms=>{
+    ms.forEach(m=>{const n=m.target.nodeType===1?m.target:m.target.parentElement, sn=n&&n.closest('.snap'); if(sn)dirty.add(sn.parentElement);});
+    dirty.forEach(ghost); dirty.clear();
+  }).observe(table,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','style','value']});
   const q=document.getElementById('q'), unit=document.getElementById('f-unit'), sev=document.getElementById('f-sev'),
         o2=document.getElementById('f-o2'), tasks=document.getElementById('f-tasks'), cnt=document.getElementById('count'),
         team=document.getElementById('f-team');
@@ -490,7 +518,7 @@ JS = """
   table.addEventListener('change',e=>{if(e.target.classList.contains('ufin')){refreshLists(); apply();}});
   // Enter (Shift+Enter) goes to the same field of the next (previous) patient shown, for assigning a team down the list
   table.addEventListener('keydown',e=>{const t=e.target; if(e.key!=='Enter'||!t.classList.contains('ufin'))return; e.preventDefault();
-    const all=[...table.querySelectorAll('tbody.blk:not(.hide) .uf[data-fid="'+t.parentElement.dataset.fid+'"] .ufin')], n=all[all.indexOf(t)+(e.shiftKey?-1:1)];
+    const all=[...table.querySelectorAll('tbody.blk:not(.hide) .snap .uf[data-fid="'+t.parentElement.dataset.fid+'"] .ufin')], n=all[all.indexOf(t)+(e.shiftKey?-1:1)];
     if(n){n.focus(); n.select();} else t.blur();});
   // the Fields menu: add a field by name, remove one (its values stay, and come back if a field of that name is added again)
   const fmenu=document.getElementById('fieldmenu'), flist=document.getElementById('f-list'), fnew=document.getElementById('f-new');
@@ -540,7 +568,7 @@ JS = """
     c.innerHTML=(isBlank(r)?'<button type="button" class="pr" data-name="Remove blank button" title="Remove this blank patient block">Remove</button>'
       :'<button type="button" class="px" data-name="Don\\u2019t print button"></button>')
       +'<button type="button" class="pb" data-name="Blank below button" title="Add a blank patient block after this one">+ Blank below</button>';
-    r.querySelector('td').appendChild(c);
+    (r.querySelector('td .snap')||r.querySelector('td')).appendChild(c);
   }
   const COLN=[...table.querySelectorAll('thead th')].map(th=>th.dataset.name.replace(' header',' column'));
   function blankEl(b){
@@ -592,7 +620,7 @@ JS = """
   const teamOf=r=>isBlank(r)?'':fieldVal(r,'team').trim();  // the Team field typed on the report
   const GROUPS={
     unit:{label:'unit',of:r=>r.dataset.unit||'',none:'No unit',color:v=>UNITC[v]||''},
-    loc:{label:'location',of:r=>r.dataset.uloc||'',none:'No location',color:()=>'',avail:()=>rows.some(r=>!isBlank(r)&&r.dataset.uloc)},
+    loc:{label:'building',of:r=>r.dataset.uloc||'',none:'No building',color:()=>'',avail:()=>rows.some(r=>!isBlank(r)&&r.dataset.uloc)},
     team:{label:'team',of:teamOf,none:'No team',color:()=>'',avail:()=>rows.some(r=>!isBlank(r)&&teamOf(r))},
   };
   let brkBy='';
@@ -638,7 +666,7 @@ JS = """
   // saved widths are kept only while the default widths they were made against are unchanged; a new layout starts afresh
   function loadW(o){try{const s=JSON.parse(localStorage.getItem(keyW(o))||'null'); if(s&&s.d===defs(o).join()&&s.w&&s.w.length===cols.length)return s.w;}catch(e){} return defs(o).slice();}
   let base=loadW(orient);
-  const RENAMED={'Patient column':'Snapshot column','Summary column':'Hospital Summary column','I&O':'Volume','I&O chart':'Volume chart','Labs column':'Labs'};  // names saved by older reports
+  const RENAMED={'Patient column':'Snapshot column','Summary column':'Hospital Summary column','I&O':'Volume','I&O chart':'Volume chart','Labs column':'Labs','Unit location':'Building'};  // names saved by older reports
   try{const s=JSON.parse(localStorage.getItem(KEYS)||'null'); if(Array.isArray(s))hidden=new Set(s.map(n=>RENAMED[n]||n));}catch(e){}
   const secStyle=document.createElement('style'); document.head.appendChild(secStyle);
   const COLPARTS=__COLPARTS__;
@@ -1402,24 +1430,24 @@ def render_row(r, report_date='', unit_color=None, uloc=''):
     tint = f' style="--unit:{unit_color}"' if unit_color else ''
     where = f'{r["location"]} · {uloc}' if uloc else r['location']
     unsure = ' title="Not confirmed yet: correct it in unit_locations.json"' if uloc.endswith(' ?') else ''
-    loc_line = f'<span class="pid uloc" data-name="Unit location"{unsure}><b>Loc</b> {e(uloc)}</span>' if uloc else ''
+    loc_line = f'<span class="pid uloc" data-name="Building"{unsure}><b>Building</b> {e(uloc)}</span>' if uloc else ''
     chip = (f'<div class="bedchip" data-name="Location block" title="{e(where)}"{tint}><span class="u" data-name="Unit">{e(r["unit"])}</span>'
             + (f'<span class="rb" data-name="Room">{roombed}</span>' if r['room'] else '') + '</div>')
     tags = sev_chip(sev)
     return f'''
 <tbody class="blk" {attrs} data-name="Patient block">
 <tr class="main">
- <td class="pt" data-name="Snapshot column"><div class="pthead">{chip}{name}</div>
+ <td class="pt snapcell" data-name="Snapshot column"><div class="snap" data-name="Snapshot flow"><div class="pthead">{chip}{name}</div>
    <div class="pid"><span data-name="MRN"><b>MRN</b> {e(r["mrn"])}</span><span data-name="Date of birth"><b>DOB</b> {e(r["dob"])} <span class="kv">(<span data-name="Age">{e(r["age"])}</span> <span data-name="Sex">{e(r["sex"])}</span>)</span></span></div>
    <span class="pid" data-name="Code status"><b>Code</b> {e(r["code_status"]) or "—"}</span>
    {loc_line}
    <div class="ufields" data-name="Custom fields"></div>
-   {('<div class="pttags">' + tags + '</div>') if tags else ''}{care}</td>
- <td data-name="Hospital Summary column">{admit}<div class="sec" data-name="Patient summary">{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<div class="sec"><h4>Notes</h4>' + notes + '</div>') if notes else ''}</td>
+   {('<div class="pttags">' + tags + '</div>') if tags else ''}{care}
+   {admit}<div class="sec" data-name="Patient summary"><h4>Patient Summary</h4>{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<div class="sec"><h4>Notes</h4>' + notes + '</div>') if notes else ''}
+   <div class="sec" data-name="Tasks"><h4>Tasks</h4>{('<ul class="tasks">' + tasks + '</ul>') if tasks else '<p class="empty">None</p>'}</div>
+   <div class="sec" data-name="Situational Awareness"><h4>Situational Awareness</h4>{('<ul>' + plan + '</ul>') if plan else '<p class="empty">None</p>'}</div>{handoff}</div></td>
  <td data-name="Vitals column">{render_vitals(r)}{render_ventilation(r)}{duo}{render_tld(r)}</td>
  <td data-name="Meds column">{render_meds(r, ('infusions', 'antibiotics', 'scheduled', 'prn', 'other'))}</td>
- <td data-name="Sit Awareness column"><div class="sec" data-name="Tasks"><h4>Tasks</h4>{('<ul class="tasks">' + tasks + '</ul>') if tasks else '<p class="empty">None</p>'}</div>
-     <div class="sec" data-name="Situational Awareness"><h4>Situational Awareness</h4>{('<ul>' + plan + '</ul>') if plan else '<p class="empty">None</p>'}</div>{handoff}</td>
  <td class="notes" data-name="Notes column"><textarea class="notein" rows="3" placeholder="Type or handwrite" aria-label="Notes" data-name="Typed notes"></textarea><div class="notetxt"></div></td>
 </tr>
 </tbody>'''
@@ -1508,10 +1536,8 @@ def render(data, orientation='landscape', bw=False, paper=DEFAULT_PAPER, unit_lo
 <colgroup>{''.join(f'<col style="width:{w}">' for w in default_widths(paper, orient))}</colgroup>
 <thead data-name="Column headers"><tr>
  <th data-key="location" data-name="Snapshot header">Snapshot<span class="dir"></span></th>
- <th data-key="text" data-name="Hospital Summary header">Hospital Summary<span class="dir"></span></th>
  <th data-key="o2" data-name="Vitals header">Data<span class="dir"></span></th>
  <th data-key="drips" data-name="Meds header">Meds<span class="dir"></span></th>
- <th data-key="tasks" data-name="Sit Awareness header">Tasks / Sit. Awareness<span class="dir"></span></th>
  <th data-name="Notes header" style="cursor:default">Notes</th>
 </tr></thead>
 {rows}
