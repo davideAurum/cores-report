@@ -149,14 +149,33 @@
     shut.onclick = function (e) { e.stopPropagation(); root.style.display = 'none'; };
     findBtn.onclick = function (e) { e.stopPropagation(); showFind(findBar.style.display === 'none'); };
     head.ondblclick = function (e) { if (e.target === head || e.target === title) fold.onclick(e); };
+    // Find runs a moment after it is asked for, so the "searching" line shows first; anything that goes wrong is shown
+    // in red here (and in the Console) instead of nothing happening
+    var finding = false;
     function runFind() {
+      if (finding) return;
       var words = fin.value.split(/[,;\n]+/).map(function (w) { return w.trim(); }).filter(Boolean);
       ovSave('find', fin.value);
       if (!words.length) { ovLog('Find: type one or more words first, with a comma between them.', 'warn'); return; }
-      probeCores.apply(null, words.concat([{ hud: true }]));
+      finding = true;
+      ovLog('Searching: ' + fin.value.trim());
+      setTimeout(function () {
+        try { probeCores.apply(null, words.concat([{ hud: true }])); }
+        catch (e) {
+          console.error('CORES capture: Find failed', e);
+          ovLog('Find failed: ' + (e && (e.name + ': ' + e.message) || e) + '. Copy this line for Claude.', 'err');
+        }
+        finding = false;
+      }, 30);
     }
-    fgo.onclick = runFind;
-    fin.onkeydown = function (e) { e.stopPropagation(); if (e.key === 'Enter') runFind(); if (e.key === 'Escape') showFind(false); };
+    // caught on the way down (capture phase), so a page that swallows clicks or keys before they arrive cannot stop them
+    window.addEventListener('click', function (e) { if (e.target === fgo) { e.stopPropagation(); runFind(); } }, true);
+    window.addEventListener('keydown', function (e) {
+      if (e.target !== fin) return;
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); runFind(); }
+      if (e.key === 'Escape') showFind(false);
+    }, true);
 
     // moving: drag the title bar
     head.onmousedown = function (e) {
@@ -776,7 +795,7 @@
         if (row) { var hi = headingInfo(row); domKeys[key].heading = hi.heading || ''; domKeys[key].under = hi.under || ''; }
       }
     }
-    scanDoc(document, 'this window');
+    try { scanDoc(document, 'this window'); } catch (e) { out.notes.push('the page could not be read in full (' + (e && e.name) + ')'); }
     for (var f = 0; f < window.frames.length; f++) {
       try { scanDoc(window.frames[f].document, 'frame ' + f); } catch (e) { out.notes.push('frame ' + f + ' could not be read (another site)'); }
     }
@@ -797,8 +816,9 @@
         if (parent && !found[key].fieldsBeside.length) try { var pk = Object.keys(parent); found[key].fieldsBeside = pk.length > 25 ? ['(a table of ' + pk.length + ' entries)'] : pk.map(safe); } catch (e) {}
         return;
       }
-      if (ty !== 'object' || o.nodeType || o.window === o) return;
-      if (seen) { if (seen.has(o)) return; seen.add(o); }
+      if (ty !== 'object') return;
+      try { if (o.nodeType || o.window === o) return; } catch (e) { return; }   // a window of another site, or a closed one
+      try { if (seen) { if (seen.has(o)) return; seen.add(o); } } catch (e) { return; }
       objs++;
       var ks; try { ks = Object.keys(o); } catch (e) { return; }
       var arr = Array.isArray(o);
@@ -816,7 +836,7 @@
       }
       try { if (w.jQuery && w.jQuery.cache) walk(w.jQuery.cache, name + '.jQuery.cache', 0, null); } catch (e) {}
     }
-    walkWin(window, 'window');
+    try { walkWin(window, 'window'); } catch (e) { out.notes.push('the page\'s data could not be read in full (' + (e && e.name) + ')'); }
     for (var g = 0; g < window.frames.length; g++) { try { walkWin(window.frames[g], 'frame' + g); } catch (e) {} }
     for (var k in found) out.data.push(found[k]);
     try {
@@ -886,7 +906,8 @@
     L.push('', 'Searched ' + document.getElementsByTagName('*').length + ' page elements and ' + objs + ' data objects. Names that do not look ' +
       'like a programmer\'s field name show as <name>; no values are included.');
     var text = L.join('\n');
-    var forClaude = text + '\n\n---- details ----\n' + JSON.stringify(out, null, 1);
+    var details; try { details = JSON.stringify(out, null, 1); } catch (e) { details = '(the details could not be written out: ' + (e && e.name) + ')'; }
+    var forClaude = text + '\n\n---- details ----\n' + details;
     window.coresProbe = { result: out, text: text, forClaude: forClaude };
     console.log(forClaude);
     if (opt.hud && ov) {
