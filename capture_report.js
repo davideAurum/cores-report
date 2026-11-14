@@ -591,7 +591,9 @@
     // names (field names, element ids and classes, path pieces) are reported only when they look like a programmer's
     // identifier: letters, digits and _ $ - only, at most 30 long, with no long number. Anything else could be a
     // patient's name or number used as a key, and shows as <name>.
-    function safe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,29}$/.test(x) && !/\d{3,}/.test(x) ? x : '<name>'; }
+    // and it must have a lower-case letter and not be a single capitalized word: CORES writes names in capitals
+    // ("SMITH"), and "Smith" could be a surname too; field names are camelCase or snake_case
+    function safe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,29}$/.test(x) && !/\d{3,}/.test(x) && /[a-z]/.test(x) && !/^[A-Z][a-z]+$/.test(x) ? x : '<name>'; }
     function safePath(pth) { return pth.split('.').map(function (seg) { var m = seg.match(/^([^\[]*)((?:\[i\])*)$/); return m ? (m[1] === '<name>' ? m[1] : m[1] ? safe(m[1]) : '') + m[2] : '<name>'; }).join('.'); }
     var optionIds = [];   // the matched menu choices' own values, kept here for matching ids, never reported
     var out = { searched: searched, page: '', menuChoiceValues: 0, dom: [], data: [], loads: [], notes: [] };
