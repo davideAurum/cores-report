@@ -159,7 +159,7 @@ has one in `unit_locations.json`, and By team once any Patient block carries a t
 unit outlined in its unit color with the count of patients shown and printed, and a dashed Breakdown blank chip; printed
 when on), **+ Blank patient**, **Print all** (puts back every patient left out with Don't print), Print, **B&W** (black and white: see
 README, Printing), Paper (Legal or Letter, then Landscape or Portrait; legal landscape unless set), Optimize widths, Reset columns, **Sections**
-(a checklist, grouped by column, that hides or shows any subsection, whole column, or the PRN row; indented
+(a checklist, grouped by column, that hides or shows any subsection, or whole column; indented
 entries are parts of the entry above them — Admission, Allergy / Diet block, Vitals, Ventilation, Volume, Trends, Labs —
 and a parent or a column disappears by itself when every one of its parts is unchecked; choices and dragged
 column widths are remembered by the browser), **Fields** (the Fields menu: add a per-patient field by name — Dispo,
@@ -186,19 +186,19 @@ are green capitals with no rule under them; a thin rule divides the sections of 
 keep their own colors: red for an abnormal value or an allergy, amber for a Watcher, the unit palette for Location
 blocks; the time since a PRN's last dose is teal. B&W takes all of it to black on white.
 
-Each patient is a **Patient block** of two rows. Row 1: Snapshot column (header "Snapshot"; the Location block, a unit / room-bed chip
+Each patient is a **Patient block**, one row: Snapshot column (header "Snapshot"; the Location block, a unit / room-bed chip
 outlined and lettered in that unit's color, then 8 px to its right the Patient name, last name and comma on the
 first line, first name and MI on the second, and the Isolation tag (a Lucide biohazard icon in a box, red, black in B&W; hover
 shows the isolation text) to the right of the name when the patient is on isolation; then the Severity chip, and
 the Allergy / Diet block at the bottom) · Hospital Summary column (Admission at the top, then the Patient summary
-and Status lines) · Vitals column (header "Vitals · Vent · Volume · Labs · Lines": Vitals across the top, then
+and Status lines) · Vitals column (header "Data"; its default width is the narrowest that keeps Volume and Labs side by side in print. Vitals across the top, then
 Ventilation, then Volume and Labs side by side with a rule between them — Labs goes under Volume when the column
 is too narrow, as in portrait — then Tubes / Lines / Drains; Labs, heading "LABS (today)", was a column of its own
 until 2026-10-10) · Meds column (Infusions,
-Antibiotics, Scheduled stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (Typed notes, else blank
+Antibiotics, Scheduled, PRN stacked) · Sit Awareness column (header "Tasks / Sit. Awareness"; Tasks, Situational Awareness) · Notes column (Typed notes, else blank
 for handwriting; under the Snapshot, on screen only, the **Patient controls**: Don't print button — the patient stays on
-screen, dimmed, and is left out of the printout and of Optimize widths; remembered by MRN for 30 days — and Blank below button). Row 2: **PRN row**, full width, PRN meds flowing into as many columns as fit. Same-name drugs are merged onto one line with doses comma-separated.
-A **Blank patient block** (+ Blank patient, or Blank below on a patient) has the same two rows, empty and tall enough to
+screen, dimmed, and is left out of the printout and of Optimize widths; remembered by MRN for 30 days — and Blank below button). Same-name drugs are merged onto one line with doses comma-separated.
+A **Blank patient block** (+ Blank patient, or Blank below on a patient) has the same row, empty and tall enough to
 write in, with a Blank patient name to type into (optional) and a Remove blank button; it is never filtered out, stays
 after the patient it was added below whatever the sort, prints like any patient, and is kept for that report.
 Unit colors (`UNIT_PALETTE` in `cores_report.py`): MICU, MCCU, CCU, ICVU, NICU, BMT and UED always get the

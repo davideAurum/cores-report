@@ -6,8 +6,8 @@ Usage:
 --letter / --legal start the report on that paper (legal unless told), --portrait in portrait, --bw in black and white
 (all can be changed in its toolbar). Units listed in unit_locations.json get their location in the Snapshot.
 
-Each patient is a two-row block: Snapshot | Hospital Summary | Vitals · Vent · Volume · Labs · Lines | Meds | Tasks / Sit Awareness | Notes (typed, else blank for
-handwriting), then a full-width PRN row.
+Each patient is a block: Snapshot | Hospital Summary | Data (Vitals · Vent · Volume · Labs · Lines) | Meds | Tasks / Sit Awareness | Notes (typed, else blank for
+handwriting).
 Click a column header to sort; use the toolbar to filter. Hidden patients are not printed. Designed for ~1000 px
 (letter landscape) and up. The toolbar's Paper switches pick letter or legal, landscape or portrait; Optimize widths picks the column widths
 that fit the shown patients on the fewest pages.
@@ -44,6 +44,21 @@ RENDERER = hashlib.sha1(_read(__file__) + _read(UNIT_LOCATIONS_FILE)).hexdigest(
 # Paper a Daily Report prints on: (width, height) in inches, portrait. Each has its own saved column widths.
 PAPERS = {'letter': (8.5, 11), 'legal': (8.5, 14)}
 DEFAULT_PAPER = 'legal'
+# Default column widths, in % of the printed table. The Data column starts at the narrowest width that, printed, keeps
+# Volume and Labs side by side (the .duo container query switches at 352 px of content; 364 px with the cell's
+# padding and border, measured with CORES's two days of I&O). The others share the rest in these proportions.
+DATA_MIN_PX = 364
+COL_SHARES = [15, 14, None, 14, 12, 8]   # Snapshot, Hospital Summary, Data, Meds, Tasks / Sit Awareness, Notes
+
+
+def default_widths(paper, orient):
+    """['15.95%', …] for this paper and orientation: Data at DATA_MIN_PX of the printable width (rounded up to
+    0.5%), the rest in COL_SHARES' proportions."""
+    w, h = PAPERS[paper]
+    page = ((h if orient == 'landscape' else w) - .6) * 96          # less the .3in margins, in CSS px
+    data = -(-DATA_MIN_PX * 200 // page) / 2
+    rest = sum(x for x in COL_SHARES if x)
+    return [f'{data:g}%' if x is None else f'{round(x * (100 - data) / rest, 2):g}%' for x in COL_SHARES]
 
 
 def renderer_meta(orient, bw=False, paper=DEFAULT_PAPER):
@@ -150,7 +165,7 @@ SECTIONS = [
                 'Volume', 'Volume chart', 'Net I&O since admission', 'Tubes / Lines / Drains']),
     ('Labs', ['Labs', 'CBC fishbone', 'Coags fishbone', 'BMP fishbone', 'Ca/Mg/Phos fishbone', 'LFT fishbone', 'Other labs',
               'Trends', 'Glucose trend', 'Lactic acid trend']),
-    ('Meds', ['Infusions', 'Antibiotics', 'Scheduled', 'PRN row']),
+    ('Meds', ['Infusions', 'Antibiotics', 'Scheduled', 'PRN']),
     ('Tasks', ['Tasks', 'Situational Awareness']),
     ('Columns', ['Snapshot column', 'Hospital Summary column', 'Vitals column', 'Meds column', 'Sit Awareness column',
                  'Notes column']),
@@ -168,7 +183,7 @@ COLPARTS = {
                         'Unit location', 'Custom fields', 'Allergy / Diet block'],
     'Hospital Summary column': ['Admission', 'Patient summary', 'Status lines'],
     'Vitals column': ['Vitals', 'Ventilation', 'Volume', 'Labs', 'Tubes / Lines / Drains'],
-    'Meds column': ['Infusions', 'Antibiotics', 'Scheduled'],
+    'Meds column': ['Infusions', 'Antibiotics', 'Scheduled', 'PRN'],
     'Sit Awareness column': ['Tasks', 'Situational Awareness'],
 }
 CHILDREN = {c for k, v in COLPARTS.items() if not k.endswith(' column') for c in v}
@@ -223,7 +238,6 @@ table.rpt{width:100%;border-collapse:collapse;table-layout:fixed}
 body.resizing{cursor:col-resize;user-select:none}
 .rpt > tbody.blk:nth-of-type(even) > tr > td{background:#fafafa}
 .rpt > tbody.blk > tr.main > td{border-bottom:0}
-.rpt > tbody.blk > tr.medrow > td{border-top:1px dashed var(--line);padding:3px 6px 5px}
 .rpt > tbody.blk{border-bottom:2px solid var(--accent)}
 .rpt > tbody.hide{display:none}
 /* Location block left, name 8px to its right; in a column too narrow for both the name goes under the chip */
@@ -279,8 +293,6 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .medbar{display:flex;gap:0 14px;align-items:flex-start}
 .medbar .medsec{min-width:130px} .medbar .medsec h4{margin-top:0}
 .medsec .meds{column-width:auto} .medbar .medsec .meds{column-width:150px}
-.prnline{line-height:1.35} .prnline .drug{font-weight:600} .prnline .det{color:var(--mute)} .prnline .hi .drug{color:var(--accent)} .prnline .ld{color:var(--teal);font-size:9px} .prnline .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px} .prnline .lbl{color:var(--accent);text-transform:uppercase;font-size:9.5px;letter-spacing:.3px} .prnline .lbl + .sep{color:var(--accent)}
-.prnline > span[data-name]{white-space:nowrap} .prnline .sep{color:var(--mute);margin:0 3px} .prnline .lbl{white-space:nowrap}
 .meds{margin:0;padding:0;list-style:none;column-width:150px;column-gap:12px}
 .meds li{break-inside:avoid;margin:0;padding-left:8px;text-indent:-8px;line-height:1.2}
 .meds .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px}
@@ -338,7 +350,6 @@ body.bw .brk .bk{border-color:#000;color:#000}
 .rpt > tbody.pxh .ptctl .px{border-color:var(--alert);color:var(--alert);font-weight:600}
 /* a blank patient block: empty cells with room for handwriting, an optional typed name */
 .rpt > tbody.blank > tr.main > td{height:1.15in}
-.rpt > tbody.blank > tr.medrow > td{height:18px}
 .bname{font-size:12px;font-weight:700;min-height:16px;outline:0;border-bottom:1px dotted var(--line)}
 .bname:empty::before{content:attr(data-ph);color:var(--mute);font-weight:400;font-style:italic}
 /* off-screen copy used by Optimize widths: the print rules below, applied on screen so it can be measured */
@@ -536,7 +547,7 @@ JS = """
     const tb=document.createElement('tbody'); tb.className='blk blank'; tb.dataset.pid=b.id; tb.dataset.name='Blank patient block';
     tb.innerHTML='<tr class="main">'+COLN.map((n,i)=>'<td'+(i===0?' class="pt"':n==='Notes column'?' class="notes"':'')+' data-name="'+n+'">'
       +(i===0?'<div class="bname" contenteditable="plaintext-only" spellcheck="false" data-name="Blank patient name" data-ph="Name (optional)"></div>':'')+'</td>').join('')
-      +'</tr><tr class="medrow" data-name="PRN row"><td colspan="'+COLN.length+'"></td></tr>';
+      +'</tr>';
     const nm=tb.querySelector('.bname'); nm.textContent=b.name||'';
     nm.addEventListener('input',()=>{b.name=nm.textContent; saveBlanks();});
     addCtl(tb); return tb;
@@ -608,7 +619,7 @@ JS = """
   // widths are kept per paper size and orientation; the paper and orientation <select>s start at the defaults
   // cores_report.py baked in. Letter keeps the keys it had before legal paper was added, so its saved widths stay.
   const cols=[...table.querySelectorAll('colgroup col')], ths=[...table.querySelectorAll('thead th')];
-  const defaults=cols.map(c=>c.style.width), KEYS='cores-report-hidden-v1', KEYO='cores-report-orient-v1', KEYPS='cores-report-paper-v1';
+  const DEFW=__DEFW__, defs=o=>DEFW[paper+' '+o], KEYS='cores-report-hidden-v1', KEYO='cores-report-orient-v1', KEYPS='cores-report-paper-v1';
   const PAPERS=__PAPERS__, paperSel=document.getElementById('paper');
   let paper=paperSel.value;
   try{const s=localStorage.getItem(KEYPS); if(s&&PAPERS[s])paper=s;}catch(e){}
@@ -625,7 +636,7 @@ JS = """
   bwBox.addEventListener('change',()=>{bw=bwBox.checked; setBW(); try{localStorage.setItem(KEYB,bw?'1':'0');}catch(e){}});
   try{const s=localStorage.getItem(KEYO); if(s==='portrait'||s==='landscape')orient=s;}catch(e){}
   // saved widths are kept only while the default widths they were made against are unchanged; a new layout starts afresh
-  function loadW(o){try{const s=JSON.parse(localStorage.getItem(keyW(o))||'null'); if(s&&s.d===defaults.join()&&s.w&&s.w.length===cols.length)return s.w;}catch(e){} return defaults.slice();}
+  function loadW(o){try{const s=JSON.parse(localStorage.getItem(keyW(o))||'null'); if(s&&s.d===defs(o).join()&&s.w&&s.w.length===cols.length)return s.w;}catch(e){} return defs(o).slice();}
   let base=loadW(orient);
   const RENAMED={'Patient column':'Snapshot column','Summary column':'Hospital Summary column','I&O':'Volume','I&O chart':'Volume chart','Labs column':'Labs'};  // names saved by older reports
   try{const s=JSON.parse(localStorage.getItem(KEYS)||'null'); if(Array.isArray(s))hidden=new Set(s.map(n=>RENAMED[n]||n));}catch(e){}
@@ -654,7 +665,7 @@ JS = """
     document.querySelectorAll('[data-sec]').forEach(cb=>{cb.checked=!hidden.has(cb.dataset.sec);});
     pageSz.textContent='@page{size:'+paper+' '+orient+';margin:.3in}'; orientSel.value=orient; paperSel.value=paper;
   }
-  function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify({d:defaults.join(),w:base}));}catch(e){}}
+  function saveW(){try{localStorage.setItem(keyW(orient),JSON.stringify({d:defs(orient).join(),w:base}));}catch(e){}}
   function saveS(){try{localStorage.setItem(KEYS,JSON.stringify([...hidden]));}catch(e){}}
   ths.forEach((th,i)=>{
     if(i===ths.length-1)return;
@@ -670,7 +681,7 @@ JS = """
       document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
     });
   });
-  document.getElementById('cols').addEventListener('click',()=>{base=defaults.slice();optMsg.textContent='';render();try{localStorage.removeItem(keyW(orient));}catch(e){}});
+  document.getElementById('cols').addEventListener('click',()=>{base=defs(orient).slice();optMsg.textContent='';render();try{localStorage.removeItem(keyW(orient));}catch(e){}});
   orientSel.addEventListener('change',()=>{orient=orientSel.value;base=loadW(orient);optMsg.textContent='';render();try{localStorage.setItem(KEYO,orient);}catch(e){}});
   paperSel.addEventListener('change',()=>{paper=paperSel.value;base=loadW(orient);optMsg.textContent='';render();try{localStorage.setItem(KEYPS,paper);}catch(e){}});
   // Optimize widths. An off-screen copy of the table, laid out as it prints (page width, print font and padding), is
@@ -721,7 +732,7 @@ JS = """
       // is not counted: it always does); squeezing one column hard costs more than trimming several a little
       const clipped=g=>{let c=0;for(let a=0;a<idx.length;a++)for(let p=0;p<P;p++)if(fitK[a][p]>g[a])c+=fitK[a][p]-g[a];return c;};
       const realClips=()=>{let c=0;idx.forEach((i,a)=>{for(let p=0;p<P;p++){const d=wrap[p][i];if(fitK[a][p]>=0&&d.scrollWidth>d.clientWidth+1)c++;}});return c;};
-      // what the model leaves out (PRN row, borders, padding, the Notes column) is calibrated on the current layout
+      // what the model leaves out (borders, padding, the Notes column) is calibrated on the current layout
       setW(curPx);
       const headH=hd.getBoundingClientRect().height+8+(bkc?bkc.getBoundingClientRect().height+6:0), theadH=t.tHead.getBoundingClientRect().height;
       const nowH=blk.map(b=>b.getBoundingClientRect().height), clipsBefore=realClips();
@@ -1267,21 +1278,6 @@ def merge_doses(items):
     return out
 
 
-def render_prn_line(r):
-    """PRN meds as one flowing line: 'PRN (n) | med | med | med', each med kept unbroken."""
-    items = (r.get('meds') or {}).get('prn') or []
-    if not items:
-        return ''
-    items = merge_doses(items)
-    meds = []
-    for it in items:
-        doses = ', '.join(dose_html(d) + (f' <span class="ld">@ {e(ld)}</span>' if ld else '') for d, ld in it['doses'])
-        meds.append(f'<span class="{"hi" if it.get("highlighted") else ""}" data-name="Med entry"><span class="drug">{e(it["drug"])}</span>'
-                    f'<span class="dot">·</span><span class="det">{doses}</span></span>')
-    sep = ' <span class="sep">|</span> '
-    return f'<div class="prnline" data-name="PRN"><b class="lbl">PRN&nbsp;({len(items)})</b>{sep}{sep.join(meds)}</div>'
-
-
 def render_meds(r, keys, bar=False):
     """Med sections for the given keys. bar=True: side by side in a full-width row, width proportional to item
     count, each list flowing into as many 150 px columns as fit. bar=False: stacked in a column."""
@@ -1400,8 +1396,6 @@ def render_row(r, report_date='', unit_color=None, uloc=''):
         'pid': r.get('mrn') or f"{r['patient_name']}|{r.get('dob', '')}",  # key for the values typed on the report and for Don't print (MRN; name+DOB if none)
     }
     attrs = ' '.join(f'data-{k}="{e(v)}"' for k, v in data.items())
-    prn = render_prn_line(r)
-    prn = f'<tr class="medrow" data-name="PRN row"><td colspan="6">{prn}</td></tr>' if prn else ''
     io, labs = render_io(r, report_date), render_labs(r)
     duo = f'<div class="sec duo">{io}{labs}</div>' if io and labs else io + labs   # Volume and Labs side by side
     roombed = e(r['room']) + (f'-<span data-name="Bed">{e(r["bed"])}</span>' if r['bed'] else '')
@@ -1423,12 +1417,11 @@ def render_row(r, report_date='', unit_color=None, uloc=''):
    {('<div class="pttags">' + tags + '</div>') if tags else ''}{care}</td>
  <td data-name="Hospital Summary column">{admit}<div class="sec" data-name="Patient summary">{narrative or '<p class="empty">No summary</p>'}</div>{status}{('<div class="sec"><h4>Notes</h4>' + notes + '</div>') if notes else ''}</td>
  <td data-name="Vitals column">{render_vitals(r)}{render_ventilation(r)}{duo}{render_tld(r)}</td>
- <td data-name="Meds column">{render_meds(r, ('infusions', 'antibiotics', 'scheduled', 'other'))}</td>
+ <td data-name="Meds column">{render_meds(r, ('infusions', 'antibiotics', 'scheduled', 'prn', 'other'))}</td>
  <td data-name="Sit Awareness column"><div class="sec" data-name="Tasks"><h4>Tasks</h4>{('<ul class="tasks">' + tasks + '</ul>') if tasks else '<p class="empty">None</p>'}</div>
      <div class="sec" data-name="Situational Awareness"><h4>Situational Awareness</h4>{('<ul>' + plan + '</ul>') if plan else '<p class="empty">None</p>'}</div>{handoff}</td>
  <td class="notes" data-name="Notes column"><textarea class="notein" rows="3" placeholder="Type or handwrite" aria-label="Notes" data-name="Typed notes"></textarea><div class="notetxt"></div></td>
 </tr>
-{prn}
 </tbody>'''
 
 
@@ -1512,11 +1505,11 @@ def render(data, orientation='landscape', bw=False, paper=DEFAULT_PAPER, unit_lo
 <div id="insp-tip"></div><div id="insp-toast"></div>
 <div class="brk" id="brk" data-name="Breakdown" hidden></div>
 <table class="rpt" id="rpt" data-name="Report table" data-day="{e(h.get("report_date", "")[:8])}" data-report="{rid}">
-<colgroup><col style="width:15%"><col style="width:14%"><col style="width:37%"><col style="width:14%"><col style="width:12%"><col style="width:8%"></colgroup>
+<colgroup>{''.join(f'<col style="width:{w}">' for w in default_widths(paper, orient))}</colgroup>
 <thead data-name="Column headers"><tr>
  <th data-key="location" data-name="Snapshot header">Snapshot<span class="dir"></span></th>
  <th data-key="text" data-name="Hospital Summary header">Hospital Summary<span class="dir"></span></th>
- <th data-key="o2" data-name="Vitals header">Vitals · Vent · Volume · Labs · Lines<span class="dir"></span></th>
+ <th data-key="o2" data-name="Vitals header">Data<span class="dir"></span></th>
  <th data-key="drips" data-name="Meds header">Meds<span class="dir"></span></th>
  <th data-key="tasks" data-name="Sit Awareness header">Tasks / Sit. Awareness<span class="dir"></span></th>
  <th data-name="Notes header" style="cursor:default">Notes</th>
@@ -1525,7 +1518,7 @@ def render(data, orientation='landscape', bw=False, paper=DEFAULT_PAPER, unit_lo
 </table>
 <div class="foot">Generated from {e(data.get("source", ""))} · {len(recs)} patients</div>
 </div>
-<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors)).replace('__PAPERS__', json.dumps(PAPERS))}</script>
+<script>{JS.replace('__COLPARTS__', json.dumps(COLPARTS)).replace('__UNITCOLORS__', script_json(colors)).replace('__PAPERS__', json.dumps(PAPERS)).replace('__DEFW__', json.dumps({f'{p} {o}': default_widths(p, o) for p in PAPERS for o in ('landscape', 'portrait')}))}</script>
 </body></html>'''
 
 
