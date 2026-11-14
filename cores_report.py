@@ -276,10 +276,10 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
    as tall as the other cells make it (sections hidden in Sections do not count); it fills its first column to that
    height and spills into the second. A hidden copy of it in the cell (.snap-ghost, made by the page script), with its
    two columns balanced, holds the row at least as tall as two columns need, so the row grows only when the Snapshot
-   does not fit beside the rest in two columns, and then only as far as balanced columns take. Under 2 x 120 px the
+   does not fit beside the rest in two columns, and then only as far as balanced columns take. Under 2 x 100 px the
    Snapshot is one column. */
 .rpt > tbody > tr > td.snapcell{padding:0;position:relative}
-.snap,.snap-ghost{padding:4px 6px;columns:2 120px;column-gap:12px;column-rule:1px solid var(--line)}
+.snap,.snap-ghost{padding:4px 6px;columns:2 100px;column-gap:12px;column-rule:1px solid var(--line)}
 .snap{position:absolute;inset:0;column-fill:auto;overflow:hidden}
 .snap-ghost{visibility:hidden;column-fill:balance;padding-bottom:7px!important}  /* 3 px spare: the flow is inside the cell's borders */
 /* filling the first column first can break differently from balanced columns (a heading is kept with what follows it)
@@ -767,7 +767,10 @@ JS = """
     const [W,PH]=page(), eff=effHidden(), n=cols.length, notes=COLNAME.indexOf('Notes column');
     const vis=COLNAME.map(c=>!eff.has(c)), idx=[...Array(n).keys()].filter(i=>vis[i]), ni=idx.indexOf(notes);
     // narrowest each may get, in steps: Notes its minimum (inches on paper, 96 px each), the rest KMIN
-    const mins=idx.map(i=>i===notes?Math.max(KMIN,Math.ceil((parseFloat(notesMin.value)||0)*96/STEP)):KMIN), minSum=mins.reduce((a,b)=>a+b,0);
+    // the Snapshot never narrower than its two columns need (2 x 100 px, the 12 px gap, print padding and border), so
+    // Notes cannot take the width that keeps it in two columns
+    const snapc=COLNAME.indexOf('Snapshot column'), SNAPMIN=2*100+12+2*5+1;
+    const mins=idx.map(i=>i===notes?Math.max(KMIN,Math.ceil((parseFloat(notesMin.value)||0)*96/STEP)):i===snapc?Math.max(KMIN,Math.ceil(SNAPMIN/STEP)):KMIN), minSum=mins.reduce((a,b)=>a+b,0);
     const fixedCols=[...Array(n).keys()].filter(i=>vis[i]&&!idx.includes(i));
     if(!idx.length){optMsg.textContent='No columns to optimize';return;}
     const pct=base.map((b,i)=>vis[i]?parseFloat(b)||0:0), pctSum=pct.reduce((a,b)=>a+b,0)||1, curPx=pct.map(x=>x/pctSum*W);
