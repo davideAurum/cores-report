@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -160,8 +161,9 @@ class HudEvents(TempFolder):
     def test_capture_without_the_comment_is_fine(self):
         self.assertEqual(cores_log.hud_events(capture_html()), [])
         self.assertEqual(cores_log.log_hud(self.log, self.capture(), '1.0.0', computer='PC-A'), 0)
+        self.assertEqual(cores_log.log_hud(self.log, self.tmp / 'no such capture.html', '1.0.0', computer='PC-A'), 0)
         self.assertFalse(self.log.exists())
-        self.assertFalse(cores_log._noted)
+        self.assertFalse(cores_log._noted)   # neither is a failure of the log, so neither earns the note
 
     def test_a_comment_that_is_not_json_or_another_version_is_ignored(self):
         self.assertEqual(cores_log.hud_events(capture_html(raw='{"v":1,"events":[{"id":')), [])
@@ -362,6 +364,76 @@ class Commands(TempFolder):
         self.assertEqual([e.get('counts') for e in self.entries()],
                          [{'patients': 3, 'captures': 1}, {'patients': 4, 'captures': 1}, {'patients': 7, 'captures': 2}])
         self.assertEqual(cores._COUNTS, [{}])
+
+    def two_computers(self):
+        """Entries from two computers, all in 2023 so that whatever the tests themselves log comes after them."""
+        base = 1_700_000_000
+        for sec, cmd, pc in ((10, 'capture', 'PC-A'), (30, 'generate', 'PC-A'), (20, 'doctor', 'PC-B'), (40, 'print', 'PC-B')):
+            cores_log.log_command(self.log, cmd, '1.0.0', 'ok', 0, 1, started=base + sec, computer=pc)
+        events = [dict(EVENTS[0], t=cores_log.utc(base + 25)), dict(EVENTS[1], t=cores_log.utc(base + 26))]
+        cores_log.log_hud(self.log, self.capture(events=events), '1.0.0', computer='PC-B')
+
+    def test_cores_log_shows_every_computer_in_time_order(self):
+        self.two_computers()
+        code, out, _ = self.run_cores('log')
+        self.assertEqual(code, 0)
+        rows = out.splitlines()
+        self.assertEqual([r.split()[2:5] for r in rows[1:7]],
+                         [['PC-A', 'pc', 'capture'], ['PC-B', 'pc', 'doctor'], ['PC-B', 'hud', 'verdict'], ['PC-B', 'hud', 'delivered'],
+                          ['PC-A', 'pc', 'generate'], ['PC-B', 'pc', 'print']])
+        self.assertIn('6 of 6 entries from 2 computers', out)
+        self.assertIn(str(self.log), out)
+        code, out, _ = self.run_cores('log', '--last', '2')
+        self.assertEqual([r.split()[4] for r in out.splitlines()[1:3]], ['print', 'log'])   # the `cores log` before this one is an entry too
+        self.assertIn('2 of 7 entries', out)
+
+    def test_cores_log_json(self):
+        self.two_computers()
+        code, out, _ = self.run_cores('log', '--json', '--last', '0')
+        got = [json.loads(x) for x in out.splitlines()]
+        self.assertEqual([e.get('command') or e['ev'] for e in got], ['capture', 'doctor', 'verdict', 'delivered', 'generate', 'print'])
+
+    def test_cores_log_empty_and_where(self):
+        code, out, _ = self.run_cores('log')
+        self.assertEqual(code, 0)
+        self.assertIn('The cores log is empty', out)
+        self.two_computers()
+        code, out, _ = self.run_cores('log', '--where')
+        self.assertEqual(code, 0)
+        self.assertIn(f'Log folder: {self.log}', out)
+        self.assertIn('the "log_dir" setting', out)
+        self.assertIn('not under OneDrive', out)
+        self.assertIn('cores-log.PC-A.jsonl  3 lines', out)   # two commands and the first `cores log`
+        self.assertIn('cores-log.PC-B.jsonl  4 lines', out)
+
+    def doctor(self):
+        offline = mock.patch.object(cores, 'github_release', side_effect=cores.CoresError('offline'))
+        with offline, mock.patch.object(cores, 'windows_printers', return_value=[]), \
+                mock.patch.object(cores, 'bundle_check', return_value=(True, 'not checked in this test')):
+            return self.run_cores('doctor')[1]
+
+    def test_doctor_names_the_log_folder_and_whether_onedrive_has_it(self):
+        out = self.doctor()
+        self.assertIn('cores_log.py', out)
+        self.assertRegex(out, r'\[OK \] Log folder ' + re.escape(str(self.log)) + ': not under OneDrive')
+        onedrive = self.tmp / 'OneDrive'
+        onedrive.mkdir()
+        self.settings()   # no log_dir: automatic
+        with mock.patch.dict(os.environ, {'OneDriveCommercial': '', 'OneDrive': str(onedrive), 'OneDriveConsumer': ''}):
+            out = self.doctor()
+            self.assertRegex(out, r'\[OK \] Log folder ' + re.escape(str(onedrive / 'CORES Report log')) + ': under OneDrive')
+            self.assertEqual([p.name for p in (onedrive / 'CORES Report log').iterdir()], ['cores-log.PC-A.jsonl'])
+            self.settings(log=False)
+            self.assertIn('logging is off', self.doctor())
+
+    def test_config_shows_and_sets_the_log_folder(self):
+        code, out, _ = self.run_cores('config', '--set', 'log_dir', str(self.tmp / 'elsewhere'))
+        self.assertEqual(code, 0)
+        self.assertIn(str(self.tmp / 'elsewhere').replace('\\', '\\\\'), out)
+        self.run_cores('help')
+        self.assertTrue(cores_log.log_file(self.tmp / 'elsewhere', 'PC-A').exists())
+        self.assertEqual(self.run_cores('config', '--set', 'log', 'false')[0], 0)
+        self.assertFalse(cores.load_config()['log'])
 
 
 if __name__ == '__main__':

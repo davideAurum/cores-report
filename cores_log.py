@@ -312,9 +312,13 @@ def log_hud(folder, capture, version, computer=None):
     Returns how many were added; never raises."""
     try:
         capture = Path(capture)
-        if capture.stat().st_size > MAX_CAPTURE:
+        try:
+            if capture.stat().st_size > MAX_CAPTURE:
+                return 0
+            blob = capture.read_bytes()
+        except OSError:   # gone, or still being written by the browser: the command reading it next says so itself
             return 0
-        events = hud_events(capture.read_bytes())
+        events = hud_events(blob)
         if not events:
             return 0
         computer = computer or computer_name()

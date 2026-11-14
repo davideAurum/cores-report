@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """cores -- CORES ICU Daily Report: `cores capture`, then `cores generate`.
 
-`cores` on its own lists only those two. Also available: watch, open, print, pdf, clean, doctor, setup, config,
+`cores` on its own lists only those two. Also available: watch, open, print, pdf, clean, doctor, log, setup, config,
 bundle, update, parse, render, latest, annotate, har; `cores help COMMAND` shows one, README.md describes them all.
 """
 import argparse
@@ -1317,6 +1317,50 @@ def cmd_har(a, cfg):
         raise CoresError(f'could not read {f.name} as a HAR export or copied request ({type(ex).__name__}: {ex})')
 
 
+LOG_FOLDER_HOW = {'setting': 'the "log_dir" setting', 'onedrive': 'automatic: this PC has OneDrive',
+                  'profile': 'automatic: this PC has no OneDrive, so it is in your user profile'}
+
+
+def cmd_log(a, cfg):
+    if cores_log is None:
+        raise CoresError(f'cores_log.py is missing from {HERE}, so there is no log; `cores update` puts it back')
+    if a.last < 0:
+        raise CoresError('--last takes a whole number, 0 for every entry')
+    folder, how = log_folder(cfg)
+    files = cores_log.log_files(folder)
+    off = '' if cfg['log'] else '  Logging is off ("log" is false in the config), so nothing is being added.'
+    if a.where:
+        synced = ('under OneDrive, so it follows you to your other computers' if cores_log.under_onedrive(folder)
+                  else 'not under OneDrive: it stays on this computer')
+        say(f'Log folder: {folder}')
+        say(f'            {LOG_FOLDER_HOW[how]}; {synced}')
+        say(f'This computer writes {cores_log.log_file(folder).name}.{off}')
+        for p in files:
+            try:
+                with open(p, 'rb') as fh:
+                    n, size = sum(1 for _ in fh), p.stat().st_size
+                say(f'  {p.name}  {n:,} line{"" if n == 1 else "s"}, {size:,} bytes')
+            except OSError as ex:
+                say(f'  {p.name}  could not be read ({type(ex).__name__})')
+        if not files:
+            say('  no log files yet' if folder.is_dir() else '  not created yet: the first logged command creates it')
+        return 0
+    entries = cores_log.read_all(folder)
+    shown = entries[-a.last:] if a.last else entries
+    if a.json:
+        for e in shown:
+            say(json.dumps(e))
+        return 0
+    if not entries:
+        say(f'The cores log is empty: no entries in {folder}.{off}')
+        return 0
+    say(cores_log.table(shown))
+    computers = len({e['computer'] for e in entries})
+    say(f'\n{len(shown):,} of {len(entries):,} entries from {computers} computer{"" if computers == 1 else "s"}, oldest first, '
+        f'in {folder}.{off}')
+    return 0
+
+
 def cmd_doctor(a, cfg):
     problems = 0
 
@@ -1342,7 +1386,7 @@ def cmd_doctor(a, cfg):
             line(True, f'{pkg} installed')
         except ImportError:
             line(False, f'{pkg} installed', f'missing; run `cores setup` or `{Path(sys.executable).name} -m pip install {pkg}`')
-    for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_parse_med.py', 'cores_report.py', 'cores_compare.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
+    for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_parse_med.py', 'cores_report.py', 'cores_compare.py', 'cores_log.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
         line((HERE / f).exists(), f, '' if (HERE / f).exists() else 'missing')
     try:
         from cores_report import load_unit_locations
@@ -1370,6 +1414,13 @@ def cmd_doctor(a, cfg):
     rd = reports_dir(cfg, create=False)
     line(True, f'Reports folder {rd}', f'{len(capture_sets(cfg))} capture set(s)' if rd.is_dir() else 'will be created on first run')
     line(True, 'Config', f'{CONFIG_FILE}' if CONFIG_FILE.exists() else 'defaults (create with `cores config --init`)')
+    if cores_log is not None:
+        folder, how = log_folder(cfg)
+        n = len(cores_log.log_files(folder))
+        synced = ('under OneDrive, so it follows you to your other computers' if cores_log.under_onedrive(folder) else
+                  'not under OneDrive, so it stays on this computer (`cores config --set log_dir FOLDER` moves it)')
+        line(cfg['log'], f'Log folder {folder}', f'{synced}; {n} computer{"" if n == 1 else "s"} logged there so far' if cfg['log']
+             else 'logging is off ("log" is false in the config)', required=False)
     ok, detail = bundle_check()
     broken = not ok and (HERE / 'python').exists()  # a missing python\ is fine; one that is there but unusable is not
     line(ok, 'Bundled Python', detail + ('; rebuild it with `.\\bundle`' if broken else ''), required=broken)
@@ -1834,6 +1885,8 @@ def cmd_config(a, cfg):
     show = dict(cfg)
     show['reports_dir'] = f'{cfg["reports_dir"]}  -> {reports_dir(cfg, create=False)}'
     show['inbox_dirs'] = [f'{d}  -> {expand(d)}' for d in cfg['inbox_dirs']]
+    if cores_log is not None:
+        show['log_dir'] = f'{cfg["log_dir"] or "(automatic)"}  -> {log_folder(cfg)[0]}'
     say(json.dumps(show, indent=2))
 
 
@@ -1947,6 +2000,12 @@ def build_parser():
     sp.add_argument('prefix', nargs='?', help='output name prefix')
 
     add('doctor', cmd_doctor, 'check Python, packages, browsers, printers and folders')
+
+    sp = add('log', cmd_log, 'show the cores log: every run of a cores command and every capture\'s HUD events, from all your computers, '
+                             'oldest first. It holds what ran and how it ended (outcome, exit code, duration, counts), never patient data.')
+    sp.add_argument('--last', type=int, default=30, metavar='N', help='how many of the newest entries to show (default 30; 0 = all)')
+    sp.add_argument('--where', action='store_true', help='show the log folder, why it is there, and each computer\'s file')
+    sp.add_argument('--json', action='store_true', help='print the entries as JSON, one per line, instead of a table')
 
     sp = add('setup', cmd_setup, 'install the Python packages, create the reports folder, run doctor')
     sp.add_argument('--add-path', action='store_true', help='add this folder to your user PATH so `cores` works from anywhere (Windows)')
