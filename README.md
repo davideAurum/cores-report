@@ -4,7 +4,8 @@ Turns a UAB CORES ("Core Work Mgr") ICU handoff report into a clean, filterable,
 command: `cores generate`.
 
 > The captures, the JSON files and the Daily Reports contain PHI. Everything here runs on your own computer and
-> nothing is sent anywhere. Keep `reports\` and Downloads tidy with `cores clean`.
+> nothing is sent anywhere. Keep `reports\` and Downloads tidy with `cores clean`. (The one file that does leave the
+> PC is the cores log, in your own OneDrive: what ran and how it ended, no patient data. See *The log*.)
 
 ## Every day
 
@@ -78,7 +79,8 @@ Cerner-hosted browser allows the folder picker (the File System Access API); the
    adds the folder to your user PATH so that `cores` works from any folder once you open a new terminal. Leave off
    `--add-path` to keep using `.\cores` from inside the folder.
 
-`cores doctor` at any time lists what is installed, the printers Windows knows, the inbox folder and the reports folder.
+`cores doctor` at any time lists what is installed, the printers Windows knows, the inbox folder, the reports folder
+and the log folder.
 
 ### No Python on the computer?
 
@@ -181,6 +183,7 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 | `cores annotate FILE [--open] [--copy]` | annotatable copy of a capture: hover shows the parser field, click names it (same rule for captures) |
 | `cores har FILE` | fallback capture: recover the report HTML from a DevTools HAR export or a copied cURL |
 | `cores doctor` | environment check |
+| `cores log [--last N] [--where] [--json]` | the cores log: every command run and every capture's HUD events, from all your computers, oldest first (default the newest 30); `--where` shows the folder and each computer's file (see *The log*) |
 | `cores setup [--add-path]` | install packages, create `reports\`, doctor |
 | `cores config [--init] [--set KEY VALUE]` | show settings; write `cores.config.json`; change one setting |
 | `cores help [COMMAND]` | this list, or one command's options (`cores help generate`) |
@@ -251,6 +254,29 @@ in *Sections*), its location in the Location block's tooltip and in the Unit fil
 the report that has no location yet, so the file fills in from real reports. A report re-renders on `cores open`,
 `print` or `pdf` after the file changes. Unit names are not PHI; keep patient details out of this file.
 
+## The log
+
+Every `cores` command adds one line to the **cores log** when it ends, and a capture brings its HUD's events along
+(`<!-- CORES log … -->` before its closing `</html>`), which are added the first time a command takes that capture in.
+The log outlives any one capture, report or folder, so `cores log` can still say next week whether Tuesday's capture
+worked, on which computer, and how long it took.
+
+- **Where**: one file per computer, `cores-log.<computer>.jsonl`, in `CORES Report log` in your OneDrive when the PC
+  has one (the work account's first), else in `%LOCALAPPDATA%\CORES Report\log`. Computers signed in to the same
+  OneDrive see each other's files; for any other shared folder, give each computer
+  `cores config --set log_dir FOLDER` (`--set log_dir ""` goes back to automatic). `cores log --where` and
+  `cores doctor` name the folder and say whether OneDrive has it.
+- **What**: fixed fields only. The time, the computer, the command or HUD event, the cores version, how it ended
+  (`ok`; `refused` when cores said why not; `error`; `interrupted`), the exit code, how long it took, a few counts
+  (patients, bytes, captures, files, HUD events) and, for an error, the name of its kind. Never a message, a path, a
+  file name or anything out of a report, so no patient data: a HUD event carrying anything else is dropped, and what
+  another computer wrote is checked the same way before it is shown.
+- **Reading it**: `cores log` shows the newest 30 entries from all the computers, oldest first; `--last N` shows more
+  or fewer (0 = all) and `--json` prints them as JSON, one per line. `cores watch` gets a line per capture and one for
+  the session.
+- The log never stops a command: when its folder cannot be written the command carries on and says so in one line.
+  `cores config --set log false` turns it off.
+
 ## Settings
 
 Defaults work as they are. `cores config --init` writes `cores.config.json` next to `cores.py`; edit it in any editor
@@ -270,6 +296,8 @@ or use `cores config --set KEY VALUE`.
 | `orientation` | `landscape` | paper Daily Reports print on, `landscape` or `portrait`; the report's Paper switch overrides it in your browser |
 | `black_and_white` | `false` | Daily Reports start in black and white, for a black-and-white printer; the report's B&W box overrides it in your browser |
 | `check_updates` | `true` | `generate` and `capture` say when a newer release is out (asks GitHub at most once a day) |
+| `log` | `true` | every command adds a line to the cores log (see *The log*); `false` turns it off |
+| `log_dir` | automatic | folder of the cores log; empty = `CORES Report log` in OneDrive when the PC has one, else `%LOCALAPPDATA%\CORES Report\log` |
 
 ## Files
 
@@ -281,6 +309,7 @@ or use `cores config --set KEY VALUE`.
 | `capture_report.js` | pasted into the CORES window's console to capture a report |
 | `cores_parse.py`, `cores_parse_anes.py`, `cores_parse_med.py` | capture HTML -> JSON (I-PASS six-column, Anesthesia nine-column and Medicine five-column layouts) |
 | `cores_report.py` | JSON -> Daily Report HTML in the UAB Medicine brand (UAB Green and Healing Teal, Aktiv Grotesk or Arial): search, filters, sort, Sections menu, Inspect, paper orientation, B&W, Optimize widths, print layout |
+| `cores_log.py` | the cores log: one line per command run and per HUD event, one file per computer, no patient data (see *The log*) |
 | `annotate_source.py`, `har_extract.py` | helpers used by `cores annotate` and `cores har` |
 | `REPORT_GLOSSARY.md` | agreed names for every element of the reports and the parser fields |
 | `unit_locations.json` | where each unit is (see *Unit locations*); edit it in any editor |
