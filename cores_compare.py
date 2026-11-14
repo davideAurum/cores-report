@@ -16,7 +16,9 @@ import sys
 
 # report key -> what a CORES result label (event_display) looks like for it; the first that matches wins
 VITALS = [
-    ('temp', r'\btemp'), ('hr', r'heart rate|\bpulse\b(?!.*ox)|\bhr\b'), ('sbp', r'systolic'), ('dbp', r'diastolic'),
+    # temp: body temperature, not the vent humidifier's ("Aerosol Humidification Temperature")
+    ('temp', r'^(body\s+)?temp(erature)?\b(?!.*humid)'),
+    ('hr', r'heart rate|\bpulse\b(?!.*ox)|\bhr\b'), ('sbp', r'systolic'), ('dbp', r'diastolic'),
     ('map_noninvasive', r'mean arterial|\bmap\b'), ('rr', r'resp(iratory)?\s*rate|\brr\b'), ('spo2', r'spo2|o2 sat|oxygen sat|pulse ox'),
 ]
 LABS = [
@@ -133,8 +135,10 @@ def compare(data):
 
     lines += ['', 'VITALS (report "last" vs the newest CORES value)']
     lines += tally(VITALS, lambda r, k: ((r.get('vitals') or {}).get(k) or {}).get('last'), 'vital')
-    lines += ['', 'LABS (report "current" vs the newest CORES value)']
-    lines += tally(LABS, lambda r, k: ((r.get('labs') or {}).get(k) or {}).get('current'), 'lab')
+    # the report's "current" is today's value, empty until the morning labs result (a capture after midnight has only
+    # "prior"): compare whichever the report has, newest first
+    lines += ['', 'LABS (report "current", else its "prior", vs the newest CORES value)']
+    lines += tally(LABS, lambda r, k: ((r.get('labs') or {}).get(k) or {}).get('current') or ((r.get('labs') or {}).get(k) or {}).get('prior'), 'lab')
     # meds: the drugs in the report's lists vs the CORES orders, by the first word of the name
     m_both = m_rep = m_cor = 0
     for r in have:
