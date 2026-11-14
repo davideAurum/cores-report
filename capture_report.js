@@ -133,6 +133,7 @@
       body.style.display = c ? 'none' : 'flex';
       root.style.height = c ? 'auto' : (ovPrefs().h || 320) + 'px';
       fold.textContent = c ? '+' : '–';
+      if (ov.grips) ov.grips();
     }
     function showFind(on) {
       findBar.style.display = on ? 'flex' : 'none';
@@ -141,6 +142,7 @@
       if (on) { if (ov.collapsed) setCollapsed(false); fin.focus(); fin.select(); }
     }
     setCollapsed(ov.collapsed);
+    ov.expand = function () { if (ov.collapsed) { setCollapsed(false); ovSave('collapsed', false); } root.style.display = 'flex'; };
     showFind(!!prefs.findOpen);
     if (typeof prefs.x === 'number') place(prefs.x, prefs.y);
     else { root.style.right = '16px'; root.style.bottom = '16px'; }
@@ -177,55 +179,67 @@
       if (e.key === 'Escape') showFind(false);
     }, true);
 
-    // moving: drag the title bar
-    head.onmousedown = function (e) {
-      if (e.button !== 0 || e.target !== head && e.target !== title) return;
-      e.preventDefault();
-      var r = root.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top, last = null;
-      drag(function (ev) { last = place(ev.clientX - dx, ev.clientY - dy); }, function () { if (last) { ovSave('x', last.x); ovSave('y', last.y); } });
-    };
-    // resizing: pull any edge or corner (the cursor shows where)
-    var EDGE = 6;
-    function edgeAt(e) {
-      var r = root.getBoundingClientRect(), x = e.clientX, y = e.clientY, s = '';
-      if (y - r.top < EDGE) s += 'n'; else if (r.bottom - y < EDGE) s += 's';
-      if (x - r.left < EDGE) s += 'w'; else if (r.right - x < EDGE) s += 'e';
-      return ov.collapsed ? s.replace(/[ns]/, '') : s;
-    }
-    root.addEventListener('mousemove', function (e) {
-      if (root.__resizing) return;
-      var s = edgeAt(e);
-      root.style.cursor = s ? s + '-resize' : '';
-    });
-    root.addEventListener('mousedown', function (e) {
-      var s = edgeAt(e);
-      if (!s || e.button !== 0) return;
+    // moving and resizing use pointer capture: once pressed, every move goes to the HUD until the button is let go,
+    // even over CORES's frames (which otherwise swallow the moves and leave a drag stuck); text selection is off meanwhile
+    function drag(el, e, move, up) {
+      if (e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
-      var r = root.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
-      root.__resizing = true; place(r.left, r.top);
-      drag(function (ev) {
-        var dx = ev.clientX - x0, dy = ev.clientY - y0, w = r.width, h = r.height, x = r.left, y = r.top;
-        if (s.indexOf('e') >= 0) w = r.width + dx;
-        if (s.indexOf('w') >= 0) { w = r.width - dx; x = r.left + dx; }
-        if (s.indexOf('s') >= 0) h = r.height + dy;
-        if (s.indexOf('n') >= 0) { h = r.height - dy; y = r.top + dy; }
-        w = Math.max(280, Math.min(w, window.innerWidth)); h = Math.max(96, Math.min(h, window.innerHeight));
-        if (s.indexOf('w') >= 0) x = r.right - w;
-        if (s.indexOf('n') >= 0) y = r.bottom - h;
-        root.style.width = w + 'px'; if (!ov.collapsed) root.style.height = h + 'px';
-        place(x, y);
-      }, function () {
-        root.__resizing = false;
-        ovSave('w', root.offsetWidth); if (!ov.collapsed) ovSave('h', root.offsetHeight);
-        ovSave('x', parseFloat(root.style.left)); ovSave('y', parseFloat(root.style.top));
-      });
-    }, true);
-    function drag(move, up) {
-      function mv(ev) { move(ev); }
-      function done() { document.removeEventListener('mousemove', mv, true); document.removeEventListener('mouseup', done, true); up(); }
-      document.addEventListener('mousemove', mv, true);
-      document.addEventListener('mouseup', done, true);
+      try { el.setPointerCapture(e.pointerId); } catch (x) {}
+      var html = document.documentElement, us = html.style.userSelect;
+      html.style.userSelect = 'none';
+      function mv(ev) { if (ev.pointerId === e.pointerId) { ev.preventDefault(); move(ev); } }
+      function done(ev) {
+        if (ev.pointerId !== e.pointerId) return;
+        el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', done); el.removeEventListener('pointercancel', done);
+        try { el.releasePointerCapture(e.pointerId); } catch (x) {}
+        html.style.userSelect = us;
+        up();
+      }
+      el.addEventListener('pointermove', mv); el.addEventListener('pointerup', done); el.addEventListener('pointercancel', done);
     }
+    // moving: drag the title bar (not its buttons)
+    head.style.touchAction = 'none';
+    head.addEventListener('pointerdown', function (e) {
+      if (e.target !== head && e.target !== title) return;
+      var r = root.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top, last = null;
+      drag(head, e, function (ev) { last = place(ev.clientX - dx, ev.clientY - dy); }, function () { if (last) { ovSave('x', last.x); ovSave('y', last.y); } });
+    });
+    // resizing: an invisible 10 px strip along each edge and a square at each corner, above the HUD's contents, with the
+    // matching cursor; the bottom-right corner also shows a grip
+    var GRIP = 10, CORNER = 16, grips = {};
+    var spots = {
+      n: 'top:0;left:' + CORNER + 'px;right:' + CORNER + 'px;height:' + GRIP + 'px', s: 'bottom:0;left:' + CORNER + 'px;right:' + CORNER + 'px;height:' + GRIP + 'px',
+      w: 'left:0;top:' + CORNER + 'px;bottom:' + CORNER + 'px;width:' + GRIP + 'px', e: 'right:0;top:' + CORNER + 'px;bottom:' + CORNER + 'px;width:' + GRIP + 'px',
+      nw: 'top:0;left:0;width:' + CORNER + 'px;height:' + CORNER + 'px', ne: 'top:0;right:0;width:' + CORNER + 'px;height:' + CORNER + 'px',
+      sw: 'bottom:0;left:0;width:' + CORNER + 'px;height:' + CORNER + 'px', se: 'bottom:0;right:0;width:' + CORNER + 'px;height:' + CORNER + 'px'
+    };
+    Object.keys(spots).forEach(function (sd) {
+      var g = ovEl('div', 'position:absolute;z-index:3;touch-action:none;cursor:' + sd + '-resize;' + spots[sd]);
+      if (sd === 'se') g.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" style="display:block;opacity:.55"><path d="M15 6 6 15M15 10 10 15M15 14 14 15" stroke="#1f4e79" stroke-width="1.6" stroke-linecap="round"/></svg>';
+      g.title = 'drag to resize';
+      g.addEventListener('pointerdown', function (e) {
+        var r = root.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
+        place(r.left, r.top);
+        drag(g, e, function (ev) {
+          var dx = ev.clientX - x0, dy = ev.clientY - y0, w = r.width, h = r.height;
+          if (sd.indexOf('e') >= 0) w = r.width + dx;
+          if (sd.indexOf('w') >= 0) w = r.width - dx;
+          if (sd.indexOf('s') >= 0) h = r.height + dy;
+          if (sd.indexOf('n') >= 0) h = r.height - dy;
+          w = Math.max(280, Math.min(w, window.innerWidth)); h = Math.max(140, Math.min(h, window.innerHeight));
+          root.style.width = w + 'px';
+          if (!ov.collapsed) root.style.height = h + 'px';
+          place(sd.indexOf('w') >= 0 ? r.right - w : r.left, sd.indexOf('n') >= 0 && !ov.collapsed ? r.bottom - h : r.top);
+        }, function () {
+          ovSave('w', root.offsetWidth); if (!ov.collapsed) ovSave('h', root.offsetHeight);
+          ovSave('x', parseFloat(root.style.left)); ovSave('y', parseFloat(root.style.top));
+        });
+      });
+      grips[sd] = g; root.appendChild(g);
+    });
+    // collapsed, only the width can change
+    ov.grips = function () { for (var sd in grips) grips[sd].style.display = ov.collapsed && sd !== 'e' && sd !== 'w' ? 'none' : ''; };
+    ov.grips();
     window.addEventListener('resize', function () {
       if (root.style.left) place(parseFloat(root.style.left), parseFloat(root.style.top));
     });
@@ -251,7 +265,7 @@
   function ovStart(mode, text) {
     try {
       ovBuild();
-      ov.root.style.display = '';
+      ov.root.style.display = 'flex';
       ov.mode.textContent = mode;
       ov.rows.textContent = ''; ov.reloads.textContent = '';
       ov.warns = 0; ov.errs = 0;
@@ -923,7 +937,12 @@
       cb.onclick = function () { probeCopy(forClaude).then(function (ok) { cb.textContent = ok ? 'Copied for Claude ✔ - paste it into the chat' : 'Could not copy: select the text and copy it'; }); };
       box.appendChild(cb);
       ovAppend(box);
-      ov.list.scrollTop = ov.list.scrollHeight - box.offsetHeight - 10;
+      // in view: the HUD opened if it was collapsed or hidden, the console scrolled to the result's first line, and the
+      // result lit up for a moment so it is easy to spot
+      ov.expand();
+      ov.list.scrollTop += box.getBoundingClientRect().top - ov.list.getBoundingClientRect().top - 4;
+      box.style.transition = 'background-color 1.2s'; box.style.backgroundColor = '#fff3b0';
+      setTimeout(function () { box.style.backgroundColor = '#f6f9fc'; }, 60);
     } else {
       probeCopy(forClaude).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
     }
