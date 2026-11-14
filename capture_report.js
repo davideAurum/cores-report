@@ -488,7 +488,9 @@
         if (!ok) why.push('execCommand copy refused');
       } catch (e2) { why.push('execCommand: ' + (e2 && e2.message || e2)); }
       if (ok) { log(done, 'ok'); return true; }
-      if (attempt < 4) {   // the report window (which had the focus) closes 1.5 s after the capture: try again once it is gone
+      if (attempt < 4) {   // the report window has the focus: close it, so this window gets it back, and try again
+        try { if (popup && !popup.closed) (popup.__realClose || popup.close).call(popup); } catch (e) {}
+        try { window.focus(); } catch (e) {}
         return new Promise(function (res) { setTimeout(function () { res(copyText(text, name, attempt + 1, null)); }, 2000); });
       }
       showBanner('CORES capture "' + name + '" is ready.', [['Copy to clipboard', function (el) {
@@ -571,7 +573,7 @@
     'order_details', 'strdose', 'strdoseunit', 'voldose', 'voldoseunit', 'freetextdose', 'route', 'rate', 'rateunit', 'freetextrate', 'freq',
     'dose_string', 'rate_string', 'abx', 'abx_day', 'abx_date', 'current_start_date', 'orig_order_date', 'last_dose_date',
     'current_iv_med_name', 'current_iv_med_rate', 'current_iv_med_rate_unit', 'current_iv_vol_rate', 'current_iv_vol_rate_unit'];
-  var PER_SET = 300;   // the newest entries kept per result column and patient
+  var PER_SET = 120;   // the newest entries kept per result column and patient (heart rate since admission runs to thousands)
   function clinicalFromCores() {
     var rows = patientRows(); if (!rows) return null;
     var pts = [], nResults = 0, nMeds = 0;
@@ -582,10 +584,10 @@
         var rl = r.result_list || {};
         p.result_sets = list(rl.list).map(function (s) { return plain(s, SET_KEYS); });
         p.results = list(rl.col).map(function (s) {
-          var entries = list(s && s.list).map(function (e) { return plain(e, RESULT_KEYS); });
-          if (entries.length > PER_SET) entries = entries.slice(-PER_SET);
-          nResults += entries.length;
-          return { event_set: plain(s, ['event_set']).event_set || '', since_dt_tm: plain(s, ['since_dt_tm']).since_dt_tm || '', entries: entries };
+          var all = list(s && s.list), keep = all.length > PER_SET ? all.slice(-PER_SET) : all;
+          nResults += keep.length;
+          return { event_set: plain(s, ['event_set']).event_set || '', since_dt_tm: plain(s, ['since_dt_tm']).since_dt_tm || '', total: all.length,
+                   fields: RESULT_KEYS, rows: keep.map(function (e) { var o = plain(e, RESULT_KEYS); return RESULT_KEYS.map(function (k) { return k in o ? o[k] : null; }); }) };
         });
       } catch (e) {}
       try {
@@ -606,7 +608,7 @@
       } catch (e) {}
       pts.push(p);
     }
-    return pts.length ? { version: 1, captured: new Date().toISOString(), patients: pts, counts: { patients: pts.length, results: nResults, meds: nMeds } } : null;
+    return pts.length ? { version: 2, captured: new Date().toISOString(), patients: pts, counts: { patients: pts.length, results: nResults, meds: nMeds } } : null;
   }
   window.coresClinical = clinicalFromCores;
   function teamsFromCores() {
@@ -633,7 +635,7 @@
     var text = '<!-- CORES capture ' + name + ' -->\n';   // the name travels with the text (used by cores --clipboard)
     if (opts.teams) text += '<!-- CORES teams ' + JSON.stringify(opts.teams).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
     if (opts.clinical) {
-      var dataComment = '<!-- CORES data ' + JSON.stringify(opts.clinical).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
+      var dataComment = '<!-- CORES data ' + (opts.clinicalText || JSON.stringify(opts.clinical)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
       html = /<\/html>\s*$/i.test(html) ? html.replace(/<\/html>\s*$/i, function () { return dataComment + '</html>'; }) : html + '\n' + dataComment;
     }
     text += html;
@@ -723,7 +725,8 @@
       if (opts.data !== false) {
         try { o.clinical = clinicalFromCores(); } catch (e) { o.clinical = null; log('could not read CORES\'s clinical data (' + (e && e.message || e) + '); the report alone is captured', 'warn'); }
         if (o.clinical) {
-          var kb = Math.round(JSON.stringify(o.clinical).length / 1024);
+          o.clinicalText = JSON.stringify(o.clinical);
+          var kb = Math.round(o.clinicalText.length / 1024);
           log('clinical data from the CORES patient list: ' + o.clinical.counts.patients + ' patients, ' + o.clinical.counts.results.toLocaleString() +
             ' results, ' + o.clinical.counts.meds + ' medication orders (' + kb.toLocaleString() + ' KB, carried in the capture)', 'ok');
         }
@@ -738,9 +741,10 @@
         else if (ov && ov.warns) ovVerdict('warn', rows + ' patient rows captured and delivered, after the problems in yellow above. On your PC run   cores generate');
         else ovVerdict('ok', rows + ' patient rows captured and delivered. On your PC run   cores generate');
       };
-      try { deliver(html, name, o).then(settle, function (e) { ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovVerdict('err', 'the report was captured but could not be delivered. It is kept in window.coresCaptured.'); }); }
+      var closed = false, closeWin = function () { if (closed) return; closed = true; try { (popup.__realClose || popup.close).call(popup); } catch (e) {} };
+      try { deliver(html, name, o).then(function (r) { settle(r); setTimeout(closeWin, 500); }, function (e) { ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovVerdict('err', 'the report was captured but could not be delivered. It is kept in window.coresCaptured.'); setTimeout(closeWin, 500); }); }
       catch (e) { console.error('CORES capture: delivery failed', e); ovLog('delivery failed: ' + (e && e.message || e), 'err'); ovVerdict('err', 'the report was captured but could not be delivered. It is kept in window.coresCaptured.'); }
-      setTimeout(function () { try { (popup.__realClose || popup.close).call(popup); } catch (e) {} }, 1500);
+      setTimeout(closeWin, 20000);   // closed after the delivery, or after 20 s whatever happens
       return name;
     }
 
@@ -1377,7 +1381,11 @@
       var low = t.toLowerCase();
       idList.forEach(function (x) { if (low.indexOf(x) >= 0) { hit = true; t = t.split(new RegExp(x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')).join('[id]'); low = t.toLowerCase(); } });
       t = t.replace(/\d{5,}/g, function () { hit = true; return '#'; })
-        .replace(/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}/g, function () { hit = true; return '[date]'; });   // a date in any form: dropped
+        .replace(/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}/g, function () { hit = true; return '[date]'; })   // a date in any form: dropped
+        .replace(/\b\d{1,2}[-\s.\/]*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?([-\s.,\/]*\d{2,4})?\b/gi, function () { hit = true; return '[date]'; })   // 06-NOV-2026, 6 Nov
+        .replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?\b([,\s]+\d{2,4})?/gi, function () { hit = true; return '[date]'; })   // Nov 6, 2026
+        .replace(/\b\d{1,3}\s*(years?|yrs?|y\/?o|months?|mos?|weeks?|wks?|days?)\b/gi, function () { hit = true; return '[age]'; });   // 61 Years: an age, dropped
+      if (/^[A-Za-z]{0,3}\d{2,5}[A-Za-z]?$/.test(String(s).trim())) hit = true;   // a bare room or bed number (S625, 4012B): dropped
       return { text: t, hit: hit };
     }
     // 2. every path in the records: kinds, patients, list lengths, and the values with the patients they occur in
@@ -1460,7 +1468,7 @@
       if (v && typeof v === 'object' && !v.nodeType && v.window !== v) { var n = 0; try { n = Array.isArray(v) ? v.length : Object.keys(v).length; } catch (e) {} tops.push(safe(k) + (Array.isArray(v) ? ' (list of ' + n + ')' : ' (' + n + ' keys)')); }
     }); } catch (e) {}
     L.push('', 'TOP-LEVEL DATA ON THE PAGE: ' + (tops.join(', ') || '(none)'));
-    L.push('', 'Shown: ' + shownCount + ' paths. Values shown are only those shared by 3+ patients, with every patient and staff name, MRN, FIN, ID, birth date, long number and date the page holds masked or dropped; free text and anything unique to a patient is never shown.');
+    L.push('', 'Shown: ' + shownCount + ' paths. Values shown are only those shared by 3+ patients, with every patient and staff name, MRN, FIN, ID, birth date, long number, date, age and room number dropped; free text and anything unique to a patient is never shown.');
     return done(L);
 
     function done(lines) {

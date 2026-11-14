@@ -74,7 +74,10 @@ def entries(cd):
     """All of a patient's CORES result entries, each (label, value, time or None, position)."""
     out, n = [], 0
     for col in cd.get('results') or []:
-        for e in col.get('entries') or []:
+        # version 2 captures: compact rows under the field names; version 1: one object per entry
+        fields = col.get('fields') or []
+        rows = [dict(zip(fields, row)) for row in col.get('rows') or []] if fields else col.get('entries') or []
+        for e in rows:
             out.append((str(e.get('event_display') or ''), e.get('result_val'), when(e.get('event_end_dt_tm')), n))
             n += 1
     return out
