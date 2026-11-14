@@ -8,8 +8,9 @@
   generate_pdf_2.php for a PDF. captureCores() takes that form instead; without it the fake "PDF" page shows.
   The rows use the I-PASS Detailed layout's six columns, so cores_parse.py can read a capture of this window.
 
-  With fk_mode=opener (the default) this window also writes the patient records into the window that opened it:
-  window.opener.global_constant_row_info.
+  With fk_mode=opener this window also writes the patient records into the window that opened it:
+  window.opener.global_constant_row_info. In the other modes (fk_mode=cores, the list's default, among them) it
+  leaves them alone.
 -->
 <html>
 <head>
@@ -64,6 +65,9 @@
     if (FILL === 'push') {
       op.global_constant_row_info = [];
       rows.forEach(function fake_push_one(r) { op.global_constant_row_info.push(r); });
+    } else if (FILL === 'index') {
+      op.global_constant_row_info = [];
+      for (var i = 0; i < rows.length; i++) op.global_constant_row_info[i] = rows[i];
     } else if (FILL === 'strict') {
       (function () { 'use strict'; op.global_constant_row_info = rows; })();
     } else op.global_constant_row_info = rows;

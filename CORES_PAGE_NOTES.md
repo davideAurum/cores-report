@@ -7,7 +7,8 @@ vocabulary (column types, result labels, team names) and counts. Keep it that wa
 ## Key findings
 
 1. **CORES keeps structured patient data on the patient-list page**, in `window.global_constant_row_info`: one
-   record per patient (158 fields). It appears only **after a report has been opened** from the list.
+   record per patient (158 fields). The list page fills it itself **when its Reports button is clicked** (the
+   first step of opening any report); before that the page has none.
 2. **Each patient's team is there** (`service`, `team`, `sub_team`); the printed report never says it. The capture
    now carries it, and the Daily Report fills its Team field and names the teams in its header (done, working).
 3. **The data depends on the list's columns.** Each column's `col_option` names the event sets and the look-back
@@ -25,9 +26,11 @@ vocabulary (column types, result labels, team names) and counts. Keep it that wa
 7. **Privacy tooling works**: the HUD's Find, Describe, Columns and Map show field names, CORES's vocabulary and
    counts only, redacting every identifier the page holds. Each leak found on the way (by security review or
    in use) is fixed and recorded below.
-8. **Open, with a tool to settle it**: what fills the records when a report opens, and what CORES's report button
-   calls. The HUD's **Trace** shows both (see "Trace" below); it has been proved on a fake page and is waiting for
-   one run in CORES. Its answer decides whether opening report 281 can be skipped or scripted.
+8. **Settled by the Trace run in CORES (2026-11-14)**: can opening report 281 be **skipped? No**, not for the
+   Daily Report (the report still supplies the full medications, I&O and most labs), though the report window is
+   not what loads the records: the click on Reports is. Can it be **automated? Yes**: CORES opens the report after
+   three ordinary clicks and a plain `window.open`, so the capture script can press the same three buttons. The
+   Trace lines behind both are under "Trace", "What the Trace showed in CORES".
 
 ## The setting
 
@@ -53,8 +56,10 @@ The printed report only says `[Multiple Services Selected]` / `[Multiple Teams S
 
 ### `window.global_constant_row_info`: one record per patient on the list
 
-- A list of records with **158 fields**, the same in every record. **It exists only after a report has been opened**
-  from the list (before that, the page has none); after a report it held every patient (56-58).
+- A list of records with **158 fields**, the same in every record. **It exists only once the list's Reports button
+  has been clicked** (before that, the page has none): the list page's own `printReportLegacy` assigns an empty
+  list and fills it within a few milliseconds, with no request seen and no report window open (Trace,
+  2026-11-14). After that it held every patient (56-58).
 - Identity and place: `person_id`, `encntr_id`, `mrn`, `fin`, `mrn_mrn`, `patient_name`, `patient_name_last`,
   `birth_date`, `age`, `gender`, `unit`, `location`, `room`, `bed`, `status` (*Floor*, *ICU*), `facility`,
   `encntr_type`, `admit_dt_tm`, `admitdate` (as `DD-MON-YYYY`), `admit_day`.
@@ -184,9 +189,24 @@ setup**, which says exactly what data it fetches. Our list's columns (2026-11-14
     the page's data, with the names of the fields beside them. Describe = `describeCores(path)`: the layout of
     the patient records (or a path). Columns = `listCoresColumns()`: the column picker's options. Map =
     `mapCores()`: every field path, kinds, counts, values shared by 3+ patients, the list's columns.
-  - Trace = `traceCores()` (in the `feat/load-trace` work, 2026-11-14): what writes the patient records and what
-    the report button calls, as a timeline with a who / skip? / automate? answer on top. See "Trace" below.
+  - Trace = `traceCores()` (2026-11-14): what writes the patient records and what the report button calls, as a
+    timeline with a who / skip? / automate? answer on top. See "Trace" below; it has been run in CORES.
   - Every result's **Copy for Claude** button is run by a capture-phase click catcher on `window`, like Find's.
+- **Auto** = `captureCores({auto: true})` (`cores capture --auto`, 2026-11-14): the capture arms itself, then
+  presses CORES's own Reports button, the report's menu item and Just Print. See "Auto" below. Not yet run in
+  CORES.
+- **Three fixes on the capture's path** (from `docs/code-review.md`, 2026-11-14):
+  - *The report's address follows CORES's version* (finding 5). Direct mode (`captureCores(281)`) used an address
+    fixed to `cores.4.11.0`. It now takes CORES's folder (`.../cores.<version>/base/public_web/`) from the page's
+    own address, else from a script the page loaded from that folder, and the HUD says which ("report address:
+    taken from this page (CORES 4.11.0)"). Only when neither tells does it use the 4.11.0 address, with a yellow
+    line. Unconfirmed until a run in CORES: that the patient list's own address has that folder in it.
+  - *A capture with no teams or no clinical data ends yellow* (finding 6): "CAPTURED WITH PROBLEMS: 57 patient
+    rows captured and delivered, but without the teams and CORES's clinical data: CORES's patient records were
+    not on the page." It used to be a green SUCCESS with nothing said. This is what a direct-mode capture in a
+    fresh session gives, because nothing pressed Reports. (`data: false` is a choice, not a problem.)
+  - *A report window closed before the capture ends it* (finding 8): a red FAILED line that says how to try
+    again. Before, the HUD kept its spinner and clock going for ever.
 - **The HUD's event log** (same work): the HUD's steps, kept in localStorage and carried by each capture as
   `<!-- CORES log {...} -->`; fixed vocabulary, no free text. See "The HUD's event log" below.
 - **A fake CORES page and a self-test** (`test/`, same work): see "Trying the HUD outside Citrix" below.
@@ -203,13 +223,124 @@ setup**, which says exactly what data it fetches. Our list's columns (2026-11-14
   page shown at the paper's printable width; Optimize widths never narrows the Snapshot below two columns or
   Data below Labs-beside-Volume.
 
-## Trace: what loads the patient records (built 2026-11-14; not yet run in CORES)
+## Trace: what loads the patient records (built and run in CORES, 2026-11-14)
 
-The open question behind finding 1: the records exist only after a report has been opened, and nobody knows what
-puts them there (the list page after a request of its own? the report window writing into its opener?) or what
-exactly CORES's report button calls. The answers decide whether opening report 281 can be **skipped** (the list
-could load the records without it) or **automated** (a script could open it the way the button does). The HUD's
-**Trace** button (`traceCores()`) watches the page while the report opens and says what it saw.
+The question behind finding 1 was: the records seemed to exist only after a report had been opened, and nobody
+knew what put them there (the list page after a request of its own? the report window writing into its opener?)
+or what exactly CORES's report button calls. The answers decide whether opening report 281 can be **skipped**
+(the list could load the records without it) or **automated** (a script could open it the way the button does).
+The HUD's **Trace** button (`traceCores()`) watches the page while the report opens and says what it saw. It was
+run once in CORES; what it showed comes first, how to run and read it after.
+
+### What the Trace showed in CORES (2026-11-14, a fresh session, 58 patients)
+
+**Skip opening report 281? No. Automate opening it? Yes.** The lines below are copied from that run's result
+(names of functions, files and elements, counts and timings; long lines are wrapped). Times are seconds since
+the Trace was armed.
+
+**What fills the records: the list page itself, at the click on its Reports button.** Not the report window,
+and not a request the Trace could see.
+
+```
+ 35.02  click    [L] div.t4m_rnd_nav_bar_relative_anchor > div.t4m_rnd_nav_bar_container >
+                 div.t4m_rnd_nav_section_dark.t4m_rnd_nav_section_dark_hover > span.nav_button
+                 (in the patient list: text not read)
+           handlers: jQuery click (anonymous) → self.checkRequiredRoles, $.map, t4m.cores.ui.simplePrompt,
+                 provider, $.each, $, self.showReportMenu
+ 35.04  RECORDS  [L] assigned: 0 records. BY THIS PAGE (the function that wrote them belongs to this page, and
+                 no report window code called it; the list itself was made in this page). Report windows open: 0.
+           call stack: t4m.cores.PtList.printReportLegacy (t4m_cores_ptlist.js:5977:29) [this page]
+                 ← Object.onPrintReport (t4m_utility.js:7210:26) [this page]
+                 ← Object.broadcast (t4m_utility.js:929:52) [this page]
+                 ← t4m.cores.PtList.showReportMenu (t4m_cores_ptlist.js:5112:22) [this page]
+                 ← HTMLSpanElement.<anonymous> (t4m_cores_ptlist.js:4791:10) [this page]
+                 ← HTMLSpanElement.dispatch (library.js:29:4817) [this page]
+ 35.05  RECORDS  [L] changed in place (seen by polling): 58 records. BY THIS PAGE (the code that wrote them
+                 could not be read, so this rests on where the list was made; the list itself was made in
+                 this page). Report windows open: 0.
+```
+
+- The Reports button's handler calls `showReportMenu`, which leads to `printReportLegacy`; that assigns an empty
+  list and fills it to 58 records within 10 ms. The fill is by index (`list[i] = record`), which is why the
+  Trace saw it only by polling, without a call stack of its own.
+- No request of the list page was answered in the 5 s before, and no report window was open: the first one
+  opened 15 s later. So the list builds the records from what it already holds (or through Cerner's own channel,
+  which the Trace cannot see), in the first step of opening any report.
+
+**skip? No.**
+
+- The Daily Report needs report 281 itself: the report supplies the full medications, I&O and most labs, which
+  the records do not hold (key finding 6). So the report still has to be opened.
+- What the Trace does change: **the report window is not what loads the records**. One click on Reports is
+  enough for the records (teams, handoff text, code status, the list columns' results). A capture of the records
+  alone would need that click and nothing else (next steps, 7).
+- The run's own line said `skip?  Yes, by this run: the records were written with no report window opened since
+  the Trace was armed.` That was true and misleading: it did not say a click had set the write off. The Trace now
+  says which click it was, with its handlers, and that the report window was not involved (see "What the output
+  means").
+
+**automate? Yes, by pressing CORES's own three buttons.**
+
+```
+ 35.02  click    [L] ... > div.t4m_rnd_nav_section_dark.t4m_rnd_nav_section_dark_hover > span.nav_button
+ 47.39  click    [L] div.t4m_rnd_nav_menu > div.t4m_rnd_menu_report_item_container >
+                 div.t4m_rnd_nav_menu_item.t4m_rnd_nav_menu_item_hover "ANES ICU w/ Meds"
+           handlers: jQuery click (anonymous) → t4m.cores.PrintReportDialog, oPrintReportDialog.render,
+                 domReportMenu.remove; jQuery click (anonymous) → oDialog.close
+ 48.02  request  [L] #1 XHR GET static.transformativemed.com t4m_report_anesthesia_icu_meds.html ?<name>
+                 → 200, 14,568 chars, 127 ms
+ 49.79  click    [L] div.t4m_rnd_dialog_content > div > div >
+                 div.t4m_rnd_report_dialog_just_print_btn.t4m_rnd_btn.t4m_rnd_btn_flat_blue_filled "Just Print"
+           handlers: jQuery click (anonymous) → _printReport.call, oPrintReportDialog.close
+ 49.80  request  [L] #2 XHR POST dwh.transformativemed.com log  body: other  → 200, 16 chars, 862 ms
+ 50.30  open     [L] window.open static.transformativemed.com public_web/ ?prg_name=univ_wa_rnd_build_report,
+                 options{report_id:281}, mode, emr_type, report_name  name "<name>"
+                 features "left=100,top=100,width=1250,height=850,menubar=1,toolbar=1,resizeable=1,status=1,scrollbars=1"
+                 → the report window [R1]
+           called from: (anonymous) (library.js:61:224) [this page]
+```
+
+- Three ordinary clicks: (1) the **Reports** button on the nav bar (`span.nav_button`, the one whose handler
+  names `showReportMenu`); (2) the menu item **"ANES ICU w/ Meds"** (`div.t4m_rnd_nav_menu_item`), which loads
+  the report's template and puts up CORES's print dialog (`PrintReportDialog`); (3) its **Just Print** button
+  (`div.t4m_rnd_report_dialog_just_print_btn`). Half a second later CORES calls a plain `window.open` for
+  `public_web/?prg_name=univ_wa_rnd_build_report&options=report_id:281` (plus `mode`, `emr_type`,
+  `report_name`).
+- The capture script can therefore **press those three buttons**, as a hand would, and now does
+  (`captureCores({auto: true})`, see "Auto" below). Opening the address itself
+  is the poorer way: on the way CORES fills the records (click 1), loads the template (click 2) and writes its
+  own usage log (click 3: CORES's own request to `dwh.transformativemed.com`, which the script never makes).
+  Direct mode (`captureCores(281)`) skips all of that, and sometimes gets "Can't Load Patient List".
+
+**The report window itself** showed only its own template files, then rendered for about a minute and a half:
+
+```
+ 52.06  request  [R1] #3 XHR static.transformativemed.com t4m_report_anesthesia_icu_meds.css ?<name>  → 200, 1,212 bytes, 42 ms
+ 52.10  request  [R1] #4 XHR static.transformativemed.com t4m_report_anesthesia_icu_meds.html ?<name>  → 200, 14,568 bytes, 40 ms
+ 52.35  request  [R1] #5 XHR static.transformativemed.com t4m_report_anesthesia_icu_meds.js ?<name>  → 200, 2,836 bytes, 41 ms
+143.87  request  [R1] #6 XHR static.transformativemed.com t4m_cores_report_pdf.css ?<name>  → 200, 29,671 bytes, 123 ms
+150.80  window   [R1] went to static.transformativemed.com generate_pdf_2.php
+```
+
+**Still open**
+
+1. **Where the report window gets its data.** Its only visible requests were its template files (css, html, js,
+   then the PDF css); between 52 s and 144 s it rendered with nothing to see. Either it reads its opener's
+   records (which would explain why the list fills them at the Reports click, in a function named
+   `printReportLegacy`), or it asks through Cerner's own channel (`window.external`, `XMLCclRequest`), which the
+   Trace cannot see. The Trace never wraps the report window, so it cannot tell which.
+2. **Whether direct mode's "Can't Load Patient List" comes from the records not being there yet.**
+   `captureCores(281)` opens the address without the Reports click, so in a fresh session the list has no
+   records when the report window starts. Not tried. A way to try it: in a fresh session press Reports once,
+   close its menu, then run `captureCores(281)`.
+3. **Whether the records load the same way when a script does the clicking.** `cores capture --auto --trace`
+   in CORES shows it: the same three clicks (marked as pressed by the script), the same two RECORDS lines.
+4. This is **one run**, one user role, CORES 4.11.0. The Reports button's handler names a role check
+   (`checkRequiredRoles`, `simplePrompt`): CORES may ask something first for another user. The automation then
+   stops and says which button to press by hand.
+5. The browser slowed the list page's timers while the report window covered it (up to 6.2 s between looks), so
+   the report window's request times above may be late. The clicks, the two RECORDS lines and `window.open` were
+   caught as they happened.
 
 ### How to run it in CORES
 
@@ -241,12 +372,19 @@ It starts with three lines, then the evidence:
   - *this page (the patient list)*: the list's own code wrote them, with the request whose answer it was
     handling (certain when the write happened inside that answer's handler; otherwise the nearest request
     answered before the write, marked "a hint, not proof");
+  - when the list was **assigned empty and filled in place a moment later** (the same list, within 1.5 s, no
+    answer handled in between: what CORES does), the fill is seen only by polling and has no call stack. The
+    line then names the **assignment's call stack** and counts as sure: "it assigned an empty list and filled
+    it in place within 10 ms (the fill was seen by polling, so the call stack is the assignment's): ...";
   - *unclear*: records appeared but the writing code could not be read; *not seen*: nothing wrote them while the
     Trace was armed, or they were already there at arming.
 - **skip?** Could the records load without the report window. *Not by leaving the report window out* (it hands
   them over itself); *Maybe* (the list loads them itself, but only after the report was opened: the line names
   the request, how long after `window.open` it was sent and the functions that sent it, which is what to try
-  running without a report); *Yes, by this run* (written with no report window opened since arming).
+  running without a report); *The records do not need the report window, but they do need a click* (written
+  right after a click and before any report window: the line names the clicked element and its handlers, and
+  says the report window was not involved; this is what CORES does); *Yes, by this run* (written with no report
+  window opened since arming and no click in the 5 s before).
 - **automate?** The click and the `window.open` call that opened the report: the clicked element (tag, classes,
   button text), the handler functions on it, the address as file name + parameter names, the window name and
   features, and the functions that called `window.open`. A script can make the same call (direct mode,
@@ -261,7 +399,7 @@ It starts with three lines, then the evidence:
 
 skip? and automate? are **hints from one run's timing**, worded as hints; the timeline is the evidence, and it is
 about the patient records only (report 281 still supplies the full medications, I&O and most labs: finding 6).
-Stage 2 of the load-map goal records the yes/no for each here, with the Trace output behind it.
+The yes/no for each, from the run in CORES, is recorded above under "What the Trace showed in CORES".
 
 ### What it watches, and how it stays out of the way
 
@@ -326,6 +464,66 @@ Same rules as Map: names, CORES vocabulary, counts, timings; nothing unique to a
   requests, `window.open` and clicks are caught as they happen; only what is polled (a declared variable, the
   field count, the report window closing, its last requests) can be late. The NOTES say when that happened.
 
+## Auto: the script presses CORES's three buttons (`captureCores({auto: true})`, 2026-11-14)
+
+Built on the Trace's answer to "automate?". One paste captures the report, with no clicks:
+
+- On the PC: `cores capture --auto` (the paste then ends with `captureCores({auto: true})`). With `--trace` the
+  Trace is armed too (`captureCores({auto: true}); traceCores();`).
+- In the Console by hand: `captureCores({auto: true})`. Another report: `captureCores({auto: 'I-PASS Detailed'})`
+  (the text of its item on the Reports menu). Other options go in the same braces:
+  `captureCores({auto: true, download: false})`. `autoWait: 10` = seconds each step may wait (default 6).
+
+What it does, in order:
+
+1. **Arms the capture** exactly as `captureCores()` does (the next report window CORES opens is captured).
+2. A quarter of a second later, so that a Trace armed by the same paste is already watching, it **presses
+   Reports**: the `span.nav_button` on show in the nav bar whose click handler names `showReportMenu`. It finds
+   it by reading the handlers jQuery keeps, as the Trace does; the button's text is not used. CORES fills the
+   patient records at this click; the HUD says how many are on the page.
+3. It waits for the menu and **presses the report's item** (`div.t4m_rnd_nav_menu_item`). `auto: true` means
+   "ANES ICU w/ Meds" (report 281): that text exactly, else the one item with ANES, ICU and Med in it. A text
+   means the item with that text.
+4. It waits for CORES's print dialog and **presses Just Print** (`div.t4m_rnd_report_dialog_just_print_btn`).
+5. CORES opens the report window itself, half a second later. The armed capture takes it from there.
+
+If the Reports menu or the print dialog is already up when it starts, it goes on from there.
+
+**It only clicks.** It never calls a CORES function and never sends a request of its own: everything CORES does
+on the way (the records, the template, its own usage log) is CORES's doing, as when the buttons are pressed by
+hand. **Nothing from the page is shown**: the HUD names the buttons by what they are and the menu item by the
+name that was asked for.
+
+**When a step cannot be done, it stops and hands over.** The HUD shows a yellow line that says what happened
+and which button to press, the status bar says "Your turn: ...", and **the capture stays armed**: press the
+button yourself and the capture goes on (it then ends yellow, "after the problems in yellow above").
+
+| What happened | The HUD says "auto stopped: ..." | Log (`auto_handed_over`) |
+|---|---|---|
+| No nav button's handler names `showReportMenu` | could not find CORES's Reports button | `no_reports_button` |
+| Something else came up in place of the menu | Reports was pressed, and CORES is asking something first | `prompt` |
+| No menu within the wait | Reports was pressed, but its menu did not show in 6 s | `no_menu` |
+| The menu has no such item | the Reports menu has no item that matches "ANES ICU w/ Meds" | `no_menu_item` |
+| Several items look like it, none is it exactly | more than one item on the Reports menu matches ... | `several_menu_items` |
+| No Just Print button within the wait | ... was pressed, but the Just Print button did not show in 6 s | `no_just_print` |
+| No report window within the wait | Just Print was pressed, but CORES opened no report window in 6 s | `no_window` |
+| The browser blocked the window | the browser blocked the report window CORES tried to open. Allow pop-ups ... | `blocked` |
+
+(A blocked report window is now said in armed mode too, in yellow; the capture stays armed.)
+
+**Not yet run in CORES.** It is proved on the fake page only (`node test/run_selftest.mjs`: the full run ends in
+SUCCESS, each stop above hands over and stays armed, and it works with an armed Trace in both orders). The
+first run in CORES should be `cores capture --auto --trace`, in a fresh session. Things to look at:
+
+- Does the HUD get past "pressing Reports"? If it says it could not find the Reports button, CORES keeps that
+  handler somewhere the script does not read: press the three buttons by hand and send the Trace.
+- Does CORES ask something after Reports (the role check)? Then answer it and go on by hand.
+- Does the report window open, or does the browser block it? A script's click is not a person's click: the
+  browser may refuse the window. The HUD then says so; pressing the buttons by hand works.
+- In the Trace: the three clicks are marked "(pressed by the capture script)", and the two RECORDS lines should
+  read as they did by hand (an empty list assigned by `printReportLegacy`, then 58 or so records).
+- Does the capture end green, with teams and clinical data?
+
 ## The HUD's event log (`<!-- CORES log -->`, 2026-11-14)
 
 The HUD keeps a log of its own steps in this browser's localStorage (key `cores-capture-log`, the newest 300),
@@ -351,7 +549,10 @@ log`, the run-log lane's work) reads it and drops repeats by `id`; cores_parse i
 | `ev` | `k` | `n` | `ms` | when |
 |---|---|---|---|---|
 | `armed` | `window`, `direct` | | | `captureCores()`: waiting for CORES's own report window / opening the report itself |
-| `blocked` | | | | direct mode: the browser blocked the popup |
+| `report_address` | `page`, `script`, `fallback` | | | direct mode: where the report's address came from (this page's own address / a script it loaded / the fixed 4.11.0 one) |
+| `auto` | `reports`, `menu_item`, `just_print`, `opened` | | since the automation started | `captureCores({auto: true})`: the script pressed Reports / the report's menu item / Just Print; then CORES opened the report window |
+| `auto_handed_over` | `no_reports_button`, `prompt`, `no_menu`, `no_menu_item`, `several_menu_items`, `no_just_print`, `no_window`, `blocked` | | since the automation started | the automation stopped at a step it could not do and said which button to press; the capture stays armed |
+| `blocked` | | | | the browser blocked the report window (direct mode: the script's own; armed: the one CORES tried to open) |
 | `report_opened` | `window`, `direct` | | | a report window is in hand |
 | `other_window` | | | | armed: CORES opened a window that is not a report |
 | `report_loaded` | | | since the window was in hand | the report page loaded in it |
@@ -377,20 +578,38 @@ The list lives in `LOG_EV` in capture_report.js; add to both when the HUD gains 
 ## Trying the HUD outside Citrix (`test/`, 2026-11-14)
 
 Only a pasted script reaches CORES, so the HUD is tried on a **fake CORES page** with invented patients
-("ZZTEST, ALPHA", MRN 9990001 ...): `test/fake_cores.html` (the list: `table.rnd_tbl_pt_list` rows, a Reports
-menu that calls `window.open`, the page's own global `copy`, swallowed clicks and keys) and
-`test/fake_report.html` (the report window: I-PASS style rows that cores_parse reads, then the `html` form
-submit like CORES's PDF reports). How the records get filled is a switch, because it is the unknown:
-`?fk_mode=opener` (the report window writes into its opener), `xhr` / `fetch` (the list fills them after the
-report opens), `timer` (the list fills them with no report: the control); `&fk_fill=push|strict`, `&fk_decl=var`.
+("ZZTEST, ALPHA", MRN 9990001 ...): `test/fake_cores.html` (the list: `table.rnd_tbl_pt_list` rows, the page's
+own global `copy`, swallowed clicks and keys) and `test/fake_report.html` (the report window: I-PASS style rows
+that cores_parse reads, then the `html` form submit like CORES's PDF reports).
+
+**By default the fake page opens its report the way CORES does** (`fk_mode=cores`, built from the Trace run in
+CORES): a nav bar whose Reports button (`span.nav_button`, a jQuery click handler that names `showReportMenu`)
+fills the records at the click, by assigning an empty list and filling it by index; a menu
+(`div.t4m_rnd_nav_menu_item` "ANES ICU w/ Meds"); a print dialog that shows after a short XHR, with a **Just
+Print** button (`div.t4m_rnd_report_dialog_just_print_btn`); and `window.open` half a second after Just Print,
+with CORES's features. A Trace of it reads like the one from CORES. What the Trace did not show is invented
+(the buttons' labels, the other buttons, a hidden second copy of the nav bar). Switches break one step at a
+time, for trying what the capture's automation does then: `&fk_break=reports|menu|item|twins|dialog|open` and
+`&fk_role=ask` (the Reports click asks a question first); the top of `test/fake_cores.html` explains each.
+
+The older modes, stage 1's guesses at what fills the records, are kept behind the same switch for the Trace's
+self-test; they use a plain Reports button and menu: `?fk_mode=opener` (the report window writes into its
+opener), `xhr` / `fetch` (the list fills them after the report opens), `timer` (the list fills them with no
+report: the control), `click` (the list fills them when its Reports button is clicked). With any mode:
+`&fk_fill=assign|push|index|strict` (`index`: an empty list, then filled by index, as CORES does it),
+`&fk_decl=var`.
 
 - Serve it with `python test/serve.py` (only `test/` and capture_report.js, only to this computer), then open
   `http://127.0.0.1:8765/fake_cores.html` and paste the script, or press "Load the HUD". **Not** `python -m
-  http.server` in the project folder: that would serve `reports\` too.
+  http.server` in the project folder: that would serve `reports\` too. The same page also answers at an address
+  shaped like CORES's own, `http://127.0.0.1:8765/cores/uab/prod/cores.9.9.9/base/public_web/fake_cores.html`
+  (any version number), for trying where direct mode opens the report.
 - `node test/run_selftest.mjs` runs `test/selftest.html` in headless Edge and prints PASS / FAIL: the fake page,
   the Trace in every mode (who wrote, the hints, the redaction, everything restored), the Trace with a capture
-  in both orders of arming, and the event log's contract. It proves the tools on the fake page; what the real
-  page does is what the Trace run in CORES is for.
+  in both orders of arming, the event log's contract, the automation (the full run, every hand-over, with a
+  Trace armed before and after) and the three capture-path fixes. It proves the tools on the fake page; what the real
+  page does is what a run in CORES shows. `node test/run_selftest.mjs trace_cores_mode` runs one test (several:
+  commas between).
 - `node test/run_selftest.mjs --capture FILE` writes a capture of the fake report (invented patients, with its
   `CORES teams`, `CORES data` and `CORES log` comments) for trying the PC side: `cores generate FILE`.
 
@@ -439,9 +658,10 @@ Automated security reviews flagged several leaks; each was fixed. The rules now:
 
 In order; each builds on the one before.
 
-0. **Run the Trace once in CORES** (a fresh session; the steps are under "Trace", "How to run it in CORES") and paste its
-   result into the chat. It fits into the same sitting as step 1: arm the Trace, then open the report. Its who /
-   skip? / automate? lines, with the timeline behind them, are recorded here and decide step 7.
+0. **Done 2026-11-14: the Trace was run once in CORES.** skip? no, automate? yes (see "Trace", "What the Trace
+   showed in CORES"). What it left open is listed there under "Still open".
+   **Next: run `cores capture --auto --trace` once in CORES** (a fresh session) and paste the Trace's result into
+   the chat; "Auto" lists what to look at.
 1. **Confirm the smaller capture.** Capture with the current script (`cores capture`, open the report): the HUD
    should end in a green SUCCESS, with a "clinical data ... KB" line well under the first capture's 4,652 KB (v2:
    compact rows, 120 per result column). If the clipboard copy still fails, lower `PER_SET` in capture_report.js.
@@ -464,9 +684,9 @@ In order; each builds on the one before.
    likely first the handoff text (summary, situational awareness, tasks), code status, then vitals and the
    electrolytes. Keep report 281 as the source for everything else, and as the fallback when a capture has no
    clinical data. Decide per section whether the newer CORES value or the report's snapshot is wanted.
-7. **Later, if the columns cover enough**: a capture that reads the list without opening report 281 at all (the
-   records exist only after a report has been opened; whether the list can load them some other way is what the
-   Trace of step 0 shows).
+7. **Later, if the columns cover enough**: a capture that reads the list without opening report 281 at all. The
+   Trace showed the records need only the click on the Reports button, not the report window, so such a capture
+   would press Reports, read the records, and close the menu.
 8. Housekeeping: unit locations still missing (ABTX, CPCC, HNPU, HOSU, HSP2, HSP3, HSP4, HTIC, S6S, SCU, SICU,
    TBIC, W5N, W8N); the synthetic test report prints 14 pages because its 4 days of I&O push Labs under Volume at
    the default Data width (real CORES has 2 days).

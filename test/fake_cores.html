@@ -12,25 +12,56 @@
 
   WHAT IT MIMICS (see CORES_PAGE_NOTES.md):
     - the list: table.rnd_tbl_pt_list > tr.t4m_rnd_pt_list_row (_even / _odd) > td.pt_list_cell, th.t4m_header_cell;
-    - a Reports button and menu whose item calls window.open for a same-origin report window (fake_report.html),
-      with CORES's address shape: ?prg_name=univ_wa_rnd_build_report&options=report_id:281&mode=pcedge&...;
     - the page's own global `copy` (so DevTools' copy() helper is hidden);
     - clicks and keys that are not the page's own are swallowed before they reach their target (the HUD has to catch
       them in the capture phase on window);
-    - window.global_constant_row_info: the patient records, absent until something fills them.
+    - window.global_constant_row_info: the patient records, absent until something fills them;
+    - how the report is opened and how the records get filled: a switch (query string), below.
 
-  HOW THE RECORDS GET FILLED is what nobody knows about the real page, so it is a switch (query string):
-    ?fk_mode=opener   (default) the REPORT WINDOW writes global_constant_row_info into its opener (this page);
+  ?fk_mode=cores   (default) THE WAY CORES DOES IT, as the Trace run in CORES showed (2026-11-14):
+    1. a nav bar: div.t4m_rnd_nav_bar_relative_anchor > div.t4m_rnd_nav_bar_container > div.t4m_rnd_nav_section_dark
+       > span.nav_button, inside the patient list's own container. The Reports button has a jQuery click handler that
+       names checkRequiredRoles and showReportMenu. Clicking it FILLS THE RECORDS (showReportMenu > broadcast >
+       onPrintReport > printReportLegacy: an empty list assigned, then filled by index), with no request and no
+       report window, and shows the menu;
+    2. the menu: div.t4m_rnd_nav_menu > div.t4m_rnd_menu_report_item_container > div.t4m_rnd_nav_menu_item
+       ("ANES ICU w/ Meds", and two more). Clicking an item removes the menu, loads the report's template by XHR and
+       then shows the print dialog;
+    3. the dialog: div.t4m_rnd_dialog_content > div > div > div.t4m_rnd_report_dialog_just_print_btn "Just Print".
+       Clicking it posts a usage log line, closes the dialog and, half a second later, calls a plain window.open for
+       the report window (fake_report.html) with CORES's address shape and features:
+       ?prg_name=univ_wa_rnd_build_report&options=report_id:281&mode=..&emr_type=..&report_name=..,
+       left=100,top=100,width=1250,height=850,menubar=1,toolbar=1,resizeable=1,status=1,scrollbars=1.
+    Invented, because the Trace does not show it: the nav buttons' labels, the other two nav buttons and the dialog's
+    other buttons, the name of the container around the nav bar, and a second, hidden copy of the nav bar (in CORES
+    each of the nav bar's classes is on more than one element).
+    Ways to break it, for trying what the capture's automation does when a step cannot be done:
+      &fk_break=reports   the Reports button's handler does not name showReportMenu (the button cannot be found)
+      &fk_break=menu      the Reports click fills the records but no menu shows
+      &fk_break=item      the menu has no "ANES ICU w/ Meds" item
+      &fk_break=twins     the menu has two items that look like it and none that is it exactly
+                          ("Anesthesia ICU w/ Meds", "ANES ICU - Meds (old)")
+      &fk_break=dialog    the print dialog comes up without a Just Print button
+      &fk_break=open      Just Print opens no window
+      &fk_role=ask        the Reports click asks a question first (a prompt with buttons), as its role check might
+
+  THE OLDER MODES (stage 1's guesses at what fills the records, kept for the Trace's self-test). They use a plain
+  Reports button and a menu whose item calls window.open at once:
+    ?fk_mode=opener   the REPORT WINDOW writes global_constant_row_info into its opener (this page);
     ?fk_mode=xhr      this page fills it from an XHR for fake_rows.json, sent after the report window opens;
     ?fk_mode=fetch    the same with fetch();
-    ?fk_mode=timer    this page fills it on a timer, with no report and no request (the control).
-  and, with any of them:
-    &fk_fill=assign   (default) one assignment of the whole list
+    ?fk_mode=timer    this page fills it on a timer, with no report and no request (the control);
+    ?fk_mode=click    this page fills it when the Reports button is clicked, before any report window opens.
+  and, with any mode:
+    &fk_fill=assign   (default in the older modes) one assignment of the whole list
     &fk_fill=push     an empty list first, then one record pushed at a time (filled in place)
+    &fk_fill=index    (default in cores mode) an empty list first, then filled by index (list[i] = record), as CORES
+                      does it: no call announces the fill, so a tracer sees it only by polling
     &fk_fill=strict   opener mode only: the report window assigns from strict-mode code (no caller to read)
     &fk_decl=var      the page declares the variable up front, as `var global_constant_row_info;` would: the
                       property cannot be redefined, so a tracer has to fall back to polling
     &fk_delay=800     milliseconds before the fill (timer: after the page loads; xhr / fetch: after the report opens)
+    &fk_autoclose=300 the report window closes itself that long after its data has loaded
 -->
 <html>
 <head>
@@ -38,6 +69,7 @@
 <title>FAKE CORES patient list (invented patients)</title>
 <style>
   body { font: 13px/1.4 Segoe UI, Arial, sans-serif; margin: 0; color: #1b1b1b; }
+  #cores_app { position: relative; }
   .fake_banner { background: #7a1f1f; color: #fff; padding: 6px 12px; font-weight: 600; }
   .fake_banner small { font-weight: 400; opacity: .9; }
   .x-toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #eef1f4; border-bottom: 1px solid #cfd6dd; position: relative; }
@@ -46,6 +78,19 @@
   .x-menu-item { display: block; padding: 5px 14px; cursor: pointer; color: #1b1b1b; text-decoration: none; }
   .x-menu-item:hover { background: #dbe8f5; }
   .x-tab-strip-text { padding: 3px 10px; border: 1px solid #9aa8b6; border-bottom: 0; border-radius: 4px 4px 0 0; background: #fff; cursor: pointer; }
+  .t4m_rnd_nav_bar_relative_anchor { position: relative; }
+  .t4m_rnd_nav_bar_container { display: flex; background: #26323d; }
+  .t4m_rnd_nav_section_dark { padding: 6px 14px; color: #fff; }
+  .t4m_rnd_nav_section_dark_hover { background: #3c4d5c; }
+  .nav_button { cursor: pointer; font-weight: 600; }
+  .t4m_rnd_nav_menu { position: absolute; top: 62px; left: 70px; background: #fff; border: 1px solid #9aa8b6; box-shadow: 0 4px 12px rgba(0,0,0,.25); z-index: 5; }
+  .t4m_rnd_nav_menu_item { padding: 5px 14px; cursor: pointer; }
+  .t4m_rnd_nav_menu_item_hover { background: #dbe8f5; }
+  .t4m_rnd_dialog { position: absolute; top: 90px; left: 220px; width: 360px; background: #fff; border: 1px solid #1f4e79; box-shadow: 0 6px 22px rgba(0,0,0,.32); z-index: 6; }
+  .t4m_rnd_dialog_title { background: #1f4e79; color: #fff; padding: 5px 10px; font-weight: 600; }
+  .t4m_rnd_dialog_content { padding: 10px; }
+  .t4m_rnd_btn { display: inline-block; padding: 4px 12px; margin: 6px 6px 0 0; border: 1px solid #1f4e79; border-radius: 4px; cursor: pointer; }
+  .t4m_rnd_btn_flat_blue_filled { background: #1f4e79; color: #fff; }
   table.rnd_tbl_pt_list { border-collapse: collapse; margin: 12px; }
   th.t4m_header_cell { background: #1f4e79; color: #fff; padding: 4px 8px; text-align: left; }
   td.pt_list_cell { border: 1px solid #d5dbe1; padding: 4px 8px; vertical-align: top; }
@@ -56,7 +101,26 @@
 <body>
 <div id="cores_app">
   <div class="fake_banner">FAKE CORES patient list <small>- invented patients only. Mode: <span id="fake_mode"></span></small></div>
+  <!-- fk_mode=cores: the nav bar, inside the patient list's own container (taken out in the older modes) -->
+  <div class="t4m_rnd_pt_list_main" id="fake_nav">
+    <div class="t4m_rnd_nav_bar_relative_anchor">
+      <div class="t4m_rnd_nav_bar_container">
+        <div class="t4m_rnd_nav_section_dark"><span class="nav_button">Lists</span></div>
+        <div class="t4m_rnd_nav_section_dark"><span class="nav_button">Reports</span></div>
+        <div class="t4m_rnd_nav_section_dark"><span class="nav_button">Settings</span></div>
+      </div>
+    </div>
+    <!-- a second copy that is not shown: its buttons must never be the ones pressed -->
+    <div class="t4m_rnd_nav_bar_relative_anchor" style="display:none">
+      <div class="t4m_rnd_nav_bar_container">
+        <div class="t4m_rnd_nav_section_dark"><span class="nav_button">Lists</span></div>
+        <div class="t4m_rnd_nav_section_dark"><span class="nav_button">Reports</span></div>
+        <div class="t4m_rnd_nav_section_dark"><span class="nav_button">Settings</span></div>
+      </div>
+    </div>
+  </div>
   <div class="x-toolbar">
+    <!-- the older modes' Reports button and menu (taken out in cores mode) -->
     <button type="button" class="x-btn x-btn-text t4m_rnd_reports_btn" onclick="t4m_fake_toggle_reports(this)">Reports</button>
     <div class="x-menu" id="t4m_reports_menu" style="display:none">
       <a class="x-menu-item t4m_rnd_report_item" role="menuitem" data-report="281">Anesthesia ICU w/ Meds</a>
@@ -104,11 +168,18 @@ window.jQuery = (function () {
 
 (function () {
   var q = new URLSearchParams(location.search);
-  var MODE = q.get('fk_mode') || 'opener', FILL = q.get('fk_fill') || 'assign', DECL = q.get('fk_decl') || '';
+  var MODE = q.get('fk_mode') || 'cores', CORES = MODE === 'cores';
+  var FILL = q.get('fk_fill') || (CORES ? 'index' : 'assign'), DECL = q.get('fk_decl') || '';
+  var BREAK = q.get('fk_break') || '', ROLE = q.get('fk_role') || '';
   var DELAY = parseInt(q.get('fk_delay') || '', 10);
   var listData = null;   // the list's own copy of the patients, as it drew them (not global)
-  var fakeCores = window.fakeCores = { mode: MODE, fill: FILL, lastReport: null, opened: 0 };
-  document.getElementById('fake_mode').textContent = 'fk_mode=' + MODE + ', fk_fill=' + FILL + (DECL ? ', fk_decl=' + DECL : '');
+  var fakeCores = window.fakeCores = { mode: MODE, fill: FILL, lastReport: null, opened: 0, lastFeatures: '', lastName: '', fills: 0, hiddenClicks: 0, logPosts: 0 };
+  document.getElementById('fake_mode').textContent = 'fk_mode=' + MODE + ', fk_fill=' + FILL + (DECL ? ', fk_decl=' + DECL : '') +
+    (BREAK ? ', fk_break=' + BREAK : '') + (ROLE ? ', fk_role=' + ROLE : '');
+
+  // one way of opening the report per mode: the other one's buttons are taken off the page
+  if (CORES) { document.querySelector('button.t4m_rnd_reports_btn').remove(); document.getElementById('t4m_reports_menu').remove(); }
+  else document.getElementById('fake_nav').remove();
 
   // `var global_constant_row_info;` in a page script makes a property that cannot be redefined
   if (DECL === 'var') Object.defineProperty(window, 'global_constant_row_info', { value: undefined, writable: true, enumerable: true, configurable: false });
@@ -124,7 +195,7 @@ window.jQuery = (function () {
   function t4m_fake_get(url, done) {
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
-    x.onreadystatechange = function t4m_fake_on_ready() { if (x.readyState === 4 && x.status === 200) done(JSON.parse(x.responseText)); };
+    x.onreadystatechange = function t4m_fake_on_ready() { if (x.readyState === 4 && x.status === 200) done(/\.json(\?|$)/.test(url) ? JSON.parse(x.responseText) : x.responseText); };
     x.send();
   }
   function t4m_fake_draw(rows) {
@@ -148,11 +219,15 @@ window.jQuery = (function () {
     if (MODE === 'timer') setTimeout(function t4m_fake_timer_fill() { t4m_fake_set_rows(JSON.parse(JSON.stringify(listData))); }, isNaN(DELAY) ? 1500 : DELAY);
   });
 
-  // ---- filling window.global_constant_row_info from this page (xhr / fetch / timer modes)
+  // ---- filling window.global_constant_row_info from this page
   function t4m_fake_set_rows(rows) {
+    fakeCores.fills++;
     if (FILL === 'push') {
       if (!window.global_constant_row_info) window.global_constant_row_info = [];
       rows.forEach(function (r) { window.global_constant_row_info.push(r); });
+    } else if (FILL === 'index') {
+      window.global_constant_row_info = [];
+      for (var i = 0; i < rows.length; i++) window.global_constant_row_info[i] = rows[i];
     } else window.global_constant_row_info = rows;
     t4m_fake_async_columns();
   }
@@ -183,27 +258,153 @@ window.jQuery = (function () {
     fetch('univ_wa_log.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ program: 'univ_wa_rnd_log', username: 'zzuser', patients: [{ mrn: '9990001' }], note: 'ZZTEST, ALPHA' }) });
   }
+  function t4m_fake_report_url(id) {
+    return 'fake_report.html?prg_name=univ_wa_rnd_build_report&options=report_id:' + id +
+      '&mode=pcedge&emr_type=CERNER-CCL-V4&report_name=univ_wa_rnd_api&fk_mode=' + encodeURIComponent(MODE) + '&fk_fill=' + encodeURIComponent(FILL) +
+      (q.get('fk_autoclose') ? '&fk_autoclose=' + encodeURIComponent(q.get('fk_autoclose')) : '');
+  }
 
-  // ---- the Reports button and its menu; the menu item opens the report window, the way CORES's own button does
+  // ---- the older modes: a Reports button and its menu; the menu item opens the report window at once
   window.t4m_fake_toggle_reports = function t4m_fake_toggle_reports() {
     var m = document.getElementById('t4m_reports_menu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
+    // fk_mode=click: showing the menu is what fills the records, once
+    if (MODE === 'click' && m.style.display === 'block' && !window.global_constant_row_info) t4m_fake_set_rows(JSON.parse(JSON.stringify(listData)));
   };
   function t4m_fake_open_report(id) {
-    var url = 'fake_report.html?prg_name=univ_wa_rnd_build_report&options=report_id:' + id +
-      '&mode=pcedge&emr_type=CERNER-CCL-V4&report_name=univ_wa_rnd_api&fk_mode=' + encodeURIComponent(MODE) + '&fk_fill=' + encodeURIComponent(FILL) +
-      (q.get('fk_autoclose') ? '&fk_autoclose=' + encodeURIComponent(q.get('fk_autoclose')) : '');
-    var w = window.open(url, 'rnd_report_window', 'width=1100,height=800,resizable=yes,scrollbars=yes');
+    var w = window.open(t4m_fake_report_url(id), 'rnd_report_window', 'width=1100,height=800,resizable=yes,scrollbars=yes');
     fakeCores.lastReport = w; fakeCores.opened++;
     var wait = isNaN(DELAY) ? 150 : DELAY;
     if (MODE === 'xhr') setTimeout(function () { t4m_fake_load_rows_xhr(id); }, wait);
     if (MODE === 'fetch') setTimeout(function () { t4m_fake_load_rows_fetch(id); }, wait);
     return w;
   }
-  window.jQuery.on(document.getElementById('t4m_reports_menu'), 'click', function t4m_fake_report_item_click(e) {
+  if (!CORES) window.jQuery.on(document.getElementById('t4m_reports_menu'), 'click', function t4m_fake_report_item_click(e) {
     document.getElementById('t4m_reports_menu').style.display = 'none';
     t4m_fake_open_report(this.getAttribute('data-report'));
   }, 'a.t4m_rnd_report_item');
+
+  // ---- fk_mode=cores: the nav bar, the report menu, the print dialog and Just Print, as the Trace run in CORES
+  // showed them. The names (self, showReportMenu, printReportLegacy, PrintReportDialog, _printReport ...) are the ones
+  // that run's call stacks and handler lists carried
+  if (CORES) (function () {
+    var $ = window.jQuery, app = document.getElementById('cores_app');
+    var REPORTS = [['ANES ICU w/ Meds', 281], ['I-PASS Detailed', 8], ['Medicine Report +VS/Meds', 7]];
+    if (BREAK === 'item') REPORTS.shift();
+    if (BREAK === 'twins') REPORTS.splice(0, 1, ['Anesthesia ICU w/ Meds', 281], ['ANES ICU - Meds (old)', 281]);
+    var FEATURES = 'left=100,top=100,width=1250,height=850,menubar=1,toolbar=1,resizeable=1,status=1,scrollbars=1';
+    function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text !== undefined) d.textContent = text; return d; }
+    function hover(node, cls) {
+      node.addEventListener('mouseover', function () { node.classList.add(cls); });
+      node.addEventListener('mouseout', function () { node.classList.remove(cls); });
+    }
+    var t4m = { cores: { ui: {} }, util: {} };
+    var domReportMenu = null, oDialog = { close: function () {} };
+    // CORES's own channel for telling its parts what happened: a name, then each listener's function of that name
+    var listeners = [];
+    t4m.util.broadcast = function broadcast(name) { listeners.forEach(function (o) { if (typeof o[name] === 'function') o[name](); }); };
+    // a prompt with buttons (what a role check might put up before the menu)
+    t4m.cores.ui.simplePrompt = function simplePrompt(text, choices, done) {
+      var dlg = el('div', 't4m_rnd_dialog t4m_rnd_prompt'), box = el('div', 't4m_rnd_dialog_content');
+      dlg.appendChild(el('div', 't4m_rnd_dialog_title', 'CORES')); box.appendChild(el('div', '', text));
+      choices.forEach(function (c) {
+        var b = el('div', 't4m_rnd_btn', c);
+        $.on(b, 'click', function () { dlg.remove(); done(c); });
+        box.appendChild(b);
+      });
+      dlg.appendChild(box); app.appendChild(dlg);
+    };
+    var self = {
+      checkRequiredRoles: function checkRequiredRoles() { return ROLE !== 'ask' || self.roleChosen; },
+      // the patient records, for the report that is about to be chosen: an empty list, then filled by index
+      printReportLegacy: function printReportLegacy() { t4m_fake_set_rows(JSON.parse(JSON.stringify(listData))); },
+      onPrintReport: function onPrintReport() { self.printReportLegacy(); },
+      showReportMenu: function showReportMenu() {
+        if (domReportMenu) { domReportMenu.remove(); domReportMenu = null; return; }
+        t4m.util.broadcast('onPrintReport');
+        if (BREAK === 'menu') return;
+        domReportMenu = el('div', 't4m_rnd_nav_menu');
+        var box = el('div', 't4m_rnd_menu_report_item_container');
+        REPORTS.forEach(function (r) {
+          var item = el('div', 't4m_rnd_nav_menu_item', r[0]);
+          hover(item, 't4m_rnd_nav_menu_item_hover');
+          $.on(item, 'click', function () {
+            var oPrintReportDialog = new t4m.cores.PrintReportDialog(r[0], r[1]);
+            oPrintReportDialog.render();
+            domReportMenu.remove(); domReportMenu = null;
+          });
+          $.on(item, 'click', function () { oDialog.close(); });
+          box.appendChild(item);
+        });
+        domReportMenu.appendChild(box); app.appendChild(domReportMenu);
+      }
+    };
+    listeners.push({ onPrintReport: self.onPrintReport });
+
+    // the print dialog: the report's template is loaded first, then the dialog shows
+    t4m.cores.PrintReportDialog = function PrintReportDialog(name, id) { this.name = name; this.id = id; this.dom = null; };
+    t4m.cores.PrintReportDialog.prototype.render = function render() {
+      var oPrintReportDialog = this;
+      setTimeout(function () {
+        t4m_fake_get('fake_report_template.html?' + Date.now(), function fnSuccess() {
+          var dlg = oPrintReportDialog.dom = el('div', 't4m_rnd_dialog'), box = el('div', 't4m_rnd_dialog_content'), a = el('div'), b = el('div');
+          dlg.appendChild(el('div', 't4m_rnd_dialog_title', 'Print Report'));
+          b.appendChild(el('div', '', oPrintReportDialog.name));
+          if (BREAK !== 'dialog') {
+            var just = el('div', 't4m_rnd_report_dialog_just_print_btn t4m_rnd_btn t4m_rnd_btn_flat_blue_filled', 'Just Print');
+            $.on(just, 'click', function () {
+              _printReport.call(oPrintReportDialog, oPrintReportDialog.id);
+              oPrintReportDialog.close();
+            });
+            b.appendChild(just);
+          }
+          var more = el('div', 't4m_rnd_report_dialog_options_btn t4m_rnd_btn', 'Print with Options'), cancel = el('div', 't4m_rnd_report_dialog_cancel_btn t4m_rnd_btn', 'Cancel');
+          $.on(cancel, 'click', function () { oPrintReportDialog.close(); });
+          b.appendChild(more); b.appendChild(cancel);
+          a.appendChild(b); box.appendChild(a); dlg.appendChild(box); app.appendChild(dlg);
+        });
+      }, 250);
+    };
+    t4m.cores.PrintReportDialog.prototype.close = function close() { if (this.dom) { this.dom.remove(); this.dom = null; } };
+    // Just Print: a usage log line (CORES posts it to its own server; here it stays on this computer), then, half a
+    // second later, a plain window.open
+    function _printReport(id) {
+      var log = new XMLHttpRequest();
+      log.open('POST', 'univ_wa_log.php');
+      log.onload = function () { fakeCores.logPosts++; };
+      log.send(new Blob(['{"event":"print_report"}'], { type: 'application/json' }));
+      if (BREAK === 'open') return;
+      setTimeout(function () {
+        fakeCores.lastName = 'rnd report ' + Date.now(); fakeCores.lastFeatures = FEATURES;
+        var w = window.open(t4m_fake_report_url(id), fakeCores.lastName, FEATURES);
+        fakeCores.lastReport = w; fakeCores.opened++;
+      }, 500);
+    }
+
+    // the nav bar's buttons: Lists, Reports, Settings, in the shown bar and in the hidden copy
+    [].forEach.call(document.querySelectorAll('#fake_nav .t4m_rnd_nav_bar_relative_anchor'), function (bar, n) {
+      var btns = bar.querySelectorAll('span.nav_button');
+      [].forEach.call(bar.querySelectorAll('.t4m_rnd_nav_section_dark'), function (s) { hover(s, 't4m_rnd_nav_section_dark_hover'); });
+      $.on(btns[0], 'click', function () { self.showListMenu(this); });
+      if (BREAK === 'reports') $.on(btns[1], 'click', function () { self.showSomethingElse(this); });
+      else $.on(btns[1], 'click', function () {
+        if (n) fakeCores.hiddenClicks++;
+        // CORES checks the user's role first, and may ask
+        var provider = self.checkRequiredRoles($.map ? ['provider'] : []);
+        if (!provider) {
+          t4m.cores.ui.simplePrompt('Which role are you working in today?', ['Provider', 'Cancel'], function (c) {
+            $.each && $.each([c], function () {});
+            if (c === 'Provider') { self.roleChosen = true; self.showReportMenu(btns[1]); }
+          });
+          return;
+        }
+        self.showReportMenu(this);
+      });
+      $.on(btns[2], 'click', function () { self.showSettings(this); });
+    });
+    self.showListMenu = function () {}; self.showSettings = function () {}; self.showSomethingElse = function () {};
+    fakeCores.menu = function () { return domReportMenu; };
+  })();
 
   // ---- "Load the HUD": the same as pasting capture_report.js into the Console
   window.fake_load_hud = function () {
