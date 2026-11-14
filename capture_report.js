@@ -84,6 +84,33 @@
     var list = ovEl('div', 'max-height:170px;overflow-y:auto;border-top:1px solid #dde3ea;padding-top:4px;' +
       'font:11px/1.4 Consolas,Menlo,monospace;user-select:text;cursor:text');
     body.appendChild(stats); body.appendChild(list);
+    // Find in CORES: type words, press Find; the answer (no patient data) shows here and is copied for Claude
+    var find = ovEl('div', 'border-top:1px solid #dde3ea;margin-top:6px;padding-top:6px');
+    find.appendChild(ovEl('div', 'font-weight:600;color:#1f4e79;margin-bottom:3px', 'Find in CORES'));
+    var frow = ovEl('div', 'display:flex;gap:4px');
+    var fin = ovEl('input', 'flex:1;min-width:0;font:12px Segoe UI,Arial,sans-serif;padding:2px 4px;border:1px solid #9aa8b6;border-radius:3px;user-select:text');
+    fin.placeholder = 'words, comma between: pulm, interv'; fin.value = prefs.find || '';
+    var fbtn = ovEl('button', 'flex:none;font:12px Segoe UI,Arial,sans-serif;padding:2px 10px;cursor:pointer', 'Find');
+    frow.appendChild(fin); frow.appendChild(fbtn); find.appendChild(frow);
+    var fout = ovEl('div', 'display:none;max-height:220px;overflow-y:auto;margin-top:5px;white-space:pre-wrap;word-break:break-word;' +
+      'font:11px/1.4 Consolas,Menlo,monospace;user-select:text;cursor:text;background:#f4f7fa;border-radius:3px;padding:4px 5px');
+    var fcopy = ovEl('button', 'display:none;margin-top:4px;font:12px Segoe UI,Arial,sans-serif;padding:2px 10px;cursor:pointer', 'Copy for Claude');
+    find.appendChild(fout); find.appendChild(fcopy); body.appendChild(find);
+    function runFind() {
+      var words = fin.value.split(/[,;\n]+/).map(function (w) { return w.trim(); }).filter(Boolean);
+      var p = ovPrefs(); p.find = fin.value; ovPrefs(p);
+      fout.style.display = '';
+      if (!words.length) { fout.textContent = 'Type one or more words first, with a comma between them.'; return; }
+      var r = probeCores.apply(null, words.concat([{ quiet: true }]));
+      fout.textContent = r.text + '\n\nPress "Copy for Claude" and paste it into the chat (it is also in window.coresProbe).';
+      fcopy.style.display = ''; fcopy.textContent = 'Copy for Claude';
+    }
+    fbtn.onclick = runFind;
+    fin.onkeydown = function (e) { e.stopPropagation(); if (e.key === 'Enter') runFind(); };
+    fcopy.onclick = function () {
+      var t = window.coresProbe && window.coresProbe.forClaude; if (!t) return;
+      copyText(t).then(function (ok) { fcopy.textContent = ok ? 'Copied for Claude ✓' : 'Could not copy: select the text above'; });
+    };
     root.appendChild(head); root.appendChild(body);
     document.body.appendChild(root);
 
@@ -534,6 +561,170 @@
       'as it has rendered. If nothing more appears here after you open it, CORES opened it another way: use captureCores(281).');
     return 'armed…';
   }
+
+  // ---- Find in CORES (probeCores): where CORES keeps a word (a team name, a label) or an id, on the page, in its
+  // frames and in its JavaScript data, WITHOUT reporting patient data: only the words searched for, element tags and
+  // classes, the NAMES of the fields beside a match (never their values), counts, and the paths (no query strings) of
+  // what the page has loaded; numbers of 3 or more digits show as #. Used by the Find box in the status box, or in the
+  // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
+  var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
+    localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, captureCores: 1, probeCores: 1, __coresRealOpen: 1 };
+  function copyText(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
+    return new Promise(function (res) {
+      function old() { try { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); res(!!ok); } catch (e) { res(false); } }
+      try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t).then(function () { res(true); }, old); return; } } catch (e) {}
+      old();
+    });
+  }
+  function probeCores() {
+    var args = [].slice.call(arguments), opt = {};
+    if (args.length && args[args.length - 1] && typeof args[args.length - 1] === 'object') opt = args.pop();
+    var terms = [], ids = [];
+    args.forEach(function (x) {
+      x = String(x).trim();
+      if (/^\d+$/.test(x)) ids.push(x); else if (x) terms.push(x.toLowerCase());
+    });
+    if (!terms.length && !ids.length) { console.log("probeCores: e.g. probeCores('pulm') or probeCores('pulm', 'interv') or probeCores(1234)"); return { text: '' }; }
+    var searched = terms.concat(ids.map(function (i) { return 'id ' + i; }));
+    function scrub(x) { return String(x).replace(/\d{3,}/g, '#'); }
+    var out = { searched: searched, page: scrub(location.pathname).slice(0, 200), optionValues: [], dom: [], data: [], loads: [], notes: [] };
+    function hit(x) {   // every search word a text or value matches, joined ('' for none)
+      x = String(x);
+      var m = [], l = x.toLowerCase();
+      for (var i = 0; i < ids.length; i++) if (x.trim() === ids[i]) m.push('id ' + ids[i]);
+      for (var j = 0; j < terms.length; j++) if (l.indexOf(terms[j]) >= 0) m.push(terms[j]);
+      return m.join(', ');
+    }
+    function desc(el) {
+      var d = el.tagName.toLowerCase();
+      if (el.id) d += '#' + el.id;
+      if (typeof el.className === 'string' && el.className.trim()) d += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
+      return scrub(d);
+    }
+    function path(el) { var q = []; while (el && el.nodeType === 1 && q.length < 7) { q.unshift(desc(el)); el = el.parentElement; } return q.join(' > '); }
+    function up(el, tags) { while (el && el.nodeType === 1) { if (tags.indexOf(el.tagName) >= 0) return el; el = el.parentElement; } return null; }
+    function mine(el) { while (el && el.nodeType === 1) { if (el.id === 'cores-capture-overlay' || el.id === 'cores-capture-banner') return true; el = el.parentElement; } return false; }
+
+    // 1. the page and its frames
+    var domKeys = {};
+    function scanDoc(doc, where) {
+      var all = doc.getElementsByTagName('*');
+      for (var i = 0; i < all.length && out.dom.length < 150; i++) {
+        var el = all[i], own = '', attr = '';
+        if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
+        for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3) own += c.nodeValue;
+        var t = hit(own);
+        if (!t) for (var a = 0; a < el.attributes.length; a++) if ((t = hit(el.attributes[a].value))) { attr = el.attributes[a].name; break; }
+        if (!t || mine(el)) continue;
+        if (/^(OPTION|INPUT)$/.test(el.tagName) && el.value && el.value.length < 40 && out.optionValues.indexOf(el.value) < 0) out.optionValues.push(el.value);
+        var row = up(el, ['TR', 'LI']), list = row && row.parentElement, pth = path(el), key = where + '|' + t + '|' + pth + '|' + attr;
+        if (domKeys[key]) { domKeys[key].count++; continue; }
+        out.dom.push(domKeys[key] = { found: t, where: where, via: attr ? 'attribute ' + attr : 'text', tag: el.tagName.toLowerCase(), path: pth, count: 1,
+          selected: !!(el.selected || el.checked), visible: !!(el.offsetWidth || el.offsetHeight),
+          row: row ? desc(row) : '', rowsInList: list ? list.children.length : 0,
+          rowAttributes: row ? [].map.call(row.attributes, function (x) { return x.name; }).slice(0, 15) : [] });
+      }
+    }
+    scanDoc(document, 'this window');
+    for (var f = 0; f < window.frames.length; f++) {
+      try { scanDoc(window.frames[f].document, 'frame ' + f); } catch (e) { out.notes.push('frame ' + f + ' could not be read (another site)'); }
+    }
+    ids = ids.concat(out.optionValues.filter(function (v) { return /^\d+$/.test(v) && ids.indexOf(v) < 0; }));
+
+    // 2. the page's JavaScript data
+    var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null, objs = 0, found = {};
+    function walk(o, pth, d, parent) {
+      if (o === null || o === undefined || d > 7 || objs > 60000) return;
+      var ty = typeof o;
+      if (ty === 'string' || ty === 'number') {
+        var t = hit(o); if (!t) return;
+        var key = pth.replace(/\[\d+\]/g, '[i]');
+        if (!found[key]) found[key] = { path: scrub(key), found: [], count: 0, inList: /\[\d+\]/.test(pth), fieldsBeside: [] };
+        t.split(', ').forEach(function (w) { if (found[key].found.indexOf(w) < 0) found[key].found.push(w); });
+        found[key].count++;
+        if (parent && !found[key].fieldsBeside.length) try { found[key].fieldsBeside = Object.keys(parent).slice(0, 40).map(scrub); } catch (e) {}
+        return;
+      }
+      if (ty !== 'object' || o.nodeType || o.window === o) return;
+      if (seen) { if (seen.has(o)) return; seen.add(o); }
+      objs++;
+      var ks; try { ks = Object.keys(o); } catch (e) { return; }
+      var arr = Array.isArray(o);
+      for (var i = 0; i < ks.length && i < 3000; i++) {
+        var v; try { v = o[ks[i]]; } catch (e) { continue; }
+        walk(v, pth + (arr ? '[' + ks[i] + ']' : '.' + ks[i]), d + 1, o);
+      }
+    }
+    function walkWin(w, name) {
+      var ks; try { ks = Object.keys(w); } catch (e) { out.notes.push(name + ' data could not be read'); return; }
+      for (var i = 0; i < ks.length; i++) {
+        if (PROBE_SKIP[ks[i]]) continue;
+        var v; try { v = w[ks[i]]; } catch (e) { continue; }
+        if (typeof v !== 'function') walk(v, name + '.' + ks[i], 0, null);
+      }
+      try { if (w.jQuery && w.jQuery.cache) walk(w.jQuery.cache, name + '.jQuery.cache', 0, null); } catch (e) {}
+    }
+    walkWin(window, 'window');
+    for (var g = 0; g < window.frames.length; g++) { try { walkWin(window.frames[g], 'frame' + g); } catch (e) {} }
+    for (var k in found) out.data.push(found[k]);
+    try {
+      var st = window.localStorage;
+      for (var s = 0; s < st.length; s++) {
+        if (st.key(s) === OV_KEY) continue;   // the Find box's own words
+        var t2 = hit(st.getItem(st.key(s))); if (t2) out.notes.push('browser storage "' + scrub(st.key(s)) + '" contains ' + t2);
+      }
+    } catch (e) {}
+    try {
+      var seenL = {};
+      performance.getEntriesByType('resource').forEach(function (r) {
+        var u = r.name.split('?')[0].split('#')[0], key = scrub(u.replace(location.origin, ''));
+        if (/\.(png|gif|jpe?g|svg|css|woff2?|ttf|ico)$/i.test(u) || seenL[key]) return;
+        seenL[key] = 1; out.loads.push(r.initiatorType + ' ' + key);
+      });
+    } catch (e) {}
+
+    // the answer in plain words, then the details
+    var L = ['Find in CORES: ' + searched.join(', ')], n = function (x, w) { return x + ' ' + w + (x === 1 ? '' : 's'); };
+    var onPage = out.dom.filter(function (h) { return !h.row; }), inRows = out.dom.filter(function (h) { return h.row; });
+    if (onPage.length) {
+      L.push('', 'On the page:');
+      onPage.forEach(function (h) {
+        L.push('- "' + h.found + '" in ' + (h.tag === 'option' ? 'a menu choice' + (h.selected ? ' (selected)' : '') :
+          h.via === 'text' ? 'the text of a ' + h.tag : 'the ' + h.via.replace('attribute ', '') + ' of a ' + h.tag) +
+          (h.visible ? '' : ', hidden') + ', ' + n(h.count, 'time') + (h.where === 'this window' ? '' : ', in ' + h.where) + '\n    at ' + h.path);
+      });
+    }
+    if (inRows.length) {
+      L.push('', 'In rows of a list (one patient per row?):');
+      inRows.forEach(function (h) {
+        L.push('- "' + h.found + '" in ' + n(h.count, 'row') + ' of ' + h.rowsInList + ' (' + h.row + ')' + (h.where === 'this window' ? '' : ', in ' + h.where) +
+          '\n    each row has: ' + (h.rowAttributes.join(', ') || 'no attributes') + '\n    at ' + h.path);
+      });
+    }
+    if (out.data.length) {
+      L.push('', "In the page's data:");
+      out.data.forEach(function (h) {
+        L.push('- "' + h.found.join('", "') + '" at ' + h.path + (h.inList ? ' (a list, ' + h.count + ' match' + (h.count === 1 ? '' : 'es') + ')' : '') +
+          '\n    fields beside it: ' + (h.fieldsBeside.join(', ') || '(none)'));
+      });
+    }
+    var none = searched.filter(function (w) {
+      return !out.dom.some(function (h) { return h.found.split(', ').indexOf(w) >= 0; }) && !out.data.some(function (h) { return h.found.indexOf(w) >= 0; });
+    });
+    if (none.length) L.push('', 'Not found anywhere: ' + none.join(', ') + '. Try a shorter piece of the word, spelled as CORES shows it.');
+    if (out.optionValues.length) L.push('', 'The menu choices found have the values ' + out.optionValues.map(scrub).join(', ') + '; those were also looked for in the data, as ids.');
+    if (out.notes.length) L.push('', 'Notes: ' + out.notes.join('; '));
+    L.push('', 'Searched ' + document.getElementsByTagName('*').length + ' page elements and ' + objs + ' data objects. No patient data is in this summary.');
+    var text = L.join('\n');
+    var forClaude = text + '\n\n---- details ----\n' + JSON.stringify(out, null, 1);
+    window.coresProbe = { result: out, text: text, forClaude: forClaude };
+    if (!opt.quiet) {
+      console.log(forClaude);
+      copyText(forClaude).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); });
+    }
+    return { text: text };
+  }
+  window.probeCores = probeCores;
 
   window.captureCores = function (reportId, opts) {
     if (reportId && typeof reportId === 'object') { opts = reportId; reportId = null; }
