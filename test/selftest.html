@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Self-test of the capture HUD (capture_report.js) against the fake CORES page. Invented patients only.
+
+  Run it (from the project folder):
+      python test/serve.py
+      then open http://127.0.0.1:8765/selftest.html in Edge or Chrome and allow popups for 127.0.0.1,
+  or without a window:
+      node test/run_selftest.mjs             (starts the server, runs headless Edge, prints PASS / FAIL, stops both)
+  One test only: selftest.html?only=trace_opener
+
+  Each test opens fake_cores.html in a frame, loads capture_report.js into it the way a paste into the Console
+  would, drives the page (the Reports menu, the HUD's buttons) and checks what comes out. The result is written
+  into the page: a line per check, then PASS or FAIL in <pre id="result"> and in the page title.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  body { font: 13px/1.4 Segoe UI, Arial, sans-serif; margin: 12px; }
+  pre { font: 12px/1.4 Consolas, monospace; white-space: pre-wrap; }
+  #result { font-weight: bold; font-size: 15px; }
+  iframe { width: 1000px; height: 420px; border: 1px solid #9aa8b6; display: block; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h3>CORES HUD self-test (fake CORES page, invented patients)</h3>
+<pre id="result">RUNNING</pre>
+<pre id="out"></pre>
+<div id="frames"></div>
+<script src="selftest.js"></script>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!doctype html>
+<!--
+  FAKE CORES patient list, for trying the capture HUD (capture_report.js) outside Citrix. Every patient is invented
+  ("ZZTEST, ALPHA", MRN 9990001 ...); nothing here comes from CORES.
+
+  HOW TO SERVE IT (from the project folder):
+      python test/serve.py                 then open  http://127.0.0.1:8765/fake_cores.html
+  (test/serve.py serves only this test folder and capture_report.js, to this computer only. Do not use
+  `python -m http.server` in the project folder: it would also serve reports\, which holds patient data.)
+  Then paste capture_report.js into the DevTools Console of this page, as in CORES, or press "Load the HUD".
+  The self-test (test/selftest.html) drives this page by itself and writes PASS / FAIL.
+
+  WHAT IT MIMICS (see CORES_PAGE_NOTES.md):
+    - the list: table.rnd_tbl_pt_list > tr.t4m_rnd_pt_list_row (_even / _odd) > td.pt_list_cell, th.t4m_header_cell;
+    - a Reports button and menu whose item calls window.open for a same-origin report window (fake_report.html),
+      with CORES's address shape: ?prg_name=univ_wa_rnd_build_report&options=report_id:281&mode=pcedge&...;
+    - the page's own global `copy` (so DevTools' copy() helper is hidden);
+    - clicks and keys that are not the page's own are swallowed before they reach their target (the HUD has to catch
+      them in the capture phase on window);
+    - window.global_constant_row_info: the patient records, absent until something fills them.
+
+  HOW THE RECORDS GET FILLED is what nobody knows about the real page, so it is a switch (query string):
+    ?fk_mode=opener   (default) the REPORT WINDOW writes global_constant_row_info into its opener (this page);
+    ?fk_mode=xhr      this page fills it from an XHR for fake_rows.json, sent after the report window opens;
+    ?fk_mode=fetch    the same with fetch();
+    ?fk_mode=timer    this page fills it on a timer, with no report and no request (the control).
+  and, with any of them:
+    &fk_fill=assign   (default) one assignment of the whole list
+    &fk_fill=push     an empty list first, then one record pushed at a time (filled in place)
+    &fk_fill=strict   opener mode only: the report window assigns from strict-mode code (no caller to read)
+    &fk_decl=var      the page declares the variable up front, as `var global_constant_row_info;` would: the
+                      property cannot be redefined, so a tracer has to fall back to polling
+    &fk_delay=800     milliseconds before the fill (timer: after the page loads; xhr / fetch: after the report opens)
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>FAKE CORES patient list (invented patients)</title>
+<style>
+  body { font: 13px/1.4 Segoe UI, Arial, sans-serif; margin: 0; color: #1b1b1b; }
+  .fake_banner { background: #7a1f1f; color: #fff; padding: 6px 12px; font-weight: 600; }
+  .fake_banner small { font-weight: 400; opacity: .9; }
+  .x-toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #eef1f4; border-bottom: 1px solid #cfd6dd; position: relative; }
+  .x-btn { font: inherit; padding: 3px 12px; cursor: pointer; }
+  .x-menu { position: absolute; top: 34px; left: 12px; background: #fff; border: 1px solid #9aa8b6; box-shadow: 0 4px 12px rgba(0,0,0,.25); z-index: 5; }
+  .x-menu-item { display: block; padding: 5px 14px; cursor: pointer; color: #1b1b1b; text-decoration: none; }
+  .x-menu-item:hover { background: #dbe8f5; }
+  .x-tab-strip-text { padding: 3px 10px; border: 1px solid #9aa8b6; border-bottom: 0; border-radius: 4px 4px 0 0; background: #fff; cursor: pointer; }
+  table.rnd_tbl_pt_list { border-collapse: collapse; margin: 12px; }
+  th.t4m_header_cell { background: #1f4e79; color: #fff; padding: 4px 8px; text-align: left; }
+  td.pt_list_cell { border: 1px solid #d5dbe1; padding: 4px 8px; vertical-align: top; }
+  tr.t4m_rnd_pt_list_row_odd { background: #f6f9fc; }
+  #fake_state { margin: 0 12px 12px; color: #5b6773; }
+</style>
+</head>
+<body>
+<div id="cores_app">
+  <div class="fake_banner">FAKE CORES patient list <small>- invented patients only. Mode: <span id="fake_mode"></span></small></div>
+  <div class="x-toolbar">
+    <button type="button" class="x-btn x-btn-text t4m_rnd_reports_btn" onclick="t4m_fake_toggle_reports(this)">Reports</button>
+    <div class="x-menu" id="t4m_reports_menu" style="display:none">
+      <a class="x-menu-item t4m_rnd_report_item" role="menuitem" data-report="281">Anesthesia ICU w/ Meds</a>
+      <a class="x-menu-item t4m_rnd_report_item" role="menuitem" data-report="8">I-PASS Detailed</a>
+    </div>
+    <select name="t4m_rnd_user_settings_add_column_select" title="Add a column">
+      <optgroup label="Medical"><option value="VITALS" title="Vitals">Vitals</option><option value="MICROBIOLOGY" title="Microbiolgy Results">Microbiolgy Results</option></optgroup>
+      <optgroup label="Planning"><option value="TEXTBOX" title="Patient Summary">Patient Summary</option></optgroup>
+    </select>
+    <!-- two controls OUTSIDE the list that carry a patient's name, as a tab or a button in CORES might: a tracer
+         must not show their text -->
+    <a class="x-tab-strip-text fake_pt_tab" role="tab">ZZTEST, ALPHA</a>
+    <button type="button" class="x-btn fake_pt_btn">ZZTEST, BRAVO 9990002</button>
+    <button type="button" class="x-btn fake_hud_btn" onclick="fake_load_hud()">Load the HUD</button>
+  </div>
+  <table class="rnd_tbl_pt_list">
+    <thead><tr><th class="t4m_header_cell">Location</th><th class="t4m_header_cell">Patient</th><th class="t4m_header_cell">MRN</th>
+      <th class="t4m_header_cell">Team</th><th class="t4m_header_cell">Patient Summary</th></tr></thead>
+    <tbody id="fake_rows"></tbody>
+  </table>
+  <div id="fake_state"></div>
+</div>
+
+<script>
+// ---- CORES defines its own global `copy`, which hides DevTools' copy() helper
+window.copy = function copy(o) { return JSON.parse(JSON.stringify(o)); };
+
+// ---- a stand-in for jQuery 1.x's event store (jQuery.cache[id].events), enough for a tool that reads handler names
+window.jQuery = (function () {
+  var jq = { fn: { jquery: '1.9.1-fake' }, expando: 'jQuery19109990001', cache: {}, guid: 1 };
+  jq.on = function (el, type, handler, selector) {
+    var id = el[jq.expando] || (el[jq.expando] = jq.guid++);
+    var c = jq.cache[id] || (jq.cache[id] = { events: {} });
+    var first = !c.events[type];
+    (c.events[type] || (c.events[type] = [])).push({ type: type, origType: type, handler: handler, selector: selector, namespace: '' });
+    if (first) el.addEventListener(type, function (e) {
+      c.events[type].forEach(function (h) {
+        var hit = h.selector ? e.target.closest && e.target.closest(h.selector) : el;
+        if (hit) h.handler.call(hit, e);
+      });
+    });
+  };
+  return jq;
+})();
+
+(function () {
+  var q = new URLSearchParams(location.search);
+  var MODE = q.get('fk_mode') || 'opener', FILL = q.get('fk_fill') || 'assign', DECL = q.get('fk_decl') || '';
+  var DELAY = parseInt(q.get('fk_delay') || '', 10);
+  var listData = null;   // the list's own copy of the patients, as it drew them (not global)
+  var fakeCores = window.fakeCores = { mode: MODE, fill: FILL, lastReport: null, opened: 0 };
+  document.getElementById('fake_mode').textContent = 'fk_mode=' + MODE + ', fk_fill=' + FILL + (DECL ? ', fk_decl=' + DECL : '');
+
+  // `var global_constant_row_info;` in a page script makes a property that cannot be redefined
+  if (DECL === 'var') Object.defineProperty(window, 'global_constant_row_info', { value: undefined, writable: true, enumerable: true, configurable: false });
+
+  // ---- CORES swallows clicks and keys that are not its own before they reach their target
+  ['click', 'dblclick', 'keydown', 'keyup', 'keypress'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      if (!(e.target && e.target.closest && e.target.closest('#cores_app'))) e.stopPropagation();
+    }, true);
+  });
+
+  // ---- the list: its own request for the patients, then the rows
+  function t4m_fake_get(url, done) {
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.onreadystatechange = function t4m_fake_on_ready() { if (x.readyState === 4 && x.status === 200) done(JSON.parse(x.responseText)); };
+    x.send();
+  }
+  function t4m_fake_draw(rows) {
+    var tb = document.getElementById('fake_rows'); tb.innerHTML = '';
+    rows.forEach(function (r, i) {
+      var tr = document.createElement('tr');
+      tr.className = 't4m_rnd_pt_list_row t4m_rnd_pt_list_row_' + (i % 2 ? 'odd' : 'even');
+      tr.id = 'pt_row_' + r.person_id;
+      [r.location, r.patient_name, r.mrn, r.service + ' - ' + r.team].forEach(function (t) {
+        var td = document.createElement('td'); td.className = 'pt_list_cell'; td.textContent = t; tr.appendChild(td);
+      });
+      var td = document.createElement('td'); td.className = 'pt_list_cell';
+      var d = document.createElement('div'); d.className = 't4m_rnd_pt_list_handoff_text'; d.textContent = r.handoff_fields[0].value;
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'x-btn t4m_rnd_row_btn'; b.textContent = 'Open ' + r.patient_name;
+      td.appendChild(d); td.appendChild(b); tr.appendChild(td);
+      tb.appendChild(tr);
+    });
+  }
+  t4m_fake_get('fake_rows.json?prg_name=univ_wa_rnd_get_list&list_id=99&username=zzuser', function (rows) {
+    listData = rows; t4m_fake_draw(rows);
+    if (MODE === 'timer') setTimeout(function t4m_fake_timer_fill() { t4m_fake_set_rows(JSON.parse(JSON.stringify(listData))); }, isNaN(DELAY) ? 1500 : DELAY);
+  });
+
+  // ---- filling window.global_constant_row_info from this page (xhr / fetch / timer modes)
+  function t4m_fake_set_rows(rows) {
+    if (FILL === 'push') {
+      if (!window.global_constant_row_info) window.global_constant_row_info = [];
+      rows.forEach(function (r) { window.global_constant_row_info.push(r); });
+    } else window.global_constant_row_info = rows;
+    t4m_fake_async_columns();
+  }
+  // the list's columns load later and fill the records in place (one more result column, one more field)
+  function t4m_fake_async_columns() {
+    setTimeout(function t4m_fake_columns_loaded() {
+      var rows = window.global_constant_row_info || [];
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].result_list.col.push({ event_set: 'Respiratory Rate', since: '72', since_dt_tm: '11-NOV-2026 00:00', list: [] });
+        rows[i].col_async_data_loaded = 1;
+      }
+    }, 400);
+  }
+  fakeCores.asyncColumns = t4m_fake_async_columns;   // the report window calls it after it has written the records
+  function t4m_fake_load_rows_xhr(id) {
+    // the addresses carry made-up identifiers on purpose: a tracer must show the parameter NAMES only
+    t4m_fake_get('fake_rows.json?prg_name=univ_wa_rnd_row_info&report_id=' + id + '&person_ids=99900001,99900002&mrn=9990001&patient_name=ZZTEST,%20ALPHA',
+      function t4m_fake_rows_loaded(rows) { t4m_fake_set_rows(rows); });
+    var log = new XMLHttpRequest();
+    log.open('POST', 'univ_wa_log.php?mode=pcedge');
+    log.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    log.send('prg_name=univ_wa_rnd_log&username=zzuser&patient_name=ZZTEST%2C+ALPHA&mrn=9990001');
+  }
+  function t4m_fake_load_rows_fetch(id) {
+    fetch('fake_rows.json?program=univ_wa_rnd_row_info&report_id=' + id + '&person_ids=99900001,99900002&mrn=9990001')
+      .then(function (res) { return res.json(); })
+      .then(function t4m_fake_rows_fetched(rows) { t4m_fake_set_rows(rows); });
+    fetch('univ_wa_log.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ program: 'univ_wa_rnd_log', username: 'zzuser', patients: [{ mrn: '9990001' }], note: 'ZZTEST, ALPHA' }) });
+  }
+
+  // ---- the Reports button and its menu; the menu item opens the report window, the way CORES's own button does
+  window.t4m_fake_toggle_reports = function t4m_fake_toggle_reports() {
+    var m = document.getElementById('t4m_reports_menu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  };
+  function t4m_fake_open_report(id) {
+    var url = 'fake_report.html?prg_name=univ_wa_rnd_build_report&options=report_id:' + id +
+      '&mode=pcedge&emr_type=CERNER-CCL-V4&report_name=univ_wa_rnd_api&fk_mode=' + encodeURIComponent(MODE) + '&fk_fill=' + encodeURIComponent(FILL) +
+      (q.get('fk_autoclose') ? '&fk_autoclose=' + encodeURIComponent(q.get('fk_autoclose')) : '');
+    var w = window.open(url, 'rnd_report_window', 'width=1100,height=800,resizable=yes,scrollbars=yes');
+    fakeCores.lastReport = w; fakeCores.opened++;
+    var wait = isNaN(DELAY) ? 150 : DELAY;
+    if (MODE === 'xhr') setTimeout(function () { t4m_fake_load_rows_xhr(id); }, wait);
+    if (MODE === 'fetch') setTimeout(function () { t4m_fake_load_rows_fetch(id); }, wait);
+    return w;
+  }
+  window.jQuery.on(document.getElementById('t4m_reports_menu'), 'click', function t4m_fake_report_item_click(e) {
+    document.getElementById('t4m_reports_menu').style.display = 'none';
+    t4m_fake_open_report(this.getAttribute('data-report'));
+  }, 'a.t4m_rnd_report_item');
+
+  // ---- "Load the HUD": the same as pasting capture_report.js into the Console
+  window.fake_load_hud = function () {
+    var s = document.createElement('script'); s.src = 'capture_report.js?' + Date.now(); document.head.appendChild(s);
+  };
+
+  setInterval(function () {
+    var r; try { r = window.global_constant_row_info; } catch (e) { r = null; }
+    document.getElementById('fake_state').textContent = 'window.global_constant_row_info: ' +
+      (r && typeof r.length === 'number' ? r.length + ' records' : 'none yet') + ' | report windows opened: ' + fakeCores.opened;
+  }, 300);
+})();
+</script>
+</body>
+</html>
