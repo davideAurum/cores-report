@@ -119,7 +119,7 @@
 
     ov = { root: root, head: head, mark: mark, status: status, clock: clock, list: list, live: null, find: findBar, input: fin,
            rows: rowsEl, reloads: reloadEl, mode: modeEl, started: 0, tick: null, spin: null, spinKind: '', frame: 0,
-           collapsed: !!prefs.collapsed, warns: 0, errs: 0 };
+           collapsed: !!prefs.collapsed, warns: 0, errs: 0, helpOpen: prefs.helpOpen === true };
 
     function place(x, y) {   // keep the title bar on screen
       var w = root.offsetWidth, h = head.offsetHeight;
@@ -257,12 +257,12 @@
       ov.frame = (ov.frame + 1) % SPIN.length;
       var ch = SPIN.charAt(ov.frame);
       ov.mark.textContent = ch;
-      if (ov.live) ov.live.firstChild.textContent = ch + ' ';
+      if (ov.live) ov.live.spin.textContent = ch + ' ';
     }, 80);
     if (!on && ov.spin) { clearInterval(ov.spin); ov.spin = null; }
   }
   // a new capture: show the HUD again, start the clock, reset the tallies
-  function ovStart(mode, text) {
+  function ovStart(mode, text, help) {
     try {
       ovBuild();
       ov.root.style.display = 'flex';
@@ -273,12 +273,13 @@
       ov.list.scrollTop = ov.list.scrollHeight;
       ov.started = Date.now();
       clearInterval(ov.tick); ov.tick = setInterval(ovClock, 1000); ovClock();
-      ovStatus(text, 'busy');
+      ovStatus(text, 'busy', false, help);
     } catch (e) {}
   }
   // the current step. busy (or warn while still working): spinner, and the same text on the live line at the bottom of
-  // the console; ok / err (or final): a mark instead, the clock stops
-  function ovStatus(text, kind, final) {
+  // the console; ok / err (or final): a mark instead, the clock stops. help: what the user needs to do during this step,
+  // under a "What to do" link on the live line that opens it (open or closed is remembered)
+  function ovStatus(text, kind, final, help) {
     if (!ov) return;
     var working = !final && (kind === 'busy' || kind === 'warn');
     ov.status.textContent = text; ov.status.title = text;
@@ -286,13 +287,23 @@
     ov.mark.style.color = kind === 'busy' ? '#1f4e79' : OV_C[kind] || OV_C.mute;
     if (working) {
       if (!ov.live) {
-        ov.live = ovEl('div', 'padding:1px 0;white-space:pre-wrap;word-break:break-word');
-        ov.live.appendChild(ovEl('span', 'font-weight:bold', SPIN.charAt(ov.frame) + ' '));
-        ov.live.appendChild(document.createTextNode(''));
-        ov.list.appendChild(ov.live);
+        var lv = ov.live = ovEl('div', 'padding:2px 0');
+        var top = ovEl('div', 'white-space:pre-wrap;word-break:break-word');
+        lv.spin = ovEl('span', 'font-weight:bold', SPIN.charAt(ov.frame) + ' ');
+        lv.text = document.createTextNode('');
+        lv.more = ovEl('a', 'display:none;margin-left:8px;color:#1f4e79;font:600 11px Segoe UI,Arial,sans-serif;cursor:pointer;' +
+          'text-decoration:underline;white-space:nowrap', '');
+        lv.help = ovEl('div', 'display:none;margin:3px 0 2px 14px;padding:4px 8px;border-left:3px solid #1f4e79;background:#eef4fa;' +
+          'color:#1b1b1b;font:12px/1.45 Segoe UI,Arial,sans-serif;white-space:pre-wrap;word-break:break-word;border-radius:0 4px 4px 0');
+        lv.more.onclick = function () { ov.helpOpen = !ov.helpOpen; ovSave('helpOpen', ov.helpOpen); ovHelp(); };
+        top.appendChild(lv.spin); top.appendChild(lv.text); top.appendChild(lv.more);
+        lv.appendChild(top); lv.appendChild(lv.help);
+        ov.list.appendChild(lv);
       }
       ov.live.style.color = kind === 'warn' ? OV_C.warn : '#1f4e79';
-      ov.live.lastChild.nodeValue = text;
+      ov.live.text.nodeValue = text;
+      ov.live.help.textContent = help || '';
+      ovHelp();
       ov.list.scrollTop = ov.list.scrollHeight;
       ovSpin(true);
     } else {
@@ -301,6 +312,13 @@
       ov.mark.textContent = kind === 'ok' ? '✔' : kind === 'err' ? '✖' : kind === 'warn' ? '!' : '○';
       clearInterval(ov.tick); ov.tick = null; ovClock();
     }
+  }
+  function ovHelp() {   // the live line's "What to do": shown only when the step has instructions
+    var lv = ov && ov.live; if (!lv) return;
+    var has = !!lv.help.textContent, open = has && !!ov.helpOpen;   // closed until opened
+    lv.more.style.display = has ? '' : 'none';
+    lv.more.textContent = open ? 'What to do \u25be' : 'What to do \u25b8';
+    lv.help.style.display = open ? '' : 'none';
   }
   // the capture's outcome: one coloured verdict line, and the status bar to match
   function ovVerdict(kind, text) {
@@ -707,10 +725,12 @@
       }
       return w;
     };
-    ovStart('armed mode', 'Waiting for you to open the report in CORES');
+    ovStart('armed mode', 'Waiting for you to open the report in CORES',
+      'Open the report from CORES as you normally do (its own report / print button). It is captured as soon as it has ' +
+      'rendered, and the report window closes by itself.\n\nIf nothing more happens here after you open it, CORES opened ' +
+      'it another way: run   captureCores(281)   in the Console instead (the script then opens the report itself).');
     ovStat('rows', '');
-    log('armed. Now open the report from CORES as you normally do (its own report / print button); it is captured as soon ' +
-      'as it has rendered. If nothing more appears here after you open it, CORES opened it another way: use captureCores(281).');
+    log('armed: the next report window CORES opens will be captured');
     return 'armed…';
   }
 
@@ -970,7 +990,10 @@
       ovVerdict('err', 'the popup was blocked. Allow popups for this site and try again.');
       return;
     }
-    ovStart('direct mode, report ' + reportId, 'Report ' + reportId + ' opened, waiting…');
+    ovStart('direct mode, report ' + reportId, 'Report ' + reportId + ' opened, waiting for it to render\u2026',
+      'The script opened report ' + reportId + ' in a popup window. Leave it open: it is captured as soon as it has rendered, ' +
+      'and closes by itself.\n\nIf CORES says it cannot load the patient list, the script presses OK and Reload for you, ' +
+      'up to ' + (opts.retries === undefined ? 2 : opts.retries) + ' times.');
     watchReport(popup, opts, String(reportId));
     log('opened report ' + reportId + ' in a popup; waiting for it to render…');
     return 'capturing…';
