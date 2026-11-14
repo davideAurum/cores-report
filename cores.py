@@ -1064,6 +1064,13 @@ def cmd_parse(a, cfg):
     say(f'Parsed:   {rel(out)}  ({describe(data)})')
 
 
+def cmd_compare(a, cfg):
+    from cores_compare import compare, load
+    src = resolve_file(a.file, 'capture', cfg, include_inbox=True)
+    say(f'Comparing: {rel(src)}')
+    say(compare(load(src)))
+
+
 def cmd_render(a, cfg):
     if a.file:
         src = resolve_file(a.file, 'capture', cfg)
@@ -1249,7 +1256,7 @@ def cmd_doctor(a, cfg):
             line(True, f'{pkg} installed')
         except ImportError:
             line(False, f'{pkg} installed', f'missing; run `cores setup` or `{Path(sys.executable).name} -m pip install {pkg}`')
-    for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_parse_med.py', 'cores_report.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
+    for f in ('cores_parse.py', 'cores_parse_anes.py', 'cores_parse_med.py', 'cores_report.py', 'cores_compare.py', 'capture_report.js', 'annotate_source.py', 'har_extract.py'):
         line((HERE / f).exists(), f, '' if (HERE / f).exists() else 'missing')
     try:
         from cores_report import load_unit_locations
@@ -1793,6 +1800,11 @@ def build_parser():
     sp.add_argument('file', nargs='?', metavar='FILE')
     sp.add_argument('-o', '--out', help='output .json path')
     copy_opt(sp)
+
+    sp = add('compare', cmd_compare, "compare a capture's printed report with the CORES clinical data the capture carries: per vital, lab and the meds, "
+                                     "in how many patients they agree, differ or only one has a value; counts and shared labels only, no patient data",
+             listed="compare the report with CORES's own clinical data in a capture (counts only)")
+    sp.add_argument('file', nargs='?', metavar='FILE', help='capture or parsed .json (default: the newest capture)')
 
     sp = add('render', cmd_render, 'capture HTML or parsed JSON -> Daily Report HTML (a capture is moved into the reports folder first; output next to the source)')
     sp.add_argument('file', nargs='?', metavar='FILE', help='default: newest parsed JSON, else newest capture')

@@ -345,6 +345,40 @@ def attach_teams(raw, header, records):
         header['service'], header['team'] = '', ', '.join(labels)
 
 
+# Each patient's clinical data as CORES holds it for its patient list (results with their times, medication orders,
+# pending results, code status, handoff fields), carried by captureCores() just before the capture's closing </html>:
+# <!-- CORES data {"version": 1, "captured": ..., "patients": [{mrn, fin, ..., results, meds, ...}], "counts": ...} -->
+DATA_START = '<!-- CORES data '
+
+
+def attach_clinical(raw, header, records):
+    """Puts each patient's CORES data on its record as 'cores_data' (matched by MRN, else FIN), and the capture's
+    counts on the header as 'cores_data'. Nothing changes when the capture has none (an older capture)."""
+    i = raw.rfind(DATA_START)
+    if i < 0:
+        return
+    j = raw.find('-->', i)
+    try:
+        info = json.loads(raw[i + len(DATA_START):j].strip())
+    except ValueError:
+        return
+    by_mrn, by_fin = {}, {}
+    for pt in info.get('patients') or []:
+        if isinstance(pt, dict):
+            if _id(pt.get('mrn')):
+                by_mrn.setdefault(_id(pt['mrn']), pt)
+            if _id(pt.get('fin')):
+                by_fin.setdefault(_id(pt['fin']), pt)
+    matched = 0
+    for rec in records:
+        pt = by_mrn.get(_id(rec.get('mrn'))) or by_fin.get(_id(rec.get('fin')))
+        if pt:
+            rec['cores_data'] = pt
+            matched += 1
+    header['cores_data'] = {'captured': info.get('captured', ''), 'version': info.get('version'), 'counts': info.get('counts') or {},
+                            'matched': matched}
+
+
 def parse_file(path):
     # Captures are UTF-8, but CORES's <meta> says windows-1250 and lxml obeys it on a large file (a 1.5 MB capture came
     # out with every bullet as 'â€˘'), so the encoding is given outright.
@@ -357,6 +391,7 @@ def parse_file(path):
     parse_row_fn = row_parser(rows, header) if rows else None
     records = [parse_row_fn(tr) for tr in rows]
     attach_teams(raw, header, records)
+    attach_clinical(raw, header, records)
     return {'header': header, 'source': path, 'records': records}
 
 

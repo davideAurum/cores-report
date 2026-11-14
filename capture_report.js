@@ -112,7 +112,9 @@
     fdesc.title = 'The layout of the CORES patient records: which fields are filled, and what kind of thing each holds. No values.';
     var fcols = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Columns');
     fcols.title = 'With CORES\'s column picker open: every column name it offers. (Or type the XPath of its list first.)';
-    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc); findBar.appendChild(fcols);
+    var fmap = ovEl('button', 'flex:none;font:600 12px ' + FONT + ';padding:3px 10px;border:1px solid #1f4e79;border-radius:4px;background:#fff;color:#1f4e79;cursor:pointer', 'Map');
+    fmap.title = 'The whole shape of CORES\'s patient data, the values shared by 3+ patients, and the list\'s columns. Patient identifiers are redacted; nothing unique to a patient is shown.';
+    findBar.appendChild(fin); findBar.appendChild(fgo); findBar.appendChild(fdesc); findBar.appendChild(fcols); findBar.appendChild(fmap);
 
     // the console: the script's messages, Find results, and the live spinner line at the bottom
     var list = ovEl('div', 'flex:1;min-height:0;overflow-y:auto;padding:5px 9px 7px;font:11px/1.45 ' + MONO + ';user-select:text;cursor:text');
@@ -176,6 +178,16 @@
     }
     // caught on the way down (capture phase), so a page that swallows clicks or keys before they arrive cannot stop them
     window.addEventListener('click', function (e) { if (e.target === fgo) { e.stopPropagation(); runFind(); } }, true);
+    // Map: the whole shape of the patient data
+    window.addEventListener('click', function (e) {
+      if (e.target !== fmap) return;
+      e.stopPropagation();
+      ovLog('Mapping: CORES\'s patient data');
+      setTimeout(function () {
+        try { mapCores({ hud: true }); }
+        catch (err) { console.error('CORES capture: Map failed', err); ovLog('Map failed: ' + (err && (err.name + ': ' + err.message) || err) + '. Copy this line for Claude.', 'err'); }
+      }, 30);
+    }, true);
     // Columns: the column picker's column names (or the list at an XPath typed in the box)
     window.addEventListener('click', function (e) {
       if (e.target !== fcols) return;
@@ -531,6 +543,72 @@
   // the list in window.global_constant_row_info (its service, team and sub-team, the way its Services / Teams / Sub-teams
   // menus name them, with the MRN, FIN and encounter that tie it to the report's patients). The report CORES prints
   // does not carry them, so they travel in the capture, in a comment after its name: <!-- CORES teams {...} -->.
+  // ---- each patient's clinical data, as CORES holds it for its patient list once the list's columns have loaded (and a
+  // report has been opened): results (vitals, labs, vent and O2 ...) with their times, medication orders, pending
+  // results, code status, handoff fields. The capture carries it, so cores_parse can read it straight instead of from
+  // the printed report; <!-- CORES data {...} --> just before the capture's closing </html>. Only the fields below are
+  // kept, so the capture grows by about a megabyte, not by everything the page holds.
+  function patientRows() {   // global_constant_row_info: this window, its parent, the top window or its opener
+    var cands = [function () { return window; }, function () { return window.parent; }, function () { return window.top; }, function () { return window.opener; }];
+    for (var c = 0; c < cands.length; c++) {
+      var rows = null; try { rows = cands[c]().global_constant_row_info; } catch (e) { rows = null; }
+      if (rows && typeof rows === 'object' && typeof rows.length === 'number' && rows.length) return rows;
+    }
+    return null;
+  }
+  function plain(o, keys) {   // the listed fields of an object (or all its plain ones), each a string, number, flag or null
+    var out = {}; if (!o || typeof o !== 'object') return out;
+    (keys || Object.keys(o)).forEach(function (k) {
+      var v; try { v = o[k]; } catch (e) { return; }
+      if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+    });
+    return out;
+  }
+  function list(x) { return Array.isArray(x) ? x : []; }
+  var RESULT_KEYS = ['event_display', 'result_val', 'result_status', 'event_end_dt_tm', 'abnormal_ind', 'critical_ind'];
+  var SET_KEYS = ['col_seq', 'event_set', 'since_dt_tm', 'last_label', 'last_value', 'last_units', 'last_date', 'last_event_class', 'count', 'abnormal_ind', 'critical_ind'];
+  var MED_KEYS = ['class', 'order_status', 'active_ind', 'discontinued_ind', 'suspended_ind', 'name', 'ordered_as_mnemonic', 'order_mnemonic',
+    'order_details', 'strdose', 'strdoseunit', 'voldose', 'voldoseunit', 'freetextdose', 'route', 'rate', 'rateunit', 'freetextrate', 'freq',
+    'dose_string', 'rate_string', 'abx', 'abx_day', 'abx_date', 'current_start_date', 'orig_order_date', 'last_dose_date',
+    'current_iv_med_name', 'current_iv_med_rate', 'current_iv_med_rate_unit', 'current_iv_vol_rate', 'current_iv_vol_rate_unit'];
+  var PER_SET = 300;   // the newest entries kept per result column and patient
+  function clinicalFromCores() {
+    var rows = patientRows(); if (!rows) return null;
+    var pts = [], nResults = 0, nMeds = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i]; if (!r || typeof r !== 'object') continue;
+      var p = plain(r, ['mrn', 'fin', 'encntr_id', 'person_id', 'one_liner', 'status', 'unit', 'room', 'bed', 'admit_dt_tm', 'service', 'team', 'sub_team']);
+      try {
+        var rl = r.result_list || {};
+        p.result_sets = list(rl.list).map(function (s) { return plain(s, SET_KEYS); });
+        p.results = list(rl.col).map(function (s) {
+          var entries = list(s && s.list).map(function (e) { return plain(e, RESULT_KEYS); });
+          if (entries.length > PER_SET) entries = entries.slice(-PER_SET);
+          nResults += entries.length;
+          return { event_set: plain(s, ['event_set']).event_set || '', since_dt_tm: plain(s, ['since_dt_tm']).since_dt_tm || '', entries: entries };
+        });
+      } catch (e) {}
+      try {
+        p.meds = [];
+        list((r.med_list || {}).col).forEach(function (c) { list(c && c.list).forEach(function (m) { p.meds.push(plain(m, MED_KEYS)); }); });
+        nMeds += p.meds.length;
+      } catch (e) {}
+      try { p.pending = list((r.pending_results || {}).list).map(function (x) { return plain(x); }); } catch (e) {}
+      try { p.code_status = list(r.code_status).map(function (x) { return plain(x, ['order_disp', 'order_as', 'order_detail', 'order_date', 'dnar']); }); } catch (e) {}
+      try { p.custom_fields = list(r.custom_fields).map(function (x) { return plain(x, ['type', 'value']); }); } catch (e) {}
+      try {
+        p.handoff = list(r.handoff_fields).map(function (h) {
+          var o = plain(h, ['element_label', 'element_name', 'element_type', 'value', 'updt_dt_tm']);
+          o.values = list(h && h.values).map(function (v) { return typeof v === 'object' ? plain(v) : v; });
+          o.tasks = list(h && h.tasks).map(function (t) { return plain(t); });
+          return o;
+        });
+      } catch (e) {}
+      pts.push(p);
+    }
+    return pts.length ? { version: 1, captured: new Date().toISOString(), patients: pts, counts: { patients: pts.length, results: nResults, meds: nMeds } } : null;
+  }
+  window.coresClinical = clinicalFromCores;
   function teamsFromCores() {
     // in this window, or its parent, the top window or the one that opened it (the script may run in a frame)
     var rows = null, cands = [function () { return window; }, function () { return window.parent; }, function () { return window.top; }, function () { return window.opener; }];
@@ -554,6 +632,10 @@
     html = String(html).replace(/\r\n/g, '\n');   // so the clipboard, download and folder copies are byte-identical
     var text = '<!-- CORES capture ' + name + ' -->\n';   // the name travels with the text (used by cores --clipboard)
     if (opts.teams) text += '<!-- CORES teams ' + JSON.stringify(opts.teams).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
+    if (opts.clinical) {
+      var dataComment = '<!-- CORES data ' + JSON.stringify(opts.clinical).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/--/g, '-\\u002d') + ' -->\n';
+      html = /<\/html>\s*$/i.test(html) ? html.replace(/<\/html>\s*$/i, function () { return dataComment + '</html>'; }) : html + '\n' + dataComment;
+    }
     text += html;
     window.coresCaptured = text;
     var jobs = [];
@@ -638,6 +720,14 @@
       try { o.teams = teamsFromCores(); } catch (e) { o.teams = null; }
       if (o.teams) log('teams from the CORES patient list: ' + Object.keys(o.teams.teams).map(function (t) { return t + ' (' + o.teams.teams[t] + ')'; }).join(', '), 'ok');
       else log('no team data found in this CORES window: each patient\'s Team is left for you to type');
+      if (opts.data !== false) {
+        try { o.clinical = clinicalFromCores(); } catch (e) { o.clinical = null; log('could not read CORES\'s clinical data (' + (e && e.message || e) + '); the report alone is captured', 'warn'); }
+        if (o.clinical) {
+          var kb = Math.round(JSON.stringify(o.clinical).length / 1024);
+          log('clinical data from the CORES patient list: ' + o.clinical.counts.patients + ' patients, ' + o.clinical.counts.results.toLocaleString() +
+            ' results, ' + o.clinical.counts.meds + ' medication orders (' + kb.toLocaleString() + ' KB, carried in the capture)', 'ok');
+        }
+      }
       // the verdict once every delivery has settled: green when all went through, yellow when the capture is in hand
       // but something needs a hand (a click on the banner, an unrendered report, a reload, a warning above), red when
       // the delivery itself broke
@@ -795,7 +885,7 @@
   // Console:  probeCores('pulm')   probeCores('pulm', 'interv')   probeCores(1234)  (a number is matched as a whole id).
   var PROBE_SKIP = { location: 1, navigator: 1, history: 1, performance: 1, screen: 1, clientInformation: 1, document: 1,
     localStorage: 1, sessionStorage: 1, coresCaptured: 1, coresProbe: 1, coresDescribe: 1, captureCores: 1, probeCores: 1,
-    describeCores: 1, coresColumns: 1, listCoresColumns: 1, __coresRealOpen: 1 };
+    describeCores: 1, coresColumns: 1, listCoresColumns: 1, coresMap: 1, mapCores: 1, coresClinical: 1, __coresRealOpen: 1 };
   function probeCopy(t) {   // the clipboard, by the API when the page has the focus, else by a hidden text box
     return new Promise(function (res) {
       function old() { try { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); res(!!ok); } catch (e) { res(false); } }
@@ -992,10 +1082,13 @@
       else if (h.under) s += '\n    the rows sit under heading rows (' + h.under + ')';
       return s + '\n    each row has: ' + (h.rowAttributes.join(', ') || 'no attributes') + '\n    ' + h.path;
     })]);
+    var fieldsSeen = {};
     if (out.data.length) sections.push(["IN THE PAGE'S DATA", out.data.map(function (h) {
+      var fl = h.fieldsBeside.join(', '), first = fieldsSeen[fl];
+      if (!first && h.fieldsBeside.length > 6) fieldsSeen[fl] = h.path;
       return '• "' + h.found.join('", "') + '" at ' + h.path + (h.inList ? '  (a list: ' + h.count + ' match' + (h.count === 1 ? '' : 'es') + ')' : '') +
         (h.record ? '\n    it is one field of a record (' + h.record + ')' : '') +
-        '\n    fields beside it: ' + (h.fieldsBeside.join(', ') || '(none)');
+        '\n    fields beside it: ' + (first ? 'the same as at ' + first : fl || '(none)');
     })]);
     // what this suggests about finding each patient's team (the reason Find was written)
     var hints = [], PT = /person|patient|pid|mrn|encntr|encounter|pt_?id|name/i;
@@ -1247,6 +1340,139 @@
     }
   }
   window.listCoresColumns = listCoresColumns;
+  // ---- Map (mapCores): the whole shape of CORES's patient data in one pass, for working out what holds what. For
+  // every field path in the patient records (lists as [i]): what kind of thing it holds, in how many patients, and how
+  // long its lists run; and the values SHARED by at least 3 different patients (column and result names, units,
+  // statuses, routes ...), which describe the page, not a patient. A value unique to one or two patients (a name, a
+  // number, a sentence of free text) is never shown. On top of that, every identifier the page itself holds (each
+  // patient's name and every part of it, MRN, FIN, IDs, birth date, and the staff names in contacts and edits) is
+  // redacted wherever it turns up, a shared value holding one is dropped, and long numbers and dates are masked.
+  // Then the CORES columns on the list (their type, label and whether they load later) and the page's top-level data.
+  // HUD: the Map button; Console: mapCores().
+  function mapCores(opt) {
+    opt = opt || {};
+    function safe(x) { x = String(x); return /^[A-Za-z_$][\w$-]{0,29}$/.test(x) && !/\d{3,}/.test(x) && /[a-z]/.test(x) && !/^[A-Z][a-z]+$/.test(x) ? x : '<name>'; }
+    var rows = patientRows(), L = ['Map: CORES\'s patient data'];
+    if (!rows) {
+      L.push('✖ no CORES patient records in this window, its parent, the top window or its opener. They appear once a report has been opened from the patient list: open one, then press Map again.');
+      return done(L);
+    }
+    // 1. the identifiers to redact, from the page itself
+    var ids = {}, words = {};
+    function addWords(s) { String(s || '').split(/[^A-Za-z']+/).forEach(function (w) { if (w.length >= 2) words[w.toLowerCase()] = 1; }); }
+    function addId(s) { s = String(s == null ? '' : s).trim(); if (s.length >= 3) ids[s.toLowerCase()] = 1; }
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i]; if (!r || typeof r !== 'object') continue;
+      try {
+        ['patient_name', 'patient_name_last', 'adt_attending', 'pcp'].forEach(function (k) { addWords(r[k]); });
+        ['mrn', 'fin', 'mrn_mrn', 'person_id', 'encntr_id', 'birth_date', 'acuity_data_patient_id'].forEach(function (k) { addId(r[k]); });
+        list(r.roles).forEach(function (x) { addWords(x && x.assign_name); addWords(x && x.assign_username); });
+        list(r.handoff_fields).forEach(function (x) { addWords(x && x.updt_prsnl_name); addWords(x && x.updt_name); });
+      } catch (e) {}
+    }
+    var idList = Object.keys(ids);
+    function scrubbed(s) {   // s with every identifier masked, and whether it held one
+      var hit = false, t = String(s);
+      t = t.replace(/[A-Za-z']+/g, function (w) { if (words[w.toLowerCase()]) { hit = true; return '[name]'; } return w; });
+      var low = t.toLowerCase();
+      idList.forEach(function (x) { if (low.indexOf(x) >= 0) { hit = true; t = t.split(new RegExp(x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')).join('[id]'); low = t.toLowerCase(); } });
+      t = t.replace(/\d{5,}/g, function () { hit = true; return '#'; })
+        .replace(/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}/g, function () { hit = true; return '[date]'; });   // a date in any form: dropped
+      return { text: t, hit: hit };
+    }
+    // 2. every path in the records: kinds, patients, list lengths, and the values with the patients they occur in
+    var paths = {}, nodes = 0;
+    function kindOf(v) {
+      if (v === null || v === undefined || v === '') return 'empty';
+      if (typeof v === 'number') return 'number'; if (typeof v === 'boolean') return 'flag';
+      if (typeof v === 'string') { var t = v.trim(); return !t ? 'empty' : /^\d+(\.\d+)?$/.test(t) ? 'digits' : /^<\w/.test(t) || /<\/\w+>/.test(t) ? 'HTML' : t.length > 80 ? 'long text' : 'text'; }
+      if (Array.isArray(v)) return 'list'; return 'object';
+    }
+    function walk(v, pth, p, d) {
+      if (nodes++ > 400000 || d > 9) return;
+      var P = paths[pth] || (paths[pth] = { kinds: {}, pts: {}, sizes: [Infinity, 0], vals: {} });
+      var k = kindOf(v); P.kinds[k] = (P.kinds[k] || 0) + 1; P.pts[p] = 1;
+      if (k === 'list') { P.sizes[0] = Math.min(P.sizes[0], v.length); P.sizes[1] = Math.max(P.sizes[1], v.length); for (var j = 0; j < v.length && j < 2000; j++) walk(v[j], pth + '[i]', p, d + 1); return; }
+      if (k === 'object') {
+        var ks; try { ks = Object.keys(v); } catch (e) { return; }
+        if (ks.length > 200) return;
+        ks.forEach(function (key) { if (/^(oRowObject|oDomElmt|_oTable|_oRow|oPtData|oSelectedPts)$/.test(key)) return; var x; try { x = v[key]; } catch (e) { return; } walk(x, pth + '.' + key, p, d + 1); });
+        return;
+      }
+      if (k === 'text' && /[A-Za-z]/.test(v) && v.length <= 60 && v.split(/\s+/).length <= 8) {
+        var vs = P.vals[v] || (P.vals[v] = {}); vs[p] = 1;
+      }
+    }
+    for (var q = 0; q < rows.length; q++) { var rec = rows[q]; if (!rec || typeof rec !== 'object') continue;
+      Object.keys(rec).forEach(function (key) { if (/^(oRowObject|sElmtId|rendered)$/.test(key)) return; var x; try { x = rec[key]; } catch (e) { return; } walk(x, key, q, 0); }); }
+    var nPts = rows.length, names = Object.keys(paths).sort();
+    // a field name is shown when most patients that have its parent share it (the Describe rule); else <name>
+    function shownPath(pth) { return pth.split('.').map(function (seg) { var m = seg.match(/^(.*?)((?:\[i\])*)$/); return safe(m[1]) + m[2]; }).join('.'); }
+    L.push('✔ ' + nPts + ' patients; ' + names.length + ' field paths. [kind count | in how many patients | list lengths]  then the values shared by 3+ patients, with in how many');
+    L.push('', 'PATIENT DATA');
+    var shownCount = 0;
+    names.forEach(function (pth) {
+      var P = paths[pth], npt = Object.keys(P.pts).length, kinds = Object.keys(P.kinds);
+      if (npt < Math.min(3, nPts)) return;   // a field only one or two patients have: it may be keyed by them
+      var allEmpty = kinds.every(function (k) { return k === 'empty'; });
+      if (allEmpty) return;
+      var line = '• ' + shownPath(pth) + ': ' + kinds.sort(function (a, b) { return P.kinds[b] - P.kinds[a]; }).map(function (k) { return k + ' ' + P.kinds[k]; }).join(', ') +
+        ' | ' + npt + ' pt' + (P.sizes[1] ? ' | ' + P.sizes[0] + '–' + P.sizes[1] + ' entries' : '');
+      var shared = Object.keys(P.vals).map(function (v) { return [v, Object.keys(P.vals[v]).length]; })
+        .filter(function (x) { return x[1] >= 3; }).map(function (x) { var s = scrubbed(x[0]); return s.hit ? null : [s.text, x[1]]; }).filter(Boolean)
+        .sort(function (a, b) { return b[1] - a[1] || (a[0] < b[0] ? -1 : 1); });
+      if (shared.length) line += '\n      ' + shared.slice(0, 40).map(function (x) { return '"' + x[0] + '" ' + x[1]; }).join(', ') + (shared.length > 40 ? ', … ' + (shared.length - 40) + ' more' : '');
+      L.push(line); shownCount++;
+    });
+    var empties = names.filter(function (pth) { return Object.keys(paths[pth].kinds).every(function (k) { return k === 'empty'; }); });
+    if (empties.length) L.push('', 'EMPTY FOR EVERY PATIENT (' + empties.length + '): ' + empties.slice(0, 80).map(shownPath).join(', ') + (empties.length > 80 ? ', …' : ''));
+    // the page's own top-level data: what a blank window of this browser does not have
+    var builtins = {};
+    try { var fr = document.createElement('iframe'); fr.style.display = 'none'; document.body.appendChild(fr);
+      Object.keys(fr.contentWindow).forEach(function (k) { builtins[k] = 1; }); fr.remove(); } catch (e) {}
+    var own = []; try { own = Object.keys(window).filter(function (k) { return !builtins[k] && !/^(cores|probeCores|describeCores|listCoresColumns|mapCores|captureCores|__cores)/.test(k); }); } catch (e) {}
+    // 3. the columns on the list: CORES's column objects, wherever the page keeps them
+    var cols = {}, seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null, budget = 60000;
+    function findCols(o, d) {
+      if (!o || typeof o !== 'object' || d > 6 || budget-- < 0) return;
+      try { if (o.nodeType || o.window === o) return; } catch (e) { return; }
+      try { if (seen) { if (seen.has(o)) return; seen.add(o); } } catch (e) { return; }
+      var t; try { t = o.col_type; } catch (e) { t = undefined; }
+      if (typeof t === 'string' && 'col_label' in o) {
+        var key = [t, o.col_option, o.col_label].join('|');
+        if (!cols[key]) cols[key] = { type: t, option: o.col_option || '', label: o.col_label || '', cls: o.col_class || '', asynch: o.is_asynch, loaded: o.col_async_data_loaded, error: o.col_async_data_error, seq: o.col_seq };
+        return;
+      }
+      var ks; try { ks = Object.keys(o); } catch (e) { return; }
+      for (var j = 0; j < ks.length && j < 3000; j++) { if (/^(global_constant_row_info|coresCaptured|coresProbe|coresDescribe|coresColumns|coresMap)$/.test(ks[j])) continue; var x; try { x = o[ks[j]]; } catch (e) { continue; } findCols(x, d + 1); }
+    }
+    own.forEach(function (k) { if (k === 'global_constant_row_info') return; var v; try { v = window[k]; } catch (e) { return; } try { findCols(v, 1); } catch (e) {} });
+    var colList = Object.keys(cols).map(function (k) { return cols[k]; }).sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+    L.push('', 'COLUMNS ON THE LIST (' + colList.length + ')  [type | option | label | loads later? | loaded?]');
+    colList.forEach(function (c) {
+      var lab = scrubbed(String(c.label)), opt2 = scrubbed(String(c.option)), typ = scrubbed(String(c.type));
+      L.push('• ' + (typ.hit ? '<hidden>' : typ.text) + ' | ' + (opt2.hit ? '<hidden>' : opt2.text || '-') + ' | ' + (lab.hit ? '<hidden>' : lab.text || '-') + ' | ' +
+        (c.asynch ? 'yes' : 'no') + ' | ' + (c.loaded === undefined ? '?' : c.loaded ? 'yes' : 'no') + (c.error ? ' | error' : ''));
+    });
+    // 4. the page's top-level data, by name and kind
+    var tops = []; try { own.forEach(function (k) {
+      var v; try { v = window[k]; } catch (e) { return; }
+      if (v && typeof v === 'object' && !v.nodeType && v.window !== v) { var n = 0; try { n = Array.isArray(v) ? v.length : Object.keys(v).length; } catch (e) {} tops.push(safe(k) + (Array.isArray(v) ? ' (list of ' + n + ')' : ' (' + n + ' keys)')); }
+    }); } catch (e) {}
+    L.push('', 'TOP-LEVEL DATA ON THE PAGE: ' + (tops.join(', ') || '(none)'));
+    L.push('', 'Shown: ' + shownCount + ' paths. Values shown are only those shared by 3+ patients, with every patient and staff name, MRN, FIN, ID, birth date, long number and date the page holds masked or dropped; free text and anything unique to a patient is never shown.');
+    return done(L);
+
+    function done(lines) {
+      var text = lines.join('\n');
+      window.coresMap = { text: text };
+      if (opt.hud && ov) showResult(lines, text, 'Map');
+      else { console.log(text); probeCopy(text).then(function (ok) { console.log(ok ? 'Copied for Claude: paste it into the chat.' : 'Could not copy: select the text above and copy it.'); }); }
+      return { text: text };
+    }
+  }
+  window.mapCores = mapCores;
+
 
 
 
