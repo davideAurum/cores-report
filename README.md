@@ -160,6 +160,7 @@ copy of the folder with `cores update --from dist\cores-report-X.Y.Z.zip`.
 | `cores capture [--direct [--id 281]] [--no-download] [--folder] [--no-run]` | capture script plus its `captureCores(...)` call to the clipboard, and the steps; default captures the window CORES opens, `--direct` opens the report itself |
 | `cores watch [--clipboard] [--print] [--pdf] [--no-open] [--copy] [--clean] [--inbox DIR] [--interval S]` | process every new capture automatically (Ctrl+C stops), from Downloads and, with `--clipboard`, from the clipboard; a re-capture that reuses a file name is processed too |
 | `cores open [FILE]` | open a Daily Report in the browser |
+| `cores reload [FILE]` | re-render a Daily Report in place (default: the newest), then press F5 in the tab that has it open |
 | `cores print [FILE] [--to PRINTER \| --kiosk \| --dialog]` | print a Daily Report (see *Printing*) |
 | `cores pdf [FILE] [-o X.pdf] [--open]` | Daily Report -> PDF with headless Edge/Chrome, on the `paper` setting's size (legal unless set), in the `orientation` setting's direction and the `black_and_white` setting's colors |
 | `cores parse FILE [-o X.json] [--copy]` | capture -> JSON only (a capture in Downloads or next to the scripts is moved into `reports\` first) |

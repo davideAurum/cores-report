@@ -392,12 +392,13 @@ def do_render(src, out=None, data=None, cfg=None):
     return data, out
 
 
-def refresh_report(report, cfg):
+def refresh_report(report, cfg, force=False):
     """A Daily Report made by another version of cores_report.py (or unit_locations.json), or for other paper or B&W
     than the "paper", "orientation" and "black_and_white" settings, is re-rendered in place from its JSON (else its capture) before it is opened, printed or
     made into a PDF. Otherwise
     it would print as it was made: one from before the Paper switch prints landscape only, and the PDF and no-dialog
-    paths would ignore a changed setting. Left as it is when neither source is there."""
+    paths would ignore a changed setting. Left as it is when neither source is there. force=True re-renders it even when
+    it is current (`cores reload`)."""
     from cores_report import RENDERER, renderer_meta
     report = Path(report)
     orient, bw = (cfg or {}).get('orientation', 'landscape'), (cfg or {}).get('black_and_white', False)
@@ -407,9 +408,10 @@ def refresh_report(report, cfg):
             head = fh.read(4096)
     except OSError:
         return report
-    if renderer_meta(orient, bw, paper) in head:
+    if renderer_meta(orient, bw, paper) in head and not force:
         return report
-    why = ('made for other settings than "paper", "orientation" and "black_and_white"' if f'content="{RENDERER} ' in head
+    why = ('on request' if force and renderer_meta(orient, bw, paper) in head else
+           'made for other settings than "paper", "orientation" and "black_and_white"' if f'content="{RENDERER} ' in head
            else 'made by an older version of cores or of unit_locations.json')
     for src in (derived(report, 'json'), report.with_name(stem_of(report) + '.html')):
         if src != report and src.is_file() and kind_of(src) in ('json', 'capture'):
@@ -1080,6 +1082,16 @@ def cmd_render(a, cfg):
 def cmd_open(a, cfg):
     rep = refresh_report(resolve_file(a.file, 'report', cfg), cfg)
     say(f'Opened:   {rel(rep)} in the {open_in_browser(rep, cfg)}')
+
+
+def cmd_reload(a, cfg):
+    """Re-render a Daily Report in place with this version of cores and the current settings, so that refreshing the
+    browser tab it is open in (F5) shows the new layout. A browser refresh alone reloads the file as it was made."""
+    rep = refresh_report(resolve_file(a.file, 'report', cfg), cfg, force=True)
+    if a.open:
+        say(f'Opened:   {rel(rep)} in the {open_in_browser(rep, cfg)}')
+    else:
+        say('Refresh:  press F5 in the browser tab that has it open')
 
 
 def cmd_print(a, cfg):
@@ -1790,6 +1802,13 @@ def build_parser():
 
     sp = add('open', cmd_open, 'open a Daily Report in the browser (default: the newest)')
     sp.add_argument('file', nargs='?', metavar='FILE')
+
+    sp = add('reload', cmd_reload, 'Re-render a Daily Report (default: the newest) in place from its JSON or capture with this version '
+                                   'of cores and the current settings, so refreshing (F5) the browser tab it is open in shows the '
+                                   'update. Refreshing alone shows the report as it was made.',
+             listed='re-render the newest Daily Report in place; then press F5 in its browser tab')
+    sp.add_argument('file', nargs='?', metavar='FILE')
+    sp.add_argument('--open', action='store_true', help='also open it in a new browser tab')
 
     sp = add('print', cmd_print, 'print a Daily Report (default: the newest). Without options the browser opens with the print dialog up, '
                                  'unless "printer" is set in the config.')

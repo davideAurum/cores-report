@@ -48,7 +48,7 @@ DEFAULT_PAPER = 'legal'
 # Volume and Labs side by side (the .duo container query switches at 352 px of content; 364 px with the cell's
 # padding and border, measured with CORES's two days of I&O). The others share the rest in these proportions.
 DATA_MIN_PX = 364
-COL_SHARES = [30, None, 17, 13]   # Snapshot, Data, Meds, Notes
+COL_SHARES = [22, None, 26, 12]   # Snapshot, Data, Meds, Notes (Meds wide enough for two 140 px med-list columns)
 
 
 def default_widths(paper, orient):
@@ -304,7 +304,7 @@ p{margin:0 0 4px} ul{margin:0;padding-left:14px} li{margin:0 0 2px}
 .io{border-collapse:collapse} .io td{padding:0 6px 0 0;text-align:right;border:0} .io td:first-child{text-align:left;color:var(--mute)} .io th{font-weight:600;text-align:right;padding:0 6px 0 0;color:var(--mute);border:0}
 .medbar{display:flex;gap:0 14px;align-items:flex-start}
 .medbar .medsec{min-width:130px} .medbar .medsec h4{margin-top:0}
-.medsec .meds{column-width:auto} .medbar .medsec .meds{column-width:150px}
+.medsec .meds{column-width:140px} .medbar .medsec .meds{column-width:150px}
 .meds{margin:0;padding:0;list-style:none;column-width:150px;column-gap:12px}
 .meds li{break-inside:avoid;margin:0;padding-left:8px;text-indent:-8px;line-height:1.2}
 .meds .dot{color:var(--mute);font-size:8px;margin:0 3px;vertical-align:1px}
