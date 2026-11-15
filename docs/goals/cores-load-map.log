@@ -29,3 +29,4 @@
 {"id": "cores-load-map-29", "at": "2026-11-15T23:03:42+00:00", "kind": "decision", "text": "endpoint reached? David: yes, reached (recommendation was reached; shortfalls listed in the plan report are accepted)"}
 {"id": "cores-load-map-30", "at": "2026-11-15T23:20:14+00:00", "kind": "decision", "text": "cleanup go? David: go (goal branch onto main by merge, push, retire the goal branch and folder)"}
 {"id": "cores-load-map-31", "at": "2026-11-15T23:22:52+00:00", "kind": "stage", "commit": "7917fa9", "text": "landed on main: 6630b7d -> 7917fa9 (fast-forward merge of goal/cores-load-map); 105 unit tests and the HUD self-test pass on main; backup git-goal/backup-20261115-1720"}
+{"id": "cores-load-map-32", "at": "2026-11-15T23:48:48+00:00", "kind": "decision", "commit": "d81e84c", "text": "release? David: release v1.1.0. Published with release.py minor: https://github.com/davideAurum/cores-report/releases/tag/v1.1.0 (zip and sha256 attached)"}

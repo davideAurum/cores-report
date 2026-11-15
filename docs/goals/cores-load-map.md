@@ -3,7 +3,7 @@
 ```
 status     landed on main (6630b7d → 7917fa9) · 11-15 · iteration 1 · endpoint reached
 stages     ✓ 1  ✓ 2
-needs you  release? (v1.1.0 recommended)
+needs you  nothing
 next       nothing; the goal is closed
 ```
 
@@ -152,7 +152,7 @@ Accepted shortfalls:
 `goal/cores-load-map` landed on `main` by merge (a fast-forward, every milestone commit kept): 6630b7d → 7917fa9,
 37 commits, 27 files. On `main` after it: 105 unit tests and the HUD self-test (365 checks in 31 tests) pass.
 Bookmark before the landing: `git-goal/backup-20261115-1720`. The goal branch and its folder are retired
-(recovery: `git branch goal/cores-load-map 7917fa9`). Release: asked separately (v1.1.0 recommended).
+(recovery: `git branch goal/cores-load-map 7917fa9`). Release: v1.1.0, published 11-15 with `release.py minor` (commit d81e84c).
 
 ## Changes, from the goal log
 
@@ -185,4 +185,5 @@ Bookmark before the landing: `git-goal/backup-20261115-1720`. The goal branch an
 
 ## Needs you
 
-The release? call (v1.1.0 recommended).
+Nothing. Released as v1.1.0.
+- 11-15 · decision · Release v1.1.0 (David); published
